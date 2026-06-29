@@ -6,7 +6,7 @@ import { useToast } from "@/components/admin/Toast";
 import { Button } from "@/components/ui/Button";
 import { Input, Textarea } from "@/components/ui/Input";
 import { ImageUpload } from "@/components/admin/ImageUpload";
-import { Modal, FormActions } from "@/app/admin/(protected)/categories/page";
+import { Modal, FormActions } from "@/components/admin/Modal";
 import type { Certificate } from "@/types/database";
 import { Plus, Pencil, Trash2, Loader2, ShieldAlert } from "lucide-react";
 

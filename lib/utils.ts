@@ -6,16 +6,30 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-// 生成 slug（中英文混合：中文转拼音简化为移除，英文小写连字符）
-// 由于不引入拼音库，中文标题会保留中文并以连字符分隔；推荐后台手动优化为英文 slug
+// 生成 slug：只允许小写字母、数字和连字符
+// - 英文标题：转小写 + 空格/下划线转连字符 + 去除非法字符
+// - 中文标题或无可用英文：fallback 为 product-时间戳，避免与表单校验冲突
+// 表单校验规则：/^[a-z0-9-]+$/
 export function generateSlug(text: string): string {
-  return text
+  const cleaned = text
     .trim()
     .toLowerCase()
-    .replace(/[^\w\u4e00-\u9fa5\s-]/g, "")
+    // 移除中文字符（不引入拼音库，无法可靠转换）
+    .replace(/[\u4e00-\u9fa5]+/g, " ")
+    // 空格/下划线转连字符
     .replace(/[\s_]+/g, "-")
+    // 仅保留小写字母、数字、连字符
+    .replace(/[^a-z0-9-]/g, "")
+    // 合并连续连字符
     .replace(/-+/g, "-")
+    // 去除首尾连字符
     .replace(/^-+|-+$/g, "");
+
+  // 如果清理后为空（例如纯中文标题），fallback 为 product-时间戳
+  if (!cleaned) {
+    return `product-${Date.now()}`;
+  }
+  return cleaned;
 }
 
 // 格式化日期

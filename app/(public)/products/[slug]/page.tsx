@@ -26,15 +26,9 @@ import type {
 
 export const revalidate = 60;
 
-// 预生成静态参数
-export async function generateStaticParams() {
-  const supabase = createServerSupabaseClient();
-  const { data } = await supabase
-    .from("products")
-    .select("slug")
-    .eq("is_published", true);
-  return ((data || []) as { slug: string }[]).map((p) => ({ slug: p.slug }));
-}
+// 不使用 generateStaticParams：构建时无请求作用域，无法调用 cookies()。
+// 改为依赖 ISR (revalidate = 60) 按需生成与缓存，首次访问时渲染并缓存 60 秒。
+// 同时设置 dynamicParams = true（默认），允许任意 slug 动态渲染。
 
 // 动态 metadata
 export async function generateMetadata({
@@ -90,12 +84,13 @@ export default async function ProductDetailPage({
 
   const product = productData as Product;
 
-  // 并行查询关联数据
+  // 并行查询关联数据（含 company_profile 用于读取联系电话）
   const [
     { data: imagesData },
     { data: category },
     { data: subcategory },
     { data: certificates },
+    { data: companyData },
   ] = await Promise.all([
     supabase
       .from("product_images")
@@ -122,6 +117,11 @@ export default async function ProductDetailPage({
       .eq("is_published", true)
       .order("sort_order", { ascending: true })
       .limit(4),
+    supabase
+      .from("company_profile")
+      .select("phone")
+      .limit(1)
+      .maybeSingle(),
   ]);
 
   const images = (imagesData as ProductImage[] | null) || [];
@@ -138,6 +138,8 @@ export default async function ProductDetailPage({
   const cat = category as Category | null;
   const sub = subcategory as Subcategory | null;
   const certs = (certificates as Certificate[] | null) || [];
+  const companyPhone =
+    (companyData as { phone: string | null } | null)?.phone || null;
 
   // 规格表
   const specs: Array<{ icon: typeof Ruler; label: string; value?: string | null }> = [
@@ -324,13 +326,15 @@ export default async function ProductDetailPage({
       {/* 底部询盘 CTA */}
       <div className="fixed bottom-0 left-1/2 z-40 w-full max-w-h5 -translate-x-1/2 border-t border-gray-100 bg-white/95 px-4 py-3 backdrop-blur-lg safe-bottom">
         <div className="flex gap-2">
-          <a
-            href="tel:+8613800000000"
-            className="flex h-12 w-12 items-center justify-center rounded-lg border border-gray-200 text-gray-600"
-            aria-label="电话联系"
-          >
-            <Phone className="h-5 w-5" />
-          </a>
+          {companyPhone && (
+            <a
+              href={`tel:${companyPhone.replace(/[^+\d]/g, "")}`}
+              className="flex h-12 w-12 items-center justify-center rounded-lg border border-gray-200 text-gray-600"
+              aria-label="电话联系"
+            >
+              <Phone className="h-5 w-5" />
+            </a>
+          )}
           <Link href="/contact" className="flex-1">
             <Button size="lg" className="w-full">
               立即询盘获取报价

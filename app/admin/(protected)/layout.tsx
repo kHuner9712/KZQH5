@@ -19,7 +19,8 @@ export default async function ProtectedLayout({
     redirect("/admin/login");
   }
 
-  // 校验是否为管理员（admin_profiles 不开放 RLS，用 service_role 读取）
+  // 校验是否为管理员（admin_profiles 不开放 RLS，必须用 service_role 读取）
+  // service_role 缺失或读取异常时，必须拒绝访问，绝不降级放行
   let isAdmin = false;
   let email = session.user.email || undefined;
   try {
@@ -34,8 +35,8 @@ export default async function ProtectedLayout({
       email = profile.email || email;
     }
   } catch {
-    // service_role 未配置时降级：允许已登录用户进入，写操作由 RLS 拦截
-    isAdmin = true;
+    // service_role 未配置或读取失败：拒绝访问，跳转登录页并提示
+    redirect("/admin/login?error=no_permission");
   }
 
   if (!isAdmin) {

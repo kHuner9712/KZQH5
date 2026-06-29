@@ -53,22 +53,22 @@ export default async function AboutPage() {
     {
       icon: Boxes,
       title: "产品能力",
-      desc: "覆盖多层实木板、MDF、三聚氰胺饰面板、UV 涂装板、玻镁防火板等全品类工程板材，规格可定制。",
+      desc: "提供工程级板材与装饰饰面板等多品类产品，规格可定制，详见产品中心。",
     },
     {
       icon: ShieldCheck,
       title: "品控能力",
-      desc: "通过 ISO 9001 质量管理体系认证，所有产品经第三方检测，B 级防火、E0 环保等级可追溯。",
+      desc: "建立完整品控流程，产品按公开的防火与环保等级交付，具体等级以产品详情与资质证书为准。",
     },
     {
       icon: Factory,
       title: "生产与交付能力",
-      desc: "稳定产能保障工程批量供货，支持定制规格生产，国内整车配送与海外集装箱出口。",
+      desc: "稳定产能保障工程批量供货，支持定制规格生产，国内配送与海外出口并行。",
     },
     {
       icon: Globe2,
       title: "国内与海外服务",
-      desc: "国内服务工程精装项目；海外符合 CARB P2 / E0 标准，支持 FOB / CIF 条款，多语言询盘响应。",
+      desc: "国内服务工程精装项目；海外支持多语言询盘响应，贸易条款与认证要求可在线咨询。",
     },
   ];
 
@@ -79,11 +79,11 @@ export default async function AboutPage() {
         <div className="bg-grid pointer-events-none absolute inset-0 opacity-40" />
         <div className="relative">
           <h1 className="text-2xl font-bold">
-            {company?.title_cn || "KZQ · 工程级板材供应商"}
+            {company?.title_cn || "KZQ · 工程级板材品牌"}
           </h1>
           <p className="mt-2 text-sm leading-relaxed text-gray-300">
             {company?.description_cn ||
-              "KZQ 专注于工程级板材、装饰饰面板与防火板材，服务国内工程精装与海外采购。"}
+              "KZQ 专注于工程级板材与装饰饰面板，服务国内工程精装与海外采购，欢迎通过询盘表单联系。"}
           </p>
         </div>
       </section>
@@ -93,7 +93,7 @@ export default async function AboutPage() {
         <h2 className="text-base font-semibold text-graphite">品牌介绍</h2>
         <p className="mt-2 text-sm leading-relaxed text-gray-600">
           {company?.description_cn ||
-            "KZQ 是一家专注于工程级板材的品牌供应商，核心产品涵盖多层板、MDF、饰面板、防火板等，全部产品达到 B 级防火与 E0 环保等级，服务国内工程精装项目与海外经销商采购。"}
+            "KZQ 是一家专注于工程级板材的品牌供应商，核心产品涵盖饰面板、防火板等多个品类，具体产品规格与等级以产品中心展示为准，欢迎国内外客户通过询盘表单联系合作。"}
         </p>
         {company?.description_en && (
           <p className="mt-3 text-xs leading-relaxed text-gray-400">
