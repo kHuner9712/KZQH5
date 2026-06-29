@@ -1,0 +1,76 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --color-graphite: #0b0f14;
+  --color-graphite-50: #1a1f26;
+  --color-steel: #1e5bff;
+  --color-gold: #d4a24c;
+}
+
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+html,
+body {
+  background: #f5f6f8;
+  color: #0b0f14;
+  font-family: var(--font-sans, "HarmonyOS Sans SC", "Manrope", system-ui, sans-serif);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* 隐藏滚动条（横向滑动区） */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* 自定义渐变背景 */
+.bg-hero-gradient {
+  background:
+    radial-gradient(circle at 20% 20%, rgba(30, 91, 255, 0.25), transparent 50%),
+    radial-gradient(circle at 80% 0%, rgba(212, 162, 76, 0.18), transparent 45%),
+    linear-gradient(180deg, #0b0f14 0%, #1a1f26 100%);
+}
+
+.bg-grid {
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+
+/* 文字渐变 */
+.text-gradient-gold {
+  background: linear-gradient(135deg, #e6bc6e 0%, #d4a24c 50%, #a87b30 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* 骨架屏 shimmer */
+.skeleton {
+  background: linear-gradient(90deg, #e8eaee 25%, #f1f3f6 50%, #e8eaee 75%);
+  background-size: 1000px 100%;
+  animation: shimmer 1.5s infinite;
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: -1000px 0;
+  }
+  100% {
+    background-position: 1000px 0;
+  }
+}
+
+/* 安全区域适配（iPhone 底部） */
+.safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom);
+}
