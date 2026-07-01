@@ -14,7 +14,10 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
     return (
       <div className="space-y-1.5">
         {label && (
-          <label htmlFor={inputId} className="block text-sm font-medium text-gray-700">
+          <label
+            htmlFor={inputId}
+            className="block text-[12px] font-medium text-ink-soft"
+          >
             {label}
             {required && <span className="ml-0.5 text-red-500">*</span>}
           </label>
@@ -23,14 +26,14 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
           ref={ref}
           id={inputId}
           className={cn(
-            "h-11 w-full rounded-lg border bg-white px-3.5 text-sm text-graphite outline-none transition placeholder:text-gray-400 focus:border-steel focus:ring-2 focus:ring-steel/20",
-            error ? "border-red-400" : "border-gray-200",
+            "h-11 w-full rounded-xl border bg-white px-3.5 text-sm text-ink outline-none transition placeholder:text-ink-mute focus:border-industrial focus:ring-2 focus:ring-industrial/15",
+            error ? "border-red-400" : "border-ink-line",
             className
           )}
           {...props}
         />
-        {hint && !error && <p className="text-xs text-gray-400">{hint}</p>}
-        {error && <p className="text-xs text-red-500">{error}</p>}
+        {hint && !error && <p className="text-[11px] text-ink-mute">{hint}</p>}
+        {error && <p className="text-[11px] text-red-500">{error}</p>}
       </div>
     );
   }
@@ -50,7 +53,10 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(
     return (
       <div className="space-y-1.5">
         {label && (
-          <label htmlFor={inputId} className="block text-sm font-medium text-gray-700">
+          <label
+            htmlFor={inputId}
+            className="block text-[12px] font-medium text-ink-soft"
+          >
             {label}
             {required && <span className="ml-0.5 text-red-500">*</span>}
           </label>
@@ -59,14 +65,14 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(
           ref={ref}
           id={inputId}
           className={cn(
-            "w-full rounded-lg border bg-white px-3.5 py-2.5 text-sm text-graphite outline-none transition placeholder:text-gray-400 focus:border-steel focus:ring-2 focus:ring-steel/20",
-            error ? "border-red-400" : "border-gray-200",
+            "w-full rounded-xl border bg-white px-3.5 py-2.5 text-sm text-ink outline-none transition placeholder:text-ink-mute focus:border-industrial focus:ring-2 focus:ring-industrial/15",
+            error ? "border-red-400" : "border-ink-line",
             className
           )}
           {...props}
         />
-        {hint && !error && <p className="text-xs text-gray-400">{hint}</p>}
-        {error && <p className="text-xs text-red-500">{error}</p>}
+        {hint && !error && <p className="text-[11px] text-ink-mute">{hint}</p>}
+        {error && <p className="text-[11px] text-red-500">{error}</p>}
       </div>
     );
   }

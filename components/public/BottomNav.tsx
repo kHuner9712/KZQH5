@@ -12,6 +12,11 @@ const tabs = [
   { href: "/contact", label: "询盘", icon: Phone },
 ];
 
+/**
+ * 底部 Tab 导航 - 微信 H5 / 小程序风格
+ * - 固定底部，与 H5 容器同宽
+ * - 当前选中项有顶部指示条 + 强调色
+ */
 export function BottomNav() {
   const pathname = usePathname();
 
@@ -21,8 +26,8 @@ export function BottomNav() {
   };
 
   return (
-    <nav className="fixed bottom-0 left-1/2 z-50 w-full max-w-h5 -translate-x-1/2 border-t border-gray-200 bg-white/95 backdrop-blur-lg safe-bottom">
-      <div className="flex items-stretch justify-around">
+    <nav className="fixed bottom-0 left-1/2 z-50 w-full max-w-h5 -translate-x-1/2 border-t border-ink-line bg-white/95 backdrop-blur-lg safe-bottom">
+      <div className="flex items-stretch justify-around px-2">
         {tabs.map((tab) => {
           const active = isActive(tab.href);
           const Icon = tab.icon;
@@ -31,12 +36,24 @@ export function BottomNav() {
               key={tab.href}
               href={tab.href}
               className={cn(
-                "flex flex-1 flex-col items-center justify-center gap-1 py-2.5 transition",
-                active ? "text-steel" : "text-gray-400"
+                "relative flex flex-1 flex-col items-center justify-center gap-1 py-2.5 transition",
+                active ? "text-industrial" : "text-ink-mute"
               )}
             >
-              <Icon className={cn("h-5 w-5", active && "scale-110")} strokeWidth={active ? 2.4 : 2} />
-              <span className={cn("text-[11px]", active ? "font-semibold" : "font-medium")}>
+              {/* 顶部指示条 */}
+              {active && (
+                <span className="absolute top-0 h-0.5 w-7 rounded-full bg-industrial" />
+              )}
+              <Icon
+                className={cn("h-5 w-5 transition-transform", active && "scale-110")}
+                strokeWidth={active ? 2.4 : 2}
+              />
+              <span
+                className={cn(
+                  "text-[10px]",
+                  active ? "font-semibold" : "font-medium"
+                )}
+              >
                 {tab.label}
               </span>
             </Link>

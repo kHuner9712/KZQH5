@@ -1,244 +1,214 @@
 import Link from "next/link";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
+import { isDemoMode } from "@/lib/demo";
+import { mockCompany, mockCategories, getMockFeaturedProducts } from "@/lib/mock-data";
+import { BrandLogo } from "@/components/public/BrandLogo";
+import { FeatureCard } from "@/components/public/FeatureCard";
+import { CategoryCard } from "@/components/public/CategoryCard";
 import { ProductCard } from "@/components/public/ProductCard";
-import { FireBadge, EcoBadge } from "@/components/public/Badge";
-import { EmptyState } from "@/components/public/EmptyState";
-import {
-  Flame,
-  Leaf,
-  Truck,
-  Globe,
-  ArrowRight,
-  ChevronRight,
-  Award,
-  Phone,
-} from "lucide-react";
+import { SectionHeader } from "@/components/public/SectionHeader";
+import { ArrowRight, Flame, Leaf, Truck, Globe2, ChevronRight } from "lucide-react";
 import type { Product, Category, CompanyProfile } from "@/types/database";
 
 export const revalidate = 60;
 
 export default async function HomePage() {
-  const supabase = createServerSupabaseClient();
+  let featuredProducts: Product[] = [];
+  let categories: Category[] = [];
+  let company: CompanyProfile | null = null;
 
-  const [
-    { data: featuredProducts },
-    { data: categories },
-    { data: company },
-  ] = await Promise.all([
-    supabase
-      .from("products")
-      .select("*")
-      .eq("is_published", true)
-      .eq("is_featured", true)
-      .order("sort_order", { ascending: true })
-      .limit(6),
-    supabase
-      .from("categories")
-      .select("*")
-      .eq("is_active", true)
-      .order("sort_order", { ascending: true }),
-    supabase
-      .from("company_profile")
-      .select("*")
-      .limit(1)
-      .single(),
-  ]);
-
-  const advantages = (company as CompanyProfile | null)?.advantages_cn || [];
-  const logoUrl = (company as CompanyProfile | null)?.logo_url;
-
-  const advantageIcons: Record<string, typeof Flame> = {
-    flame: Flame,
-    leaf: Leaf,
-    truck: Truck,
-    globe: Globe,
-  };
+  if (isDemoMode()) {
+    featuredProducts = getMockFeaturedProducts(6);
+    categories = [...mockCategories].sort((a, b) => a.sort_order - b.sort_order);
+    company = mockCompany;
+  } else {
+    const supabase = createServerSupabaseClient();
+    const [
+      { data: featuredData },
+      { data: categoriesData },
+      { data: companyData },
+    ] = await Promise.all([
+      supabase
+        .from("products")
+        .select("*")
+        .eq("is_published", true)
+        .eq("is_featured", true)
+        .order("sort_order", { ascending: true })
+        .limit(6),
+      supabase
+        .from("categories")
+        .select("*")
+        .eq("is_active", true)
+        .order("sort_order", { ascending: true }),
+      supabase
+        .from("company_profile")
+        .select("*")
+        .limit(1)
+        .maybeSingle(),
+    ]);
+    featuredProducts = (featuredData as Product[] | null) || [];
+    categories = (categoriesData as Category[] | null) || [];
+    company = (companyData as CompanyProfile | null) || null;
+  }
 
   return (
-    <div className="animate-fade-in">
-      {/* Hero 区 */}
-      <section className="bg-hero-gradient relative overflow-hidden">
-        <div className="bg-grid pointer-events-none absolute inset-0 opacity-40" />
-        <div className="relative px-6 pb-10 pt-12 text-white">
-          <div className="flex items-center gap-3">
-            {logoUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={logoUrl} alt="KZQ" className="h-12 w-12 rounded-lg object-cover" />
-            ) : (
-              <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-white/10 text-lg font-bold text-gradient-gold">
-                KZQ
-              </div>
-            )}
-            <div>
-              <h1 className="text-2xl font-bold tracking-tight">KZQ</h1>
-              <p className="text-xs text-gray-400">工程级板材 · 防火饰面 · 海外出口</p>
+    <div className="animate-fade-in bg-canvas">
+      {/* ========== Hero ========== */}
+      <section className="relative overflow-hidden bg-canvas-warm px-5 pb-8 pt-10 texture-paper">
+        {/* 顶部品牌行 */}
+        <div className="relative flex items-center justify-between">
+          <div className="flex items-center gap-2.5">
+            <BrandLogo logoUrl={company?.logo_url} size={36} />
+            <div className="leading-tight">
+              <p className="text-[15px] font-bold tracking-tight text-ink">KZQ</p>
+              <p className="text-[9px] uppercase tracking-[0.18em] text-ink-mute">
+                Engineering Boards
+              </p>
             </div>
           </div>
-          <p className="mt-6 text-lg font-medium leading-relaxed">
-            专注<span className="text-gradient-gold"> B 级防火 </span>
-            与<span className="text-gradient-gold"> E0 环保</span>等级
+          <Link
+            href="/about"
+            className="rounded-full border border-ink-line bg-white px-3 py-1 text-[11px] text-ink-soft transition hover:border-industrial/30 hover:text-industrial"
+          >
+            关于我们
+          </Link>
+        </div>
+
+        {/* 主标题区 */}
+        <div className="relative mt-9">
+          <p className="text-[10px] uppercase tracking-[0.22em] text-brass">
+            Engineering Boards · Fire-Rated Decorative Panels
+          </p>
+          <h1 className="mt-2.5 text-[26px] font-bold leading-[1.25] tracking-tight text-ink">
+            专注 B 级防火
             <br />
-            工程板材与装饰饰面供应商
+            <span className="text-industrial-gradient">E0 环保</span> 工程板材
+          </h1>
+          <p className="mt-3 max-w-[19rem] text-[12.5px] leading-relaxed text-ink-soft">
+            KZQ 是工程级板材与装饰饰面板品牌供应商，服务国内工程精装与海外采购，欢迎通过询盘表单联系合作。
           </p>
-          <p className="mt-3 text-sm leading-relaxed text-gray-400">
-            服务国内工程精装项目与海外经销商采购，支持定制规格与 FOB / CIF 出口。
-          </p>
-          <div className="mt-6 flex gap-3">
+
+          {/* CTA */}
+          <div className="mt-5 flex gap-2.5">
             <Link
               href="/products"
-              className="inline-flex items-center gap-1.5 rounded-lg bg-steel px-5 py-2.5 text-sm font-medium text-white transition hover:bg-steel-dark"
+              className="btn-primary h-11 flex-1 text-[13px]"
             >
-              浏览产品 <ArrowRight className="h-4 w-4" />
+              浏览产品
+              <ArrowRight className="h-4 w-4" />
             </Link>
             <Link
               href="/contact"
-              className="inline-flex items-center gap-1.5 rounded-lg border border-white/20 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-white/10"
+              className="btn-outline h-11 flex-1 text-[13px]"
             >
-              <Phone className="h-4 w-4" /> 立即询盘
+              立即询盘
             </Link>
           </div>
         </div>
       </section>
 
-      {/* 核心优势 */}
-      {advantages.length > 0 && (
-        <section className="px-4 py-6">
-          <div className="grid grid-cols-2 gap-3">
-            {advantages.map((adv, i) => {
-              const Icon = advantageIcons[adv.icon] || Flame;
-              return (
-                <div
-                  key={i}
-                  className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-gray-100"
-                >
-                  <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-steel/10">
-                    <Icon className="h-5 w-5 text-steel" />
-                  </div>
-                  <h3 className="mt-2.5 text-sm font-semibold text-graphite">
-                    {adv.title_cn}
-                  </h3>
-                  <p className="mt-1 text-[11px] leading-relaxed text-gray-500">
-                    {adv.desc_cn}
-                  </p>
-                </div>
-              );
-            })}
-          </div>
-        </section>
-      )}
+      {/* ========== 核心优势 2x2 ========== */}
+      <section className="px-5 pt-7">
+        <SectionHeader
+          title="核心优势"
+          subtitle="为什么选择 KZQ 工程级板材"
+        />
+        <div className="mt-3 grid grid-cols-2 gap-2.5">
+          <FeatureCard
+            icon={Flame}
+            title="B 级防火"
+            desc="第三方燃烧性能检测，达到 B 级防火标准"
+          />
+          <FeatureCard
+            icon={Leaf}
+            title="E0 环保"
+            desc="甲醛释放量达到 E0 级，适用于室内精装"
+          />
+          <FeatureCard
+            icon={Truck}
+            title="工程交付"
+            desc="稳定产能保障工程批量供货，规格可定制"
+          />
+          <FeatureCard
+            icon={Globe2}
+            title="海外出口"
+            desc="支持集装箱 FOB/CIF 出口，多语言询盘响应"
+          />
+        </div>
+      </section>
 
-      {/* 一级类目入口 */}
-      {categories && categories.length > 0 && (
-        <section className="px-4 py-4">
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-base font-semibold text-graphite">产品类目</h2>
-            <Link href="/products" className="text-xs text-steel">
-              全部 <ChevronRight className="inline h-3 w-3" />
-            </Link>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            {(categories as Category[]).map((cat) => (
+      {/* ========== 产品类目 ========== */}
+      {categories.length > 0 && (
+        <section className="px-5 pt-8">
+          <SectionHeader
+            title="产品类目"
+            subtitle="按应用场景选择合适的板材"
+            action={
               <Link
-                key={cat.id}
-                href={`/products?category=${cat.slug}`}
-                className="group relative overflow-hidden rounded-2xl bg-graphite p-4 text-white transition hover:bg-graphite-50"
+                href="/products"
+                className="inline-flex items-center gap-0.5 text-[11px] text-industrial"
               >
-                <div className="bg-grid absolute inset-0 opacity-30" />
-                <div className="relative">
-                  <h3 className="text-sm font-semibold">{cat.name_cn}</h3>
-                  {cat.name_en && (
-                    <p className="mt-0.5 text-[10px] uppercase tracking-wider text-gray-400">
-                      {cat.name_en}
-                    </p>
-                  )}
-                  <p className="mt-2 line-clamp-2 text-[11px] text-gray-400">
-                    {cat.description_cn}
-                  </p>
-                  <span className="mt-2 inline-flex items-center gap-0.5 text-[11px] text-gold">
-                    查看 <ArrowRight className="h-3 w-3" />
-                  </span>
-                </div>
+                全部 <ChevronRight className="h-3 w-3" />
               </Link>
+            }
+          />
+          <div className="mt-3 grid grid-cols-2 gap-2.5">
+            {categories.map((cat) => (
+              <CategoryCard key={cat.id} category={cat} className="min-h-[130px]" />
             ))}
           </div>
         </section>
       )}
 
-      {/* 主推产品 */}
-      <section className="px-4 py-4">
-        <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-base font-semibold text-graphite">主推产品</h2>
-          <Link href="/products" className="text-xs text-steel">
-            全部 <ChevronRight className="inline h-3 w-3" />
-          </Link>
-        </div>
-        {featuredProducts && featuredProducts.length > 0 ? (
-          <div className="-mx-4 flex gap-3 overflow-x-auto px-4 pb-2 no-scrollbar">
-            {(featuredProducts as Product[]).map((p) => (
-              <div key={p.id} className="w-[200px] shrink-0">
-                <ProductCard product={p} />
-              </div>
+      {/* ========== 主推产品 ========== */}
+      {featuredProducts.length > 0 && (
+        <section className="px-5 pt-8">
+          <SectionHeader
+            title="主推产品"
+            subtitle="B 级防火 · E0 环保 · 工程批量供货"
+            action={
+              <Link
+                href="/products"
+                className="inline-flex items-center gap-0.5 text-[11px] text-industrial"
+              >
+                全部 <ChevronRight className="h-3 w-3" />
+              </Link>
+            }
+          />
+          <div className="mt-3 grid grid-cols-2 gap-2.5">
+            {featuredProducts.map((p) => (
+              <ProductCard key={p.id} product={p} />
             ))}
           </div>
-        ) : (
-          <EmptyState title="暂无主推产品" description="请在后台设置主推产品" />
-        )}
-      </section>
+        </section>
+      )}
 
-      {/* 卖点徽章区 */}
-      <section className="px-4 py-6">
-        <div className="rounded-2xl bg-graphite p-6 text-center text-white">
-          <div className="bg-grid pointer-events-none absolute inset-0 rounded-2xl opacity-20" />
-          <div className="relative">
-            <h2 className="text-base font-semibold">品质承诺</h2>
-            <p className="mt-1 text-xs text-gray-400">第三方检测认证 · 工程级标准</p>
-            <div className="mt-4 flex justify-center gap-3">
-              <div className="rounded-xl bg-white/5 px-4 py-3 ring-1 ring-white/10">
-                <FireBadge />
-                <p className="mt-1.5 text-[10px] text-gray-400">燃烧性能检测</p>
-              </div>
-              <div className="rounded-xl bg-white/5 px-4 py-3 ring-1 ring-white/10">
-                <EcoBadge />
-                <p className="mt-1.5 text-[10px] text-gray-400">甲醛释放量</p>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* 证书入口 */}
-      <section className="px-4 pb-6">
-        <Link
-          href="/certificates"
-          className="flex items-center justify-between rounded-2xl bg-white p-4 shadow-sm ring-1 ring-gray-100"
-        >
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-gold/15">
-              <Award className="h-5 w-5 text-gold-dark" />
-            </div>
-            <div>
-              <h3 className="text-sm font-semibold text-graphite">资质证书</h3>
-              <p className="text-[11px] text-gray-500">环保 / 防火 / 体系认证</p>
-            </div>
-          </div>
-          <ChevronRight className="h-4 w-4 text-gray-400" />
-        </Link>
-      </section>
-
-      {/* 询盘 CTA */}
-      <section className="px-4 pb-8">
+      {/* ========== 询盘 CTA ========== */}
+      <section className="px-5 pt-8 pb-4">
         <Link
           href="/contact"
-          className="block rounded-2xl bg-gradient-to-r from-steel to-steel-dark p-5 text-white shadow-lg"
+          className="card-base relative block overflow-hidden bg-industrial p-5 text-white"
         >
-          <div className="flex items-center justify-between">
+          <div
+            className="absolute inset-0 opacity-[0.08]"
+            style={{
+              backgroundImage:
+                "repeating-linear-gradient(90deg, rgba(255,255,255,0.6) 0, rgba(255,255,255,0.6) 1px, transparent 1px, transparent 28px)",
+            }}
+          />
+          <div className="relative flex items-center justify-between">
             <div>
-              <h3 className="text-base font-semibold">获取专属报价</h3>
-              <p className="mt-0.5 text-xs text-blue-100">
+              <p className="text-[10px] uppercase tracking-[0.18em] text-white/60">
+                Get Quotation
+              </p>
+              <h3 className="mt-1 text-base font-semibold">
+                联系 KZQ 获取报价
+              </h3>
+              <p className="mt-0.5 text-[11px] text-white/70">
                 国内工程 · 海外采购 · 规格定制
               </p>
             </div>
-            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-white/20">
+            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-white/15 backdrop-blur-sm">
               <ArrowRight className="h-5 w-5" />
             </div>
           </div>

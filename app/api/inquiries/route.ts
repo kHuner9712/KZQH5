@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
+import { isDemoMode } from "@/lib/demo";
 import type { InquiryInput } from "@/types/database";
 
 // 询盘提交接口（匿名可访问）
@@ -56,6 +57,15 @@ export async function POST(request: NextRequest) {
     status: "new" as const,
     source: "h5",
   };
+
+  // Demo 模式：不写入 Supabase，直接返回成功（用于前端 Mock Preview）
+  if (isDemoMode()) {
+    return NextResponse.json({
+      success: true,
+      id: `demo-inquiry-${Date.now()}`,
+      demo: true,
+    });
+  }
 
   try {
     const supabase = createAdminSupabaseClient();

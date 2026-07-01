@@ -5,7 +5,6 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Search, X } from "lucide-react";
 import { useState, useEffect } from "react";
 
-// 内部实际使用 useSearchParams 的客户端组件
 function SearchBoxInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -28,7 +27,7 @@ function SearchBoxInner() {
 
   return (
     <div className="relative">
-      <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+      <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-mute" />
       <input
         type="text"
         value={q}
@@ -37,7 +36,7 @@ function SearchBoxInner() {
           if (e.key === "Enter") submit(q);
         }}
         placeholder="搜索产品名称、规格…"
-        className="h-10 w-full rounded-full border border-gray-200 bg-white pl-9 pr-9 text-sm outline-none transition focus:border-steel focus:ring-2 focus:ring-steel/20"
+        className="h-11 w-full rounded-xl border border-ink-line bg-white pl-10 pr-10 text-sm text-ink outline-none transition placeholder:text-ink-mute focus:border-industrial focus:ring-2 focus:ring-industrial/15"
       />
       {q && (
         <button
@@ -45,7 +44,7 @@ function SearchBoxInner() {
             setQ("");
             submit("");
           }}
-          className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+          className="absolute right-3.5 top-1/2 -translate-y-1/2 text-ink-mute hover:text-ink"
           aria-label="清除"
         >
           <X className="h-4 w-4" />
@@ -55,8 +54,6 @@ function SearchBoxInner() {
   );
 }
 
-// 默认导出用 Suspense 包裹，避免 Next.js 生产构建时报
-// "useSearchParams() should be wrapped in a suspense boundary"
 export function SearchBox() {
   return (
     <Suspense fallback={<SearchBoxFallback />}>
@@ -68,12 +65,12 @@ export function SearchBox() {
 function SearchBoxFallback() {
   return (
     <div className="relative">
-      <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+      <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-mute" />
       <input
         type="text"
         disabled
         placeholder="搜索产品名称、规格…"
-        className="h-10 w-full rounded-full border border-gray-200 bg-white pl-9 pr-9 text-sm outline-none transition"
+        className="h-11 w-full rounded-xl border border-ink-line bg-white pl-10 pr-10 text-sm outline-none transition"
       />
     </div>
   );

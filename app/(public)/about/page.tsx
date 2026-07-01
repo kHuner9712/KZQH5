@@ -1,5 +1,9 @@
+import Link from "next/link";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
+import { isDemoMode } from "@/lib/demo";
+import { mockCompany } from "@/lib/mock-data";
 import { siteUrl } from "@/lib/utils";
+import { SectionHeader } from "@/components/public/SectionHeader";
 import type { Metadata } from "next";
 import type { CompanyProfile } from "@/types/database";
 import {
@@ -7,7 +11,8 @@ import {
   ShieldCheck,
   Factory,
   Globe2,
-  CheckCircle2,
+  ArrowRight,
+  Phone,
 } from "lucide-react";
 
 export const metadata: Metadata = {
@@ -19,14 +24,19 @@ export const metadata: Metadata = {
 export const revalidate = 60;
 
 export default async function AboutPage() {
-  const supabase = createServerSupabaseClient();
-  const { data } = await supabase
-    .from("company_profile")
-    .select("*")
-    .limit(1)
-    .single();
+  let company: CompanyProfile | null = null;
 
-  const company = data as CompanyProfile | null;
+  if (isDemoMode()) {
+    company = mockCompany;
+  } else {
+    const supabase = createServerSupabaseClient();
+    const { data } = await supabase
+      .from("company_profile")
+      .select("*")
+      .limit(1)
+      .single();
+    company = (data as CompanyProfile | null) || null;
+  }
 
   const jsonLd = {
     "@context": "https://schema.org",
@@ -73,54 +83,45 @@ export default async function AboutPage() {
   ];
 
   return (
-    <div className="animate-fade-in">
+    <div className="animate-fade-in bg-canvas">
       {/* Hero */}
-      <section className="bg-hero-gradient relative overflow-hidden px-4 pb-8 pt-10 text-white">
-        <div className="bg-grid pointer-events-none absolute inset-0 opacity-40" />
-        <div className="relative">
-          <h1 className="text-2xl font-bold">
-            {company?.title_cn || "KZQ · 工程级板材品牌"}
-          </h1>
-          <p className="mt-2 text-sm leading-relaxed text-gray-300">
-            {company?.description_cn ||
-              "KZQ 专注于工程级板材与装饰饰面板，服务国内工程精装与海外采购，欢迎通过询盘表单联系。"}
-          </p>
-        </div>
-      </section>
-
-      {/* 品牌介绍 */}
-      <section className="bg-white px-4 py-6">
-        <h2 className="text-base font-semibold text-graphite">品牌介绍</h2>
-        <p className="mt-2 text-sm leading-relaxed text-gray-600">
-          {company?.description_cn ||
-            "KZQ 是一家专注于工程级板材的品牌供应商，核心产品涵盖饰面板、防火板等多个品类，具体产品规格与等级以产品中心展示为准，欢迎国内外客户通过询盘表单联系合作。"}
+      <section className="bg-canvas-warm px-5 pb-8 pt-10 texture-paper">
+        <p className="text-[10px] uppercase tracking-[0.22em] text-brass">
+          About KZQ
         </p>
-        {company?.description_en && (
-          <p className="mt-3 text-xs leading-relaxed text-gray-400">
-            {company.description_en}
+        <h1 className="mt-2 text-2xl font-bold tracking-tight text-ink">
+          {company?.title_cn || "KZQ · 工程级板材品牌"}
+        </h1>
+        <p className="mt-3 max-w-[20rem] text-[13px] leading-relaxed text-ink-soft">
+          {company?.description_cn ||
+            "KZQ 专注于工程级板材与装饰饰面板，服务国内工程精装与海外采购，欢迎通过询盘表单联系。"}
+        </p>
+        {company?.address_cn && (
+          <p className="mt-3 text-[11px] text-ink-mute">
+            {company.address_cn}
           </p>
         )}
       </section>
 
-      {/* 能力介绍 */}
-      <section className="mt-2 bg-white px-4 py-6">
-        <h2 className="text-base font-semibold text-graphite">核心能力</h2>
-        <div className="mt-3 space-y-3">
+      {/* 核心能力 */}
+      <section className="px-5 pt-7">
+        <SectionHeader
+          title="核心能力"
+          subtitle="产品 · 品控 · 交付 · 海外服务"
+        />
+        <div className="mt-3 space-y-2.5">
           {capabilities.map((cap, i) => {
             const Icon = cap.icon;
             return (
-              <div
-                key={i}
-                className="flex gap-3 rounded-xl bg-gray-50 p-4"
-              >
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-steel/10">
-                  <Icon className="h-5 w-5 text-steel" />
+              <div key={i} className="card-base flex gap-3.5 p-4">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-industrial-50">
+                  <Icon className="h-5 w-5 text-industrial" />
                 </div>
-                <div className="min-w-0">
-                  <h3 className="text-sm font-semibold text-graphite">
+                <div className="min-w-0 flex-1">
+                  <h3 className="text-[13px] font-semibold text-ink">
                     {cap.title}
                   </h3>
-                  <p className="mt-1 text-xs leading-relaxed text-gray-500">
+                  <p className="mt-1 text-[11.5px] leading-relaxed text-ink-soft">
                     {cap.desc}
                   </p>
                 </div>
@@ -130,25 +131,70 @@ export default async function AboutPage() {
         </div>
       </section>
 
-      {/* 优势列表（来自 company_profile） */}
+      {/* 品牌优势（来自 company_profile） */}
       {company?.advantages_cn && company.advantages_cn.length > 0 && (
-        <section className="mt-2 bg-white px-4 py-6">
-          <h2 className="text-base font-semibold text-graphite">品牌优势</h2>
-          <div className="mt-3 space-y-2.5">
+        <section className="px-5 pt-7">
+          <SectionHeader title="品牌优势" subtitle="KZQ 差异化能力" />
+          <div className="mt-3 space-y-2">
             {company.advantages_cn.map((adv, i) => (
-              <div key={i} className="flex items-start gap-2">
-                <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" />
+              <div
+                key={i}
+                className="flex items-start gap-3 rounded-xl border border-ink-line bg-canvas-warm p-3"
+              >
+                <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-white text-[10px] font-bold text-industrial">
+                  {i + 1}
+                </div>
                 <div>
-                  <p className="text-sm font-medium text-graphite">
+                  <p className="text-[13px] font-medium text-ink">
                     {adv.title_cn}
                   </p>
-                  <p className="text-xs text-gray-500">{adv.desc_cn}</p>
+                  <p className="mt-0.5 text-[11px] leading-relaxed text-ink-soft">
+                    {adv.desc_cn}
+                  </p>
                 </div>
               </div>
             ))}
           </div>
         </section>
       )}
+
+      {/* 询盘 CTA */}
+      <section className="px-5 pt-7 pb-4">
+        <Link
+          href="/contact"
+          className="card-base relative block overflow-hidden bg-industrial p-5 text-white"
+        >
+          <div
+            className="absolute inset-0 opacity-[0.08]"
+            style={{
+              backgroundImage:
+                "repeating-linear-gradient(90deg, rgba(255,255,255,0.6) 0, rgba(255,255,255,0.6) 1px, transparent 1px, transparent 28px)",
+            }}
+          />
+          <div className="relative flex items-center justify-between">
+            <div>
+              <p className="text-[10px] uppercase tracking-[0.18em] text-white/60">
+                Get Quotation
+              </p>
+              <h3 className="mt-1 text-base font-semibold">联系 KZQ</h3>
+              <p className="mt-0.5 text-[11px] text-white/70">
+                国内工程 · 海外采购 · 规格定制
+              </p>
+            </div>
+            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-white/15 backdrop-blur-sm">
+              <ArrowRight className="h-5 w-5" />
+            </div>
+          </div>
+        </Link>
+        {company?.phone && (
+          <a
+            href={`tel:${company.phone.replace(/[^+\d]/g, "")}`}
+            className="mt-2 flex items-center justify-center gap-1.5 rounded-xl border border-ink-line bg-white py-3 text-[12px] text-ink-soft transition hover:border-industrial/30 hover:text-industrial"
+          >
+            <Phone className="h-3.5 w-3.5" /> {company.phone}
+          </a>
+        )}
+      </section>
 
       <script
         type="application/ld+json"

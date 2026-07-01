@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import { Input, Textarea } from "@/components/ui/Input";
-import { Button } from "@/components/ui/Button";
 import { CheckCircle2, AlertCircle } from "lucide-react";
 import type { InquiryInput } from "@/types/database";
 
@@ -89,23 +88,22 @@ export function InquiryForm({ defaultProduct }: { defaultProduct?: string }) {
 
   if (status === "success") {
     return (
-      <div className="rounded-2xl bg-white p-8 text-center shadow-sm ring-1 ring-gray-100">
+      <div className="card-base p-8 text-center">
         <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-emerald-50">
           <CheckCircle2 className="h-7 w-7 text-emerald-500" />
         </div>
-        <h3 className="mt-4 text-base font-semibold text-graphite">
+        <h3 className="mt-4 text-base font-semibold text-ink">
           询盘提交成功
         </h3>
-        <p className="mt-1.5 text-sm text-gray-500">
-          感谢您的询盘，我们的销售团队会尽快与您联系。
+        <p className="mt-1.5 text-sm text-ink-soft">
+          感谢您的询盘，我们的销售团队会在 1 个工作日内与您联系。
         </p>
-        <Button
-          variant="secondary"
-          className="mt-5"
+        <button
           onClick={() => setStatus("idle")}
+          className="btn-outline mt-5 h-11 px-5 text-sm"
         >
           继续提交新询盘
-        </Button>
+        </button>
       </div>
     );
   }
@@ -195,11 +193,22 @@ export function InquiryForm({ defaultProduct }: { defaultProduct?: string }) {
         </div>
       )}
 
-      <Button type="submit" size="lg" className="w-full" loading={status === "loading"}>
-        提交询盘
-      </Button>
+      <button
+        type="submit"
+        disabled={status === "loading"}
+        className="btn-primary h-12 w-full text-sm disabled:opacity-60"
+      >
+        {status === "loading" ? (
+          <>
+            <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+            提交中…
+          </>
+        ) : (
+          "提交询盘 · Get Quotation"
+        )}
+      </button>
 
-      <p className="text-center text-[11px] text-gray-400">
+      <p className="text-center text-[11px] text-ink-mute">
         我们仅会使用您填写的信息用于本次询盘回复，不会泄露给第三方。
       </p>
     </form>
