@@ -1,7 +1,7 @@
 // ============================================================
 // KZQ 前端 Demo / Mock Preview 数据
 // 当 NEXT_PUBLIC_DEMO_MODE=true 时，前台页面不请求 Supabase，直接使用此数据。
-// 所有图片使用 Unsplash 稳定图片源。
+// 产品图片不依赖外部图源，全部使用 CSS 板材纹理占位（由 ProductImage 组件渲染），零破图。
 // ============================================================
 
 import type {
@@ -222,24 +222,13 @@ export const mockSubcategories: Subcategory[] = [
 ];
 
 // ---------- 产品图片（统一 helper） ----------
-// 使用稳定可访问的 Unsplash 木纹/板材类图片
-const STABLE_PHOTOS = {
-  // 木纹大图
-  woodGrain1: "1604328695162-95d4d8c2c8b3",
-  woodGrain2: "1556228720-195a672e8a03",
-  // 板材质感
-  panelLight: "1503387837-b154d507b3b8",
-  panelTexture: "1604328695162-95d4d8c2c8b3",
-  // 工业材料
-  industrial1: "1581094288338-2314dd43514e",
-  industrial2: "1565793979766-a3a1c6c4c4c4",
-};
-
-function img(key: keyof typeof STABLE_PHOTOS, alt: string, sort = 0): ProductImage {
+// Demo 模式下不依赖外部图片，全部使用 CSS 板材纹理占位（由 ProductImage 组件渲染）
+// 这样可保证零破图、加载快、视觉统一，符合工程级板材品牌调性
+function img(alt: string, sort = 0): ProductImage {
   return {
-    id: id(`img-${key}-${sort}`),
+    id: id(`img-${sort}-${alt}`),
     product_id: "",
-    image_url: `https://images.unsplash.com/photo-${STABLE_PHOTOS[key]}?auto=format&fit=crop&w=1200&q=80`,
+    image_url: null,
     alt_cn: alt,
     alt_en: alt,
     sort_order: sort,
@@ -247,15 +236,8 @@ function img(key: keyof typeof STABLE_PHOTOS, alt: string, sort = 0): ProductIma
   };
 }
 
-// 共用产品图片池
-const woodPhotos = [
-  STABLE_PHOTOS.woodGrain1,
-  STABLE_PHOTOS.woodGrain2,
-  STABLE_PHOTOS.panelLight,
-];
-// 使用稳定可访问的 unsplash 图片
-function cover(key: keyof typeof STABLE_PHOTOS) {
-  return `https://images.unsplash.com/photo-${STABLE_PHOTOS[key]}?auto=format&fit=crop&w=1200&q=80`;
+function cover(): null {
+  return null;
 }
 
 // ---------- 产品列表（8 个） ----------
@@ -288,16 +270,16 @@ export const mockProducts: Product[] = [
     application_cn: "酒店 · 商场 · 写字楼 · 公共空间防火饰面",
     application_en: "Hotels, malls, offices, public fire-rated finishes",
     video_url: null,
-    cover_image_url: cover("industrial1"),
+    cover_image_url: cover(),
     is_featured: true,
     is_published: true,
     sort_order: 1,
     created_at: now,
     updated_at: now,
     product_images: [
-      img("industrial1", "玻镁防火板正面", 0),
-      img("panelTexture", "玻镁防火板细节", 1),
-      img("woodGrain1", "玻镁防火板应用", 2),
+      img("玻镁防火板正面", 0),
+      img("玻镁防火板细节", 1),
+      img("玻镁防火板应用", 2),
     ],
   },
   {
@@ -328,15 +310,15 @@ export const mockProducts: Product[] = [
     application_cn: "工程防火饰面 · 商业空间 · 海外工程",
     application_en: "Fire-rated finishes, commercial spaces, export projects",
     video_url: null,
-    cover_image_url: cover("panelTexture"),
+    cover_image_url: cover(),
     is_featured: true,
     is_published: true,
     sort_order: 2,
     created_at: now,
     updated_at: now,
     product_images: [
-      img("panelTexture", "阻燃基材板正面", 0),
-      img("industrial2", "阻燃基材板细节", 1),
+      img("阻燃基材板正面", 0),
+      img("阻燃基材板细节", 1),
     ],
   },
   {
@@ -367,15 +349,15 @@ export const mockProducts: Product[] = [
     application_cn: "室内精装 · 家具 · 商业空间饰面",
     application_en: "Interiors, furniture, commercial finishes",
     video_url: null,
-    cover_image_url: cover("woodGrain1"),
+    cover_image_url: cover(),
     is_featured: true,
     is_published: true,
     sort_order: 3,
     created_at: now,
     updated_at: now,
     product_images: [
-      img("woodGrain1", "三聚氰胺饰面板正面", 0),
-      img("woodGrain2", "三聚氰胺饰面板细节", 1),
+      img("三聚氰胺饰面板正面", 0),
+      img("三聚氰胺饰面板细节", 1),
     ],
   },
   {
@@ -406,15 +388,15 @@ export const mockProducts: Product[] = [
     application_cn: "高端室内精装 · 展示空间 · 家具饰面",
     application_en: "Premium interiors, display spaces, furniture finishes",
     video_url: null,
-    cover_image_url: cover("panelLight"),
+    cover_image_url: cover(),
     is_featured: true,
     is_published: true,
     sort_order: 4,
     created_at: now,
     updated_at: now,
     product_images: [
-      img("panelLight", "UV 涂装板正面", 0),
-      img("woodGrain2", "UV 涂装板细节", 1),
+      img("UV 涂装板正面", 0),
+      img("UV 涂装板细节", 1),
     ],
   },
   {
@@ -445,14 +427,14 @@ export const mockProducts: Product[] = [
     application_cn: "工程基材 · 饰面基材 · 涂装基材",
     application_en: "Engineering substrate, facing substrate, coating substrate",
     video_url: null,
-    cover_image_url: cover("industrial2"),
+    cover_image_url: cover(),
     is_featured: false,
     is_published: true,
     sort_order: 5,
     created_at: now,
     updated_at: now,
     product_images: [
-      img("industrial2", "高密度基材板正面", 0),
+      img("高密度基材板正面", 0),
     ],
   },
   {
@@ -483,14 +465,14 @@ export const mockProducts: Product[] = [
     application_cn: "工程结构 · 饰面基材 · 家具应用",
     application_en: "Engineering structure, substrate, furniture",
     video_url: null,
-    cover_image_url: cover("woodGrain2"),
+    cover_image_url: cover(),
     is_featured: false,
     is_published: true,
     sort_order: 6,
     created_at: now,
     updated_at: now,
     product_images: [
-      img("woodGrain2", "工程多层板正面", 0),
+      img("工程多层板正面", 0),
     ],
   },
   {
@@ -521,14 +503,14 @@ export const mockProducts: Product[] = [
     application_cn: "现代室内精装 · 家具 · 商业空间",
     application_en: "Modern interiors, furniture, commercial spaces",
     video_url: null,
-    cover_image_url: cover("panelLight"),
+    cover_image_url: cover(),
     is_featured: false,
     is_published: true,
     sort_order: 7,
     created_at: now,
     updated_at: now,
     product_images: [
-      img("panelLight", "素色饰面板正面", 0),
+      img("素色饰面板正面", 0),
     ],
   },
   {
@@ -559,14 +541,14 @@ export const mockProducts: Product[] = [
     application_cn: "高强度防火工程 · 商业空间 · 海外工程",
     application_en: "High-strength fire projects, commercial, export",
     video_url: null,
-    cover_image_url: cover("industrial1"),
+    cover_image_url: cover(),
     is_featured: false,
     is_published: true,
     sort_order: 8,
     created_at: now,
     updated_at: now,
     product_images: [
-      img("industrial1", "加厚玻镁防火板正面", 0),
+      img("加厚玻镁防火板正面", 0),
     ],
   },
 ];

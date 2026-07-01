@@ -173,10 +173,12 @@ export default async function ProductDetailPage({
     ...(p.cover_image_url
       ? [{ url: p.cover_image_url, alt: p.name_cn }]
       : []),
-    ...images.map((img) => ({
-      url: img.image_url,
-      alt: img.alt_cn || p.name_cn,
-    })),
+    ...images
+      .filter((img) => img.image_url)
+      .map((img) => ({
+        url: img.image_url as string,
+        alt: img.alt_cn || p.name_cn,
+      })),
   ];
 
   const cat = category as Category | null;

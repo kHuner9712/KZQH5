@@ -533,7 +533,7 @@ export function ProductForm({ initial, initialImages = [] }: ProductFormProps) {
                 >
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
-                    src={img.image_url}
+                    src={img.image_url || undefined}
                     alt={img.alt_cn || `图片 ${idx + 1}`}
                     className="h-14 w-20 rounded object-cover"
                   />

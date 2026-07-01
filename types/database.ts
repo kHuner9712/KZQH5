@@ -77,7 +77,7 @@ export interface Product {
 export interface ProductImage {
   id: string;
   product_id: string;
-  image_url: string;
+  image_url: string | null;
   alt_cn: string | null;
   alt_en: string | null;
   sort_order: number;
