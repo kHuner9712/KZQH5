@@ -41,21 +41,20 @@ export function ProductCard({ product, variant = "compact" }: ProductCardProps) 
           placeholder="product"
           loading="lazy"
         />
-        {/* 主推标记 - 不遮挡图片主体，置于左上角小标 */}
         {product.is_featured && (
-          <span className="absolute left-2 top-2 rounded-md bg-brass px-1.5 py-0.5 text-[10px] font-semibold text-white shadow-sm">
+          <span className="absolute left-2 top-2 rounded-md bg-brass px-1.5 py-0.5 text-[10px] font-semibold text-white shadow-sm md:left-3 md:top-3">
             主推
           </span>
         )}
       </div>
 
       {/* 文案区 */}
-      <div className={cn("flex flex-col p-3", isFull ? "flex-1 p-3.5" : "")}>
-        <h3 className="line-clamp-1 text-[13px] font-semibold text-ink">
+      <div className={cn("flex flex-col p-3 md:p-4", isFull ? "flex-1 p-3.5 md:p-5" : "")}>
+        <h3 className="line-clamp-1 text-[13px] font-semibold text-ink md:text-[15px]">
           {product.name_cn}
         </h3>
         {product.name_en && (
-          <p className="mt-0.5 line-clamp-1 text-[10px] text-ink-mute">
+          <p className="mt-0.5 line-clamp-1 text-[10px] text-ink-mute md:text-[11px]">
             {product.name_en}
           </p>
         )}
@@ -76,18 +75,18 @@ export function ProductCard({ product, variant = "compact" }: ProductCardProps) 
 
         {/* 规格 */}
         {product.size && (
-          <p className="mt-2 line-clamp-1 text-[11px] text-ink-soft">
+          <p className="mt-2 line-clamp-1 text-[11px] text-ink-soft md:text-xs">
             <span className="text-ink-mute">规格：</span>
             {product.size}
           </p>
         )}
 
         {/* 底部：询盘价 + 查看详情 */}
-        <div className="mt-auto flex items-center justify-between pt-2.5">
-          <span className="line-clamp-1 text-[11px] font-medium text-industrial">
+        <div className="mt-auto flex items-center justify-between pt-2.5 md:pt-3">
+          <span className="line-clamp-1 text-[11px] font-medium text-industrial md:text-xs">
             {product.price_display_cn || "Contact for quotation"}
           </span>
-          <span className="inline-flex shrink-0 items-center gap-0.5 text-[10px] text-ink-mute transition group-hover:text-industrial">
+          <span className="inline-flex shrink-0 items-center gap-0.5 text-[10px] text-ink-mute transition group-hover:text-industrial md:text-[11px]">
             详情 <ArrowRight className="h-3 w-3" />
           </span>
         </div>

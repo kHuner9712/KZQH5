@@ -6,13 +6,14 @@ interface SectionHeaderProps {
   action?: React.ReactNode;
   className?: string;
   light?: boolean;
+  /** 大屏模式：desktop 标题更大 */
+  size?: "default" | "large";
 }
 
 /**
  * 分区标题
  * - 左侧竖条 + 标题
- * - 可选副标题
- * - 可选右侧操作（如"全部"链接）
+ * - mobile 紧凑，desktop 标题更大
  */
 export function SectionHeader({
   title,
@@ -20,19 +21,24 @@ export function SectionHeader({
   action,
   className,
   light = false,
+  size = "default",
 }: SectionHeaderProps) {
   return (
     <div className={cn("flex items-end justify-between gap-3", className)}>
       <div className="min-w-0">
         <h2
           className={cn(
-            "flex items-center text-base font-semibold leading-tight",
+            "flex items-center font-semibold leading-tight",
+            size === "large"
+              ? "text-base md:text-2xl"
+              : "text-base md:text-xl",
             light ? "text-white" : "text-ink"
           )}
         >
           <span
             className={cn(
-              "mr-2 inline-block h-4 w-1 rounded-full",
+              "mr-2 inline-block w-1 rounded-full",
+              size === "large" ? "h-4 md:h-5" : "h-4",
               light ? "bg-brass" : "bg-industrial"
             )}
           />
@@ -41,7 +47,7 @@ export function SectionHeader({
         {subtitle && (
           <p
             className={cn(
-              "mt-1.5 pl-3 text-xs leading-relaxed",
+              "mt-1.5 pl-3 text-xs leading-relaxed md:text-sm",
               light ? "text-white/60" : "text-ink-mute"
             )}
           >

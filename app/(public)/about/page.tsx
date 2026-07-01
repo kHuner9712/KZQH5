@@ -4,6 +4,7 @@ import { isDemoMode } from "@/lib/demo";
 import { mockCompany } from "@/lib/mock-data";
 import { siteUrl } from "@/lib/utils";
 import { SectionHeader } from "@/components/public/SectionHeader";
+import { ResponsiveContainer } from "@/components/public/ResponsiveContainer";
 import type { Metadata } from "next";
 import type { CompanyProfile } from "@/types/database";
 import {
@@ -34,7 +35,7 @@ export default async function AboutPage() {
       .from("company_profile")
       .select("*")
       .limit(1)
-      .single();
+      .maybeSingle();
     company = (data as CompanyProfile | null) || null;
   }
 
@@ -85,43 +86,47 @@ export default async function AboutPage() {
   return (
     <div className="animate-fade-in bg-canvas">
       {/* Hero */}
-      <section className="bg-canvas-warm px-5 pb-8 pt-10 texture-paper">
-        <p className="text-[10px] uppercase tracking-[0.22em] text-brass">
-          About KZQ
-        </p>
-        <h1 className="mt-2 text-2xl font-bold tracking-tight text-ink">
-          {company?.title_cn || "KZQ · 工程级板材品牌"}
-        </h1>
-        <p className="mt-3 max-w-[20rem] text-[13px] leading-relaxed text-ink-soft">
-          {company?.description_cn ||
-            "KZQ 专注于工程级板材与装饰饰面板，服务国内工程精装与海外采购，欢迎通过询盘表单联系。"}
-        </p>
-        {company?.address_cn && (
-          <p className="mt-3 text-[11px] text-ink-mute">
-            {company.address_cn}
+      <section className="bg-canvas-warm texture-paper">
+        <ResponsiveContainer className="pb-8 pt-10 md:pb-12 md:pt-16">
+          <p className="text-[10px] uppercase tracking-[0.22em] text-brass md:text-xs">
+            About KZQ
           </p>
-        )}
+          <h1 className="mt-2 text-2xl font-bold tracking-tight text-ink md:mt-3 md:text-4xl">
+            {company?.title_cn || "KZQ · 工程级板材品牌"}
+          </h1>
+          <p className="mt-3 max-w-2xl text-[13px] leading-relaxed text-ink-soft md:mt-4 md:text-base md:leading-relaxed">
+            {company?.description_cn ||
+              "KZQ 专注于工程级板材与装饰饰面板，服务国内工程精装与海外采购，欢迎通过询盘表单联系。"}
+          </p>
+          {company?.address_cn && (
+            <p className="mt-3 text-[11px] text-ink-mute md:text-xs">
+              {company.address_cn}
+            </p>
+          )}
+        </ResponsiveContainer>
       </section>
 
       {/* 核心能力 */}
-      <section className="px-5 pt-7">
+      <ResponsiveContainer className="py-8 md:py-12">
         <SectionHeader
           title="核心能力"
           subtitle="产品 · 品控 · 交付 · 海外服务"
+          size="large"
         />
-        <div className="mt-3 space-y-2.5">
+        {/* mobile 单列堆叠 / desktop 2x2 网格 */}
+        <div className="mt-4 grid grid-cols-1 gap-3 md:mt-6 md:grid-cols-2 md:gap-4">
           {capabilities.map((cap, i) => {
             const Icon = cap.icon;
             return (
-              <div key={i} className="card-base flex gap-3.5 p-4">
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-industrial-50">
-                  <Icon className="h-5 w-5 text-industrial" />
+              <div key={i} className="card-base flex gap-3.5 p-4 md:p-5">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-industrial-50 md:h-12 md:w-12">
+                  <Icon className="h-5 w-5 text-industrial md:h-6 md:w-6" />
                 </div>
                 <div className="min-w-0 flex-1">
-                  <h3 className="text-[13px] font-semibold text-ink">
+                  <h3 className="text-[13px] font-semibold text-ink md:text-base">
                     {cap.title}
                   </h3>
-                  <p className="mt-1 text-[11.5px] leading-relaxed text-ink-soft">
+                  <p className="mt-1 text-[11.5px] leading-relaxed text-ink-soft md:mt-2 md:text-sm md:leading-relaxed">
                     {cap.desc}
                   </p>
                 </div>
@@ -129,40 +134,41 @@ export default async function AboutPage() {
             );
           })}
         </div>
-      </section>
+      </ResponsiveContainer>
 
       {/* 品牌优势（来自 company_profile） */}
       {company?.advantages_cn && company.advantages_cn.length > 0 && (
-        <section className="px-5 pt-7">
-          <SectionHeader title="品牌优势" subtitle="KZQ 差异化能力" />
-          <div className="mt-3 space-y-2">
+        <ResponsiveContainer className="pb-8 md:pb-12">
+          <SectionHeader title="品牌优势" subtitle="KZQ 差异化能力" size="large" />
+          {/* mobile 单列 / desktop 2 列 */}
+          <div className="mt-4 grid grid-cols-1 gap-2 md:mt-6 md:grid-cols-2 md:gap-3">
             {company.advantages_cn.map((adv, i) => (
               <div
                 key={i}
-                className="flex items-start gap-3 rounded-xl border border-ink-line bg-canvas-warm p-3"
+                className="flex items-start gap-3 rounded-xl border border-ink-line bg-canvas-warm p-3 md:p-4"
               >
-                <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-white text-[10px] font-bold text-industrial">
+                <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-white text-[10px] font-bold text-industrial md:h-7 md:w-7 md:text-xs">
                   {i + 1}
                 </div>
                 <div>
-                  <p className="text-[13px] font-medium text-ink">
+                  <p className="text-[13px] font-medium text-ink md:text-sm">
                     {adv.title_cn}
                   </p>
-                  <p className="mt-0.5 text-[11px] leading-relaxed text-ink-soft">
+                  <p className="mt-0.5 text-[11px] leading-relaxed text-ink-soft md:mt-1 md:text-xs md:leading-relaxed">
                     {adv.desc_cn}
                   </p>
                 </div>
               </div>
             ))}
           </div>
-        </section>
+        </ResponsiveContainer>
       )}
 
       {/* 询盘 CTA */}
-      <section className="px-5 pt-7 pb-4">
+      <ResponsiveContainer className="pb-8 md:pb-16">
         <Link
           href="/contact"
-          className="card-base relative block overflow-hidden bg-industrial p-5 text-white"
+          className="card-base relative block overflow-hidden bg-industrial p-5 text-white md:p-10"
         >
           <div
             className="absolute inset-0 opacity-[0.08]"
@@ -173,28 +179,28 @@ export default async function AboutPage() {
           />
           <div className="relative flex items-center justify-between">
             <div>
-              <p className="text-[10px] uppercase tracking-[0.18em] text-white/60">
+              <p className="text-[10px] uppercase tracking-[0.18em] text-white/60 md:text-xs">
                 Get Quotation
               </p>
-              <h3 className="mt-1 text-base font-semibold">联系 KZQ</h3>
-              <p className="mt-0.5 text-[11px] text-white/70">
+              <h3 className="mt-1 text-base font-semibold md:mt-2 md:text-2xl">联系 KZQ</h3>
+              <p className="mt-0.5 text-[11px] text-white/70 md:mt-1 md:text-sm">
                 国内工程 · 海外采购 · 规格定制
               </p>
             </div>
-            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-white/15 backdrop-blur-sm">
-              <ArrowRight className="h-5 w-5" />
+            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-white/15 backdrop-blur-sm md:h-14 md:w-14">
+              <ArrowRight className="h-5 w-5 md:h-6 md:w-6" />
             </div>
           </div>
         </Link>
         {company?.phone && (
           <a
             href={`tel:${company.phone.replace(/[^+\d]/g, "")}`}
-            className="mt-2 flex items-center justify-center gap-1.5 rounded-xl border border-ink-line bg-white py-3 text-[12px] text-ink-soft transition hover:border-industrial/30 hover:text-industrial"
+            className="mt-2 flex items-center justify-center gap-1.5 rounded-xl border border-ink-line bg-white py-3 text-[12px] text-ink-soft transition hover:border-industrial/30 hover:text-industrial md:text-sm"
           >
             <Phone className="h-3.5 w-3.5" /> {company.phone}
           </a>
         )}
-      </section>
+      </ResponsiveContainer>
 
       <script
         type="application/ld+json"

@@ -3,7 +3,6 @@ import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { isDemoMode } from "@/lib/demo";
 import {
   mockCategories,
-  mockSubcategories,
   mockProducts,
   getMockCategoryBySlug,
   getMockSubcategories,
@@ -11,6 +10,7 @@ import {
 import { ProductCard } from "@/components/public/ProductCard";
 import { EmptyState } from "@/components/public/EmptyState";
 import { SearchBox } from "@/components/public/SearchBox";
+import { ResponsiveContainer } from "@/components/public/ResponsiveContainer";
 import { cn } from "@/lib/utils";
 import { PackageOpen, ChevronRight } from "lucide-react";
 import type { Product, Category, Subcategory } from "@/types/database";
@@ -116,111 +116,117 @@ export default async function ProductsPage({
 
   return (
     <div className="animate-fade-in bg-canvas">
-      {/* 顶部标题区（轻量，不厚重） */}
-      <div className="bg-canvas-warm px-5 pb-4 pt-9 texture-paper">
-        <p className="text-[10px] uppercase tracking-[0.2em] text-brass">
-          Products
-        </p>
-        <h1 className="mt-1.5 text-xl font-bold tracking-tight text-ink">
-          产品中心
-        </h1>
-        <p className="mt-1 text-[12px] text-ink-soft">
-          工程级板材 · 防火饰面 · 海外出口
-        </p>
+      {/* 顶部标题区 */}
+      <div className="bg-canvas-warm texture-paper">
+        <ResponsiveContainer className="pb-4 pt-9 md:pb-6 md:pt-14">
+          <p className="text-[10px] uppercase tracking-[0.2em] text-brass md:text-xs">
+            Products
+          </p>
+          <h1 className="mt-1.5 text-xl font-bold tracking-tight text-ink md:mt-2 md:text-3xl">
+            产品中心
+          </h1>
+          <p className="mt-1 text-[12px] text-ink-soft md:mt-2 md:text-sm">
+            工程级板材 · 防火饰面 · 海外出口
+          </p>
+        </ResponsiveContainer>
       </div>
 
-      {/* 搜索 + 筛选 sticky */}
-      <div className="sticky top-0 z-30 border-b border-ink-line bg-white/95 px-5 py-3 backdrop-blur-lg">
-        <SearchBox />
+      {/* 搜索 + 筛选 sticky（mobile top-0, desktop top-16 避开 header） */}
+      <div className="sticky top-0 z-30 border-b border-ink-line bg-white/95 backdrop-blur-lg md:top-16">
+        <ResponsiveContainer className="py-3">
+          <SearchBox />
 
-        {/* 一级类目 chips */}
-        <div className="mt-3 flex gap-2 overflow-x-auto pb-1 no-scrollbar">
-          <Link
-            href="/products"
-            className={cn(
-              "shrink-0 rounded-full px-3.5 py-1.5 text-[12px] font-medium transition",
-              !activeCategorySlug
-                ? "bg-industrial text-white"
-                : "bg-canvas-warm text-ink-soft hover:bg-canvas-cool"
-            )}
-          >
-            全部
-          </Link>
-          {categories.map((cat) => (
+          {/* 一级类目 chips */}
+          <div className="mt-3 flex gap-2 overflow-x-auto pb-1 no-scrollbar">
             <Link
-              key={cat.id}
-              href={buildUrl({ category: cat.slug })}
+              href="/products"
               className={cn(
-                "shrink-0 rounded-full px-3.5 py-1.5 text-[12px] font-medium transition",
-                activeCategorySlug === cat.slug
+                "shrink-0 rounded-full px-3.5 py-1.5 text-[12px] font-medium transition md:text-[13px]",
+                !activeCategorySlug
                   ? "bg-industrial text-white"
                   : "bg-canvas-warm text-ink-soft hover:bg-canvas-cool"
               )}
             >
-              {cat.name_cn}
-            </Link>
-          ))}
-        </div>
-
-        {/* 二级类目 chips */}
-        {subcategories.length > 0 && (
-          <div className="mt-2 flex gap-2 overflow-x-auto pb-1 no-scrollbar">
-            <Link
-              href={buildUrl({ category: activeCategorySlug })}
-              className={cn(
-                "shrink-0 rounded-full px-3 py-1 text-[11px] transition",
-                !searchParams.subcategory
-                  ? "bg-ink text-white"
-                  : "bg-canvas-cool text-ink-mute hover:bg-canvas-warm"
-              )}
-            >
               全部
             </Link>
-            {subcategories.map((sub) => (
+            {categories.map((cat) => (
               <Link
-                key={sub.id}
-                href={buildUrl({
-                  category: activeCategorySlug,
-                  subcategory: sub.slug,
-                })}
+                key={cat.id}
+                href={buildUrl({ category: cat.slug })}
                 className={cn(
-                  "shrink-0 rounded-full px-3 py-1 text-[11px] transition",
-                  searchParams.subcategory === sub.slug
+                  "shrink-0 rounded-full px-3.5 py-1.5 text-[12px] font-medium transition md:text-[13px]",
+                  activeCategorySlug === cat.slug
+                    ? "bg-industrial text-white"
+                    : "bg-canvas-warm text-ink-soft hover:bg-canvas-cool"
+                )}
+              >
+                {cat.name_cn}
+              </Link>
+            ))}
+          </div>
+
+          {/* 二级类目 chips */}
+          {subcategories.length > 0 && (
+            <div className="mt-2 flex gap-2 overflow-x-auto pb-1 no-scrollbar">
+              <Link
+                href={buildUrl({ category: activeCategorySlug })}
+                className={cn(
+                  "shrink-0 rounded-full px-3 py-1 text-[11px] transition md:text-xs",
+                  !searchParams.subcategory
                     ? "bg-ink text-white"
                     : "bg-canvas-cool text-ink-mute hover:bg-canvas-warm"
                 )}
               >
-                {sub.name_cn}
+                全部
               </Link>
-            ))}
-          </div>
-        )}
+              {subcategories.map((sub) => (
+                <Link
+                  key={sub.id}
+                  href={buildUrl({
+                    category: activeCategorySlug,
+                    subcategory: sub.slug,
+                  })}
+                  className={cn(
+                    "shrink-0 rounded-full px-3 py-1 text-[11px] transition md:text-xs",
+                    searchParams.subcategory === sub.slug
+                      ? "bg-ink text-white"
+                      : "bg-canvas-cool text-ink-mute hover:bg-canvas-warm"
+                  )}
+                >
+                  {sub.name_cn}
+                </Link>
+              ))}
+            </div>
+          )}
+        </ResponsiveContainer>
       </div>
 
       {/* 面包屑 + 产品数 */}
-      <div className="flex items-center justify-between px-5 pt-4">
-        <div className="flex items-center gap-1 text-[11px] text-ink-mute">
-          <Link href="/" className="hover:text-industrial">首页</Link>
-          <ChevronRight className="h-3 w-3" />
-          <span className="text-ink-soft">产品中心</span>
-          {activeCategory && (
-            <>
-              <ChevronRight className="h-3 w-3" />
-              <span className="text-ink-soft">{activeCategory.name_cn}</span>
-            </>
+      <ResponsiveContainer className="pt-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-1 text-[11px] text-ink-mute md:text-xs">
+            <Link href="/" className="hover:text-industrial">首页</Link>
+            <ChevronRight className="h-3 w-3" />
+            <span className="text-ink-soft">产品中心</span>
+            {activeCategory && (
+              <>
+                <ChevronRight className="h-3 w-3" />
+                <span className="text-ink-soft">{activeCategory.name_cn}</span>
+              </>
+            )}
+          </div>
+          {products.length > 0 && (
+            <span className="text-[11px] text-ink-mute md:text-xs">
+              共 <span className="font-semibold text-ink">{products.length}</span> 个
+            </span>
           )}
         </div>
-        {products.length > 0 && (
-          <span className="text-[11px] text-ink-mute">
-            共 <span className="font-semibold text-ink">{products.length}</span> 个
-          </span>
-        )}
-      </div>
+      </ResponsiveContainer>
 
-      {/* 产品列表 */}
-      <div className="px-5 py-4">
+      {/* 产品列表：mobile 2 / tablet 3 / desktop 4 */}
+      <ResponsiveContainer className="py-4 md:py-8">
         {products.length > 0 ? (
-          <div className="grid grid-cols-2 gap-2.5">
+          <div className="grid grid-cols-2 gap-2.5 md:grid-cols-3 md:gap-4 lg:grid-cols-4">
             {products.map((p) => (
               <ProductCard key={p.id} product={p} />
             ))}
@@ -236,7 +242,7 @@ export default async function ProductsPage({
             icon={PackageOpen}
           />
         )}
-      </div>
+      </ResponsiveContainer>
     </div>
   );
 }

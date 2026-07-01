@@ -7,6 +7,8 @@ import { FeatureCard } from "@/components/public/FeatureCard";
 import { CategoryCard } from "@/components/public/CategoryCard";
 import { ProductCard } from "@/components/public/ProductCard";
 import { SectionHeader } from "@/components/public/SectionHeader";
+import { ResponsiveContainer } from "@/components/public/ResponsiveContainer";
+import { ProductImage } from "@/components/public/ProductImage";
 import { ArrowRight, Flame, Leaf, Truck, Globe2, ChevronRight } from "lucide-react";
 import type { Product, Category, CompanyProfile } from "@/types/database";
 
@@ -18,7 +20,7 @@ export default async function HomePage() {
   let company: CompanyProfile | null = null;
 
   if (isDemoMode()) {
-    featuredProducts = getMockFeaturedProducts(6);
+    featuredProducts = getMockFeaturedProducts(8);
     categories = [...mockCategories].sort((a, b) => a.sort_order - b.sort_order);
     company = mockCompany;
   } else {
@@ -34,7 +36,7 @@ export default async function HomePage() {
         .eq("is_published", true)
         .eq("is_featured", true)
         .order("sort_order", { ascending: true })
-        .limit(6),
+        .limit(8),
       supabase
         .from("categories")
         .select("*")
@@ -51,69 +53,147 @@ export default async function HomePage() {
     company = (companyData as CompanyProfile | null) || null;
   }
 
+  // Hero 右侧预览产品（取前 3 个主推产品做预览卡）
+  const heroPreviewProducts = featuredProducts.slice(0, 3);
+
   return (
     <div className="animate-fade-in bg-canvas">
       {/* ========== Hero ========== */}
-      <section className="relative overflow-hidden bg-canvas-warm px-5 pb-8 pt-10 texture-paper">
-        {/* 顶部品牌行 */}
-        <div className="relative flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
-            <BrandLogo logoUrl={company?.logo_url} size={36} />
-            <div className="leading-tight">
-              <p className="text-[15px] font-bold tracking-tight text-ink">KZQ</p>
-              <p className="text-[9px] uppercase tracking-[0.18em] text-ink-mute">
-                Engineering Boards
-              </p>
+      <section className="relative overflow-hidden bg-canvas-warm texture-paper">
+        {/* mobile 单列 / desktop 左右分栏 */}
+        <div className="container-responsive py-10 md:py-20">
+          <div className="grid items-center gap-8 md:grid-cols-2 md:gap-12 lg:gap-16">
+            {/* 左侧：品牌与 CTA */}
+            <div>
+              {/* mobile 顶部品牌行（desktop 隐藏，由 DesktopHeader 显示） */}
+              <div className="flex items-center justify-between md:hidden">
+                <div className="flex items-center gap-2.5">
+                  <BrandLogo logoUrl={company?.logo_url} size={36} />
+                  <div className="leading-tight">
+                    <p className="text-[15px] font-bold tracking-tight text-ink">KZQ</p>
+                    <p className="text-[9px] uppercase tracking-[0.18em] text-ink-mute">
+                      Engineering Boards
+                    </p>
+                  </div>
+                </div>
+                <Link
+                  href="/about"
+                  className="rounded-full border border-ink-line bg-white px-3 py-1 text-[11px] text-ink-soft transition hover:border-industrial/30 hover:text-industrial"
+                >
+                  关于我们
+                </Link>
+              </div>
+
+              {/* 主标题区 */}
+              <div className="mt-6 md:mt-0">
+                <p className="text-[10px] uppercase tracking-[0.22em] text-brass md:text-xs">
+                  Engineering Boards · Fire-Rated Decorative Panels
+                </p>
+                <h1 className="mt-2.5 text-[26px] font-bold leading-[1.25] tracking-tight text-ink md:text-4xl lg:text-5xl md:leading-[1.2]">
+                  专注 B 级防火
+                  <br />
+                  <span className="text-industrial-gradient">E0 环保</span> 工程板材
+                </h1>
+                <p className="mt-3 max-w-md text-[12.5px] leading-relaxed text-ink-soft md:mt-5 md:text-base md:leading-relaxed">
+                  KZQ 是工程级板材与装饰饰面板品牌供应商，服务国内工程精装与海外采购，
+                  覆盖防火板、饰面板、工程基材等多品类，支持规格定制与 FOB/CIF 出口。
+                </p>
+
+                {/* CTA */}
+                <div className="mt-5 flex gap-2.5 md:mt-8 md:gap-3">
+                  <Link
+                    href="/products"
+                    className="btn-primary h-11 flex-1 text-[13px] md:h-12 md:flex-none md:px-7 md:text-sm"
+                  >
+                    浏览产品
+                    <ArrowRight className="h-4 w-4" />
+                  </Link>
+                  <Link
+                    href="/contact"
+                    className="btn-outline h-11 flex-1 text-[13px] md:h-12 md:flex-none md:px-7 md:text-sm"
+                  >
+                    立即询盘
+                  </Link>
+                </div>
+
+                {/* 关键数据条（desktop） */}
+                <div className="mt-8 hidden grid-cols-3 gap-6 border-t border-ink-line/60 pt-6 md:grid">
+                  <div>
+                    <p className="text-2xl font-bold text-ink">B 级</p>
+                    <p className="mt-0.5 text-[11px] text-ink-mute">防火等级</p>
+                  </div>
+                  <div>
+                    <p className="text-2xl font-bold text-ink">E0</p>
+                    <p className="mt-0.5 text-[11px] text-ink-mute">环保等级</p>
+                  </div>
+                  <div>
+                    <p className="text-2xl font-bold text-ink">FOB/CIF</p>
+                    <p className="mt-0.5 text-[11px] text-ink-mute">出口条款</p>
+                  </div>
+                </div>
+              </div>
             </div>
-          </div>
-          <Link
-            href="/about"
-            className="rounded-full border border-ink-line bg-white px-3 py-1 text-[11px] text-ink-soft transition hover:border-industrial/30 hover:text-industrial"
-          >
-            关于我们
-          </Link>
-        </div>
 
-        {/* 主标题区 */}
-        <div className="relative mt-9">
-          <p className="text-[10px] uppercase tracking-[0.22em] text-brass">
-            Engineering Boards · Fire-Rated Decorative Panels
-          </p>
-          <h1 className="mt-2.5 text-[26px] font-bold leading-[1.25] tracking-tight text-ink">
-            专注 B 级防火
-            <br />
-            <span className="text-industrial-gradient">E0 环保</span> 工程板材
-          </h1>
-          <p className="mt-3 max-w-[19rem] text-[12.5px] leading-relaxed text-ink-soft">
-            KZQ 是工程级板材与装饰饰面板品牌供应商，服务国内工程精装与海外采购，欢迎通过询盘表单联系合作。
-          </p>
+            {/* 右侧：产品视觉预览卡（desktop） */}
+            <div className="hidden md:block">
+              <div className="relative">
+                {/* 主预览大卡 */}
+                <div className="card-base overflow-hidden">
+                  <div className="aspect-[4/3] w-full">
+                    <ProductImage
+                      src={heroPreviewProducts[0]?.cover_image_url}
+                      alt={heroPreviewProducts[0]?.name_cn || "KZQ 工程板材"}
+                      placeholder="product"
+                      loading="eager"
+                    />
+                  </div>
+                  <div className="flex items-center justify-between p-4">
+                    <div>
+                      <p className="text-[10px] uppercase tracking-wider text-brass">Featured</p>
+                      <p className="mt-0.5 text-sm font-semibold text-ink">
+                        {heroPreviewProducts[0]?.name_cn || "KZQ 主推板材"}
+                      </p>
+                      <p className="mt-0.5 text-[11px] text-ink-mute">
+                        {heroPreviewProducts[0]?.name_en || "Engineering Board"}
+                      </p>
+                    </div>
+                    <Link
+                      href={`/products/${heroPreviewProducts[0]?.slug || ""}`}
+                      className="flex h-9 w-9 items-center justify-center rounded-full bg-industrial-50 text-industrial transition hover:bg-industrial hover:text-white"
+                    >
+                      <ArrowRight className="h-4 w-4" />
+                    </Link>
+                  </div>
+                </div>
 
-          {/* CTA */}
-          <div className="mt-5 flex gap-2.5">
-            <Link
-              href="/products"
-              className="btn-primary h-11 flex-1 text-[13px]"
-            >
-              浏览产品
-              <ArrowRight className="h-4 w-4" />
-            </Link>
-            <Link
-              href="/contact"
-              className="btn-outline h-11 flex-1 text-[13px]"
-            >
-              立即询盘
-            </Link>
+                {/* 副预览卡（错落） */}
+                {heroPreviewProducts[1] && (
+                  <div className="card-base absolute -bottom-6 -left-6 hidden w-44 overflow-hidden lg:block">
+                    <div className="aspect-square w-full">
+                      <ProductImage
+                        src={heroPreviewProducts[1]?.cover_image_url}
+                        alt={heroPreviewProducts[1]?.name_cn || "KZQ 板材"}
+                        placeholder="product"
+                        loading="lazy"
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         </div>
       </section>
 
-      {/* ========== 核心优势 2x2 ========== */}
-      <section className="px-5 pt-7">
+      {/* ========== 核心优势 ========== */}
+      <section className="container-responsive py-8 md:py-16">
         <SectionHeader
           title="核心优势"
           subtitle="为什么选择 KZQ 工程级板材"
+          size="large"
         />
-        <div className="mt-3 grid grid-cols-2 gap-2.5">
+        {/* mobile 2x2 / desktop 4 列横排 */}
+        <div className="mt-4 grid grid-cols-2 gap-2.5 md:mt-6 md:grid-cols-4 md:gap-4">
           <FeatureCard
             icon={Flame}
             title="B 级防火"
@@ -139,22 +219,24 @@ export default async function HomePage() {
 
       {/* ========== 产品类目 ========== */}
       {categories.length > 0 && (
-        <section className="px-5 pt-8">
+        <section className="container-responsive py-8 md:py-12">
           <SectionHeader
             title="产品类目"
             subtitle="按应用场景选择合适的板材"
+            size="large"
             action={
               <Link
                 href="/products"
-                className="inline-flex items-center gap-0.5 text-[11px] text-industrial"
+                className="inline-flex items-center gap-0.5 text-[11px] text-industrial md:text-sm"
               >
-                全部 <ChevronRight className="h-3 w-3" />
+                全部 <ChevronRight className="h-3 w-3 md:h-4 md:w-4" />
               </Link>
             }
           />
-          <div className="mt-3 grid grid-cols-2 gap-2.5">
+          {/* mobile 2 列 / desktop 3 列 */}
+          <div className="mt-4 grid grid-cols-2 gap-2.5 md:mt-6 md:grid-cols-3 md:gap-4">
             {categories.map((cat) => (
-              <CategoryCard key={cat.id} category={cat} className="min-h-[130px]" />
+              <CategoryCard key={cat.id} category={cat} className="min-h-[130px] md:min-h-[160px]" />
             ))}
           </div>
         </section>
@@ -162,20 +244,22 @@ export default async function HomePage() {
 
       {/* ========== 主推产品 ========== */}
       {featuredProducts.length > 0 && (
-        <section className="px-5 pt-8">
+        <section className="container-responsive py-8 md:py-12">
           <SectionHeader
             title="主推产品"
             subtitle="B 级防火 · E0 环保 · 工程批量供货"
+            size="large"
             action={
               <Link
                 href="/products"
-                className="inline-flex items-center gap-0.5 text-[11px] text-industrial"
+                className="inline-flex items-center gap-0.5 text-[11px] text-industrial md:text-sm"
               >
-                全部 <ChevronRight className="h-3 w-3" />
+                全部 <ChevronRight className="h-3 w-3 md:h-4 md:w-4" />
               </Link>
             }
           />
-          <div className="mt-3 grid grid-cols-2 gap-2.5">
+          {/* mobile 2 列 / tablet 3 列 / desktop 4 列 */}
+          <div className="mt-4 grid grid-cols-2 gap-2.5 md:mt-6 md:grid-cols-3 md:gap-4 lg:grid-cols-4">
             {featuredProducts.map((p) => (
               <ProductCard key={p.id} product={p} />
             ))}
@@ -184,10 +268,10 @@ export default async function HomePage() {
       )}
 
       {/* ========== 询盘 CTA ========== */}
-      <section className="px-5 pt-8 pb-4">
+      <section className="container-responsive py-8 pb-4 md:py-16">
         <Link
           href="/contact"
-          className="card-base relative block overflow-hidden bg-industrial p-5 text-white"
+          className="card-base relative block overflow-hidden bg-industrial p-5 text-white md:p-10"
         >
           <div
             className="absolute inset-0 opacity-[0.08]"
@@ -198,18 +282,18 @@ export default async function HomePage() {
           />
           <div className="relative flex items-center justify-between">
             <div>
-              <p className="text-[10px] uppercase tracking-[0.18em] text-white/60">
+              <p className="text-[10px] uppercase tracking-[0.18em] text-white/60 md:text-xs">
                 Get Quotation
               </p>
-              <h3 className="mt-1 text-base font-semibold">
+              <h3 className="mt-1 text-base font-semibold md:mt-2 md:text-2xl">
                 联系 KZQ 获取报价
               </h3>
-              <p className="mt-0.5 text-[11px] text-white/70">
+              <p className="mt-0.5 text-[11px] text-white/70 md:mt-1 md:text-sm">
                 国内工程 · 海外采购 · 规格定制
               </p>
             </div>
-            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-white/15 backdrop-blur-sm">
-              <ArrowRight className="h-5 w-5" />
+            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-white/15 backdrop-blur-sm md:h-14 md:w-14">
+              <ArrowRight className="h-5 w-5 md:h-6 md:w-6" />
             </div>
           </div>
         </Link>

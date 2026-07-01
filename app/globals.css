@@ -14,12 +14,11 @@ body {
     "HarmonyOS Sans SC", "Segoe UI", "Microsoft YaHei", sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  /* 桌面浏览：整体居中，外侧浅灰 */
 }
 
+/* 桌面浏览：body 不再 flex 居中，由 ResponsiveShell 控制宽度 */
 body {
-  display: flex;
-  justify-content: center;
+  display: block;
 }
 
 /* 隐藏滚动条（横向滑动区） */
@@ -51,6 +50,21 @@ body {
   }
   .bg-canvas-warm {
     background-color: var(--c-canvas-warm);
+  }
+
+  /* 响应式容器：手机满宽 px-4，桌面居中 max-w-content */
+  .container-responsive {
+    @apply w-full px-4 mx-auto;
+  }
+  @media (min-width: 640px) {
+    .container-responsive {
+      @apply px-6;
+    }
+  }
+  @media (min-width: 1024px) {
+    .container-responsive {
+      @apply max-w-content px-8;
+    }
   }
 
   /* 主按钮：工业蓝实色，克制不廉价 */

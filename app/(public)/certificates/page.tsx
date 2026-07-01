@@ -3,6 +3,7 @@ import { isDemoMode } from "@/lib/demo";
 import { mockCertificates } from "@/lib/mock-data";
 import { CertificateCard } from "@/components/public/CertificateCard";
 import { EmptyState } from "@/components/public/EmptyState";
+import { ResponsiveContainer } from "@/components/public/ResponsiveContainer";
 import { Award, ShieldCheck } from "lucide-react";
 import type { Metadata } from "next";
 import type { Certificate } from "@/types/database";
@@ -34,51 +35,53 @@ export default async function CertificatesPage() {
 
   return (
     <div className="animate-fade-in bg-canvas">
-      {/* Hero（轻量暖白） */}
-      <div className="bg-canvas-warm px-5 pb-5 pt-10 texture-paper">
-        <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-brass/10 ring-1 ring-inset ring-brass/20">
-          <Award className="h-5 w-5 text-brass" />
-        </div>
-        <p className="mt-3 text-[10px] uppercase tracking-[0.2em] text-brass">
-          Certificates
-        </p>
-        <h1 className="mt-1 text-xl font-bold tracking-tight text-ink">
-          资质证书
-        </h1>
-        <p className="mt-1 text-[12px] text-ink-soft">
-          第三方检测认证 · 工程级品质保障
-        </p>
-        <div className="mt-3 inline-flex items-center gap-1.5 rounded-full border border-ink-line bg-white px-3 py-1 text-[11px] text-ink-soft">
-          <ShieldCheck className="h-3 w-3 text-emerald-600" />
-          仅展示水印版/展示版，完整资料请联系销售
-        </div>
+      {/* Hero */}
+      <div className="bg-canvas-warm texture-paper">
+        <ResponsiveContainer className="pb-5 pt-10 md:pb-8 md:pt-16">
+          <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-brass/10 ring-1 ring-inset ring-brass/20 md:h-14 md:w-14">
+            <Award className="h-5 w-5 text-brass md:h-6 md:w-6" />
+          </div>
+          <p className="mt-3 text-[10px] uppercase tracking-[0.2em] text-brass md:text-xs">
+            Certificates
+          </p>
+          <h1 className="mt-1 text-xl font-bold tracking-tight text-ink md:mt-2 md:text-3xl">
+            资质证书
+          </h1>
+          <p className="mt-1 text-[12px] text-ink-soft md:mt-2 md:text-sm">
+            第三方检测认证 · 工程级品质保障
+          </p>
+          <div className="mt-3 inline-flex items-center gap-1.5 rounded-full border border-ink-line bg-white px-3 py-1 text-[11px] text-ink-soft md:text-xs">
+            <ShieldCheck className="h-3 w-3 text-emerald-600" />
+            仅展示水印版/展示版，完整资料请联系销售
+          </div>
+        </ResponsiveContainer>
       </div>
 
       {/* 证书统计条 */}
       {certificates.length > 0 && (
-        <div className="px-5 pt-5">
-          <div className="card-base flex items-center justify-between p-4">
+        <ResponsiveContainer className="pt-5">
+          <div className="card-base flex items-center justify-between p-4 md:p-5">
             <div>
-              <p className="text-2xl font-bold text-ink">
+              <p className="text-2xl font-bold text-ink md:text-3xl">
                 {certificates.length}
               </p>
-              <p className="text-[11px] text-ink-mute">已发布证书</p>
+              <p className="text-[11px] text-ink-mute md:text-xs">已发布证书</p>
             </div>
-            <div className="h-8 w-px bg-ink-line" />
+            <div className="h-8 w-px bg-ink-line md:h-10" />
             <div className="text-right">
-              <p className="text-[13px] font-semibold text-industrial">
+              <p className="text-[13px] font-semibold text-industrial md:text-base">
                 环保 / 防火 / 品控
               </p>
-              <p className="text-[11px] text-ink-mute">三大认证方向</p>
+              <p className="text-[11px] text-ink-mute md:text-xs">三大认证方向</p>
             </div>
           </div>
-        </div>
+        </ResponsiveContainer>
       )}
 
-      {/* 证书网格 */}
-      <div className="px-5 py-5">
+      {/* 证书网格：mobile 2 / tablet 3 / desktop 4 */}
+      <ResponsiveContainer className="py-5 md:py-8">
         {certificates.length > 0 ? (
-          <div className="grid grid-cols-2 gap-2.5">
+          <div className="grid grid-cols-2 gap-2.5 md:grid-cols-3 md:gap-4 lg:grid-cols-4">
             {certificates.map((c) => (
               <CertificateCard key={c.id} cert={c} />
             ))}
@@ -90,7 +93,7 @@ export default async function CertificatesPage() {
             icon={Award}
           />
         )}
-      </div>
+      </ResponsiveContainer>
     </div>
   );
 }

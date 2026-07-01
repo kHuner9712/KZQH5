@@ -4,6 +4,7 @@ import { mockCompany } from "@/lib/mock-data";
 import { InquiryForm } from "@/components/public/InquiryForm";
 import { ContactCard } from "@/components/public/ContactCard";
 import { SectionHeader } from "@/components/public/SectionHeader";
+import { ResponsiveContainer } from "@/components/public/ResponsiveContainer";
 import type { Metadata } from "next";
 import type { CompanyProfile } from "@/types/database";
 import { Phone, Mail, MessageCircle, MapPin, QrCode } from "lucide-react";
@@ -29,7 +30,7 @@ export default async function ContactPage({
       .from("company_profile")
       .select("*")
       .limit(1)
-      .single();
+      .maybeSingle();
     company = (data as CompanyProfile | null) || null;
   }
 
@@ -38,99 +39,107 @@ export default async function ContactPage({
   return (
     <div className="animate-fade-in bg-canvas">
       {/* Hero */}
-      <section className="bg-canvas-warm px-5 pb-6 pt-10 texture-paper">
-        <p className="text-[10px] uppercase tracking-[0.2em] text-brass">
-          Contact Us
-        </p>
-        <h1 className="mt-1.5 text-xl font-bold tracking-tight text-ink">
-          联系询盘
-        </h1>
-        <p className="mt-1 text-[12px] text-ink-soft">
-          国内工程 · 海外采购 · 规格定制
-        </p>
-        <p className="mt-2 max-w-[18rem] text-[11.5px] leading-relaxed text-ink-mute">
-          提交询盘表单获取专属报价，1 个工作日内回复；紧急需求可直接电话或 WhatsApp 联系。
-        </p>
+      <section className="bg-canvas-warm texture-paper">
+        <ResponsiveContainer className="pb-6 pt-10 md:pb-10 md:pt-16">
+          <p className="text-[10px] uppercase tracking-[0.2em] text-brass md:text-xs">
+            Contact Us
+          </p>
+          <h1 className="mt-1.5 text-xl font-bold tracking-tight text-ink md:mt-2 md:text-3xl">
+            联系询盘
+          </h1>
+          <p className="mt-1 text-[12px] text-ink-soft md:mt-2 md:text-sm">
+            国内工程 · 海外采购 · 规格定制
+          </p>
+          <p className="mt-2 max-w-2xl text-[11.5px] leading-relaxed text-ink-mute md:text-xs md:leading-relaxed">
+            提交询盘表单获取专属报价，1 个工作日内回复；紧急需求可直接电话或 WhatsApp 联系。
+          </p>
+        </ResponsiveContainer>
       </section>
 
-      {/* 联系方式 */}
-      <section className="px-5 pt-5">
-        <SectionHeader title="联系方式" />
-        <div className="mt-3 space-y-2.5">
-          {company?.phone && (
-            <ContactCard
-              icon={Phone}
-              label="电话"
-              value={company.phone}
-              href={`tel:${company.phone.replace(/[\s-]/g, "")}`}
-            />
-          )}
-          {company?.email && (
-            <ContactCard
-              icon={Mail}
-              label="邮箱"
-              value={company.email}
-              href={`mailto:${company.email}`}
-            />
-          )}
-          {company?.whatsapp && (
-            <ContactCard
-              icon={MessageCircle}
-              label="WhatsApp"
-              value={company.whatsapp}
-              href={`https://wa.me/${company.whatsapp.replace(/[^\d]/g, "")}`}
-              external
-            />
-          )}
-          {company?.address_cn && (
-            <ContactCard
-              icon={MapPin}
-              label="地址"
-              value={company.address_cn}
-            />
-          )}
-        </div>
+      {/* 主体：mobile 单列 / desktop 左右分栏 */}
+      <ResponsiveContainer className="py-8 md:py-12">
+        <div className="md:grid md:grid-cols-5 md:gap-10 lg:gap-14">
+          {/* 左侧：联系方式（desktop 占 2/5） */}
+          <div className="md:col-span-2">
+            <SectionHeader title="联系方式" size="large" />
+            <div className="mt-4 space-y-2.5 md:mt-6 md:space-y-3">
+              {company?.phone && (
+                <ContactCard
+                  icon={Phone}
+                  label="电话"
+                  value={company.phone}
+                  href={`tel:${company.phone.replace(/[\s-]/g, "")}`}
+                />
+              )}
+              {company?.email && (
+                <ContactCard
+                  icon={Mail}
+                  label="邮箱"
+                  value={company.email}
+                  href={`mailto:${company.email}`}
+                />
+              )}
+              {company?.whatsapp && (
+                <ContactCard
+                  icon={MessageCircle}
+                  label="WhatsApp"
+                  value={company.whatsapp}
+                  href={`https://wa.me/${company.whatsapp.replace(/[^\d]/g, "")}`}
+                  external
+                />
+              )}
+              {company?.address_cn && (
+                <ContactCard
+                  icon={MapPin}
+                  label="地址"
+                  value={company.address_cn}
+                />
+              )}
+            </div>
 
-        {/* 微信二维码 */}
-        {company?.wechat_qr_url && (
-          <div className="mt-3 flex flex-col items-center rounded-2xl border border-ink-line bg-canvas-warm p-4">
-            <div className="flex items-center gap-1.5 text-[11px] text-ink-soft">
-              <QrCode className="h-4 w-4 text-industrial" /> 微信扫码咨询
-            </div>
-            <div className="mt-3 overflow-hidden rounded-lg bg-white p-1.5">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={company.wechat_qr_url}
-                alt="微信二维码"
-                className="h-32 w-32 rounded object-cover"
-                loading="lazy"
-                onError={(e) => {
-                  const t = e.currentTarget;
-                  t.style.display = "none";
-                  const p = t.parentElement;
-                  if (p) {
-                    p.classList.add("flex", "items-center", "justify-center");
-                    p.innerHTML =
-                      '<div class="h-32 w-32 flex items-center justify-center text-ink-mute text-[10px]">二维码待上传</div>';
-                  }
-                }}
-              />
-            </div>
-            <p className="mt-2 text-[11px] text-ink-mute">扫码添加 KZQ 销售</p>
+            {/* 微信二维码 */}
+            {company?.wechat_qr_url && (
+              <div className="mt-4 flex flex-col items-center rounded-2xl border border-ink-line bg-canvas-warm p-4 md:mt-6 md:p-5">
+                <div className="flex items-center gap-1.5 text-[11px] text-ink-soft md:text-xs">
+                  <QrCode className="h-4 w-4 text-industrial" /> 微信扫码咨询
+                </div>
+                <div className="mt-3 overflow-hidden rounded-lg bg-white p-1.5">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={company.wechat_qr_url}
+                    alt="微信二维码"
+                    className="h-32 w-32 rounded object-cover md:h-36 md:w-36"
+                    loading="lazy"
+                    onError={(e) => {
+                      const t = e.currentTarget;
+                      t.style.display = "none";
+                      const p = t.parentElement;
+                      if (p) {
+                        p.classList.add("flex", "items-center", "justify-center");
+                        p.innerHTML =
+                          '<div class="h-32 w-32 flex items-center justify-center text-ink-mute text-[10px] md:h-36 md:w-36">二维码待上传</div>';
+                      }
+                    }}
+                  />
+                </div>
+                <p className="mt-2 text-[11px] text-ink-mute md:text-xs">扫码添加 KZQ 销售</p>
+              </div>
+            )}
           </div>
-        )}
-      </section>
 
-      {/* 询盘表单 */}
-      <section className="px-5 pt-7 pb-4">
-        <SectionHeader
-          title="在线询盘"
-          subtitle="填写下方表单，我们会在 1 个工作日内回复您"
-        />
-        <div className="mt-4">
-          <InquiryForm defaultProduct={defaultProduct} />
+          {/* 右侧：询盘表单（desktop 占 3/5） */}
+          <div className="mt-8 md:mt-0 md:col-span-3">
+            <SectionHeader
+              title="在线询盘"
+              subtitle="填写下方表单，我们会在 1 个工作日内回复您"
+              size="large"
+            />
+            <div className="mt-4 md:mt-6">
+              <InquiryForm defaultProduct={defaultProduct} />
+            </div>
+          </div>
         </div>
-      </section>
+      </ResponsiveContainer>
     </div>
   );
 }

@@ -14,6 +14,7 @@ import {
 import { ImageCarousel } from "@/components/public/ImageCarousel";
 import { FireBadge, EcoBadge } from "@/components/public/Badge";
 import { ProductImage } from "@/components/public/ProductImage";
+import { ResponsiveContainer } from "@/components/public/ResponsiveContainer";
 import {
   Ruler,
   Layers,
@@ -25,6 +26,7 @@ import {
   Phone,
   Award,
   ChevronRight,
+  ArrowRight,
 } from "lucide-react";
 import type {
   Product,
@@ -219,156 +221,190 @@ export default async function ProductDetailPage({
   };
 
   return (
-    <div className="animate-fade-in bg-canvas pb-24">
-      {/* 顶部返回 sticky */}
-      <div className="sticky top-0 z-30 flex items-center gap-3 border-b border-ink-line bg-white/95 px-5 py-3 backdrop-blur-lg">
-        <Link
-          href="/products"
-          className="flex h-8 w-8 items-center justify-center rounded-full bg-canvas-warm text-ink-soft transition hover:bg-canvas-cool"
-          aria-label="返回"
-        >
-          <ArrowLeft className="h-4 w-4" />
-        </Link>
-        <span className="line-clamp-1 text-[13px] font-medium text-ink">
-          {p.name_cn}
-        </span>
-      </div>
-
-      {/* 图片轮播 - 视觉重点 */}
-      <ImageCarousel images={carouselImages} videoUrl={p.video_url} />
-
-      {/* 标题与卖点 */}
-      <div className="bg-white px-5 py-4">
-        <div className="flex flex-wrap gap-1.5">
-          <FireBadge rating={p.fire_rating || "B级"} />
-          <EcoBadge grade={p.eco_grade || "E0级"} />
-          {p.is_featured && (
-            <span className="chip chip-feature">主推产品</span>
-          )}
-        </div>
-        <h1 className="mt-2 text-lg font-bold leading-snug text-ink">
-          {p.name_cn}
-        </h1>
-        {p.name_en && (
-          <p className="mt-0.5 text-[11px] text-ink-mute">{p.name_en}</p>
-        )}
-        {p.summary_cn && (
-          <p className="mt-2 text-[13px] leading-relaxed text-ink-soft">
-            {p.summary_cn}
-          </p>
-        )}
-
-        {/* 类目面包屑 */}
-        {(cat || sub) && (
-          <div className="mt-3 flex flex-wrap items-center gap-1 text-[11px] text-ink-mute">
-            <Link href="/products" className="hover:text-industrial">产品中心</Link>
-            {cat && (
-              <>
-                <ChevronRight className="h-3 w-3" />
-                <Link
-                  href={`/products?category=${cat.slug}`}
-                  className="hover:text-industrial"
-                >
-                  {cat.name_cn}
-                </Link>
-              </>
-            )}
-            {sub && (
-              <>
-                <ChevronRight className="h-3 w-3" />
-                <span className="text-ink-soft">{sub.name_cn}</span>
-              </>
-            )}
-          </div>
-        )}
-
-        {/* 价格 - 精致信息卡 */}
-        <div className="mt-4 rounded-xl border border-ink-line bg-canvas-warm p-3.5">
-          <p className="text-[11px] text-ink-mute">公开价格</p>
-          <p className="mt-0.5 text-[15px] font-semibold text-industrial">
-            {p.price_display_cn || "请联系销售获取报价"}
-          </p>
-          {p.price_display_en && (
-            <p className="text-[11px] text-ink-mute">{p.price_display_en}</p>
-          )}
-        </div>
-      </div>
-
-      {/* 产品描述 */}
-      {p.description_cn && (
-        <section className="mt-2 bg-white px-5 py-4">
-          <h2 className="flex items-center text-sm font-semibold text-ink">
-            <span className="mr-2 inline-block h-4 w-1 rounded-full bg-industrial" />
-            产品介绍
-          </h2>
-          <p className="mt-2 whitespace-pre-line text-[13px] leading-relaxed text-ink-soft">
-            {p.description_cn}
-          </p>
-        </section>
-      )}
-
-      {/* 规格参数 - 精致信息卡 */}
-      <section className="mt-2 bg-white px-5 py-4">
-        <h2 className="flex items-center text-sm font-semibold text-ink">
-          <span className="mr-2 inline-block h-4 w-1 rounded-full bg-industrial" />
-          规格参数
-        </h2>
-        <div className="mt-3 divide-y divide-ink-line">
-          {specs
-            .filter((s) => s.value)
-            .map((s, i) => {
-              const Icon = s.icon;
-              return (
-                <div key={i} className="flex items-start gap-3 py-2.5">
-                  <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-industrial-50">
-                    <Icon className="h-4 w-4 text-industrial" />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-[11px] text-ink-mute">{s.label}</p>
-                    <p className="mt-0.5 text-[13px] text-ink">{s.value}</p>
-                  </div>
-                </div>
-              );
-            })}
-        </div>
-      </section>
-
-      {/* 相关证书 */}
-      {certs.length > 0 && (
-        <section className="mt-2 bg-white px-5 py-4">
-          <div className="flex items-center justify-between">
-            <h2 className="flex items-center gap-1.5 text-sm font-semibold text-ink">
-              <Award className="h-4 w-4 text-brass" /> 相关证书
-            </h2>
-            <Link href="/certificates" className="text-[11px] text-industrial">
-              全部
+    <div className="animate-fade-in bg-canvas pb-24 md:pb-0">
+      {/* 顶部返回 sticky（mobile top-0, desktop top-16） */}
+      <div className="sticky top-0 z-30 flex items-center gap-3 border-b border-ink-line bg-white/95 backdrop-blur-lg md:top-16">
+        <ResponsiveContainer className="py-3">
+          <div className="flex items-center gap-3">
+            <Link
+              href="/products"
+              className="flex h-8 w-8 items-center justify-center rounded-full bg-canvas-warm text-ink-soft transition hover:bg-canvas-cool"
+              aria-label="返回"
+            >
+              <ArrowLeft className="h-4 w-4" />
             </Link>
+            <span className="line-clamp-1 text-[13px] font-medium text-ink md:text-sm">
+              {p.name_cn}
+            </span>
           </div>
-          <div className="mt-3 flex gap-3 overflow-x-auto pb-1 no-scrollbar">
-            {certs.map((c) => (
-              <Link
-                key={c.id}
-                href="/certificates"
-                className="w-28 shrink-0 overflow-hidden rounded-xl border border-ink-line"
-              >
-                <div className="aspect-[3/4]">
-                  <ProductImage
-                    src={c.image_url}
-                    alt={c.name_cn}
-                    placeholder="cert"
-                  />
-                </div>
-                <p className="line-clamp-1 px-2 py-1.5 text-[10px] text-ink">
-                  {c.name_cn}
-                </p>
+        </ResponsiveContainer>
+      </div>
+
+      {/* 主体：mobile 单列 / desktop 左右分栏 */}
+      <ResponsiveContainer className="py-6 md:py-10">
+        <div className="md:grid md:grid-cols-2 md:gap-10 lg:gap-14">
+          {/* 左侧：图片轮播（desktop sticky） */}
+          <div className="md:sticky md:top-24 md:self-start">
+            <ImageCarousel images={carouselImages} videoUrl={p.video_url} />
+          </div>
+
+          {/* 右侧：产品信息 */}
+          <div className="mt-5 md:mt-0">
+            {/* 标题与卖点 */}
+            <div className="flex flex-wrap gap-1.5">
+              <FireBadge rating={p.fire_rating || "B级"} />
+              <EcoBadge grade={p.eco_grade || "E0级"} />
+              {p.is_featured && (
+                <span className="chip chip-feature">主推产品</span>
+              )}
+            </div>
+            <h1 className="mt-2 text-lg font-bold leading-snug text-ink md:mt-3 md:text-2xl md:leading-snug">
+              {p.name_cn}
+            </h1>
+            {p.name_en && (
+              <p className="mt-0.5 text-[11px] text-ink-mute md:text-xs">
+                {p.name_en}
+              </p>
+            )}
+            {p.summary_cn && (
+              <p className="mt-2 text-[13px] leading-relaxed text-ink-soft md:mt-3 md:text-sm md:leading-relaxed">
+                {p.summary_cn}
+              </p>
+            )}
+
+            {/* 类目面包屑 */}
+            {(cat || sub) && (
+              <div className="mt-3 flex flex-wrap items-center gap-1 text-[11px] text-ink-mute md:text-xs">
+                <Link href="/products" className="hover:text-industrial">产品中心</Link>
+                {cat && (
+                  <>
+                    <ChevronRight className="h-3 w-3" />
+                    <Link
+                      href={`/products?category=${cat.slug}`}
+                      className="hover:text-industrial"
+                    >
+                      {cat.name_cn}
+                    </Link>
+                  </>
+                )}
+                {sub && (
+                  <>
+                    <ChevronRight className="h-3 w-3" />
+                    <span className="text-ink-soft">{sub.name_cn}</span>
+                  </>
+                )}
+              </div>
+            )}
+
+            {/* 价格信息卡 */}
+            <div className="mt-4 rounded-xl border border-ink-line bg-canvas-warm p-3.5 md:mt-5 md:p-5">
+              <p className="text-[11px] text-ink-mute md:text-xs">公开价格</p>
+              <p className="mt-0.5 text-[15px] font-semibold text-industrial md:text-lg">
+                {p.price_display_cn || "请联系销售获取报价"}
+              </p>
+              {p.price_display_en && (
+                <p className="text-[11px] text-ink-mute md:text-xs">{p.price_display_en}</p>
+              )}
+            </div>
+
+            {/* desktop CTA：右侧固定询盘按钮 */}
+            <div className="mt-4 hidden flex-col gap-2 md:mt-5 md:flex">
+              <Link href="/contact" className="btn-primary h-12 w-full text-sm">
+                立即询盘 · Get Quotation
+                <ArrowRight className="h-4 w-4" />
               </Link>
-            ))}
+              {companyPhone && (
+                <a
+                  href={`tel:${companyPhone.replace(/[^+\d]/g, "")}`}
+                  className="btn-outline h-12 w-full text-sm"
+                >
+                  <Phone className="h-4 w-4" />
+                  {companyPhone}
+                </a>
+              )}
+            </div>
+
+            {/* 产品描述 */}
+            {p.description_cn && (
+              <div className="mt-5 border-t border-ink-line pt-5">
+                <h2 className="flex items-center text-sm font-semibold text-ink md:text-base">
+                  <span className="mr-2 inline-block h-4 w-1 rounded-full bg-industrial" />
+                  产品介绍
+                </h2>
+                <p className="mt-2 whitespace-pre-line text-[13px] leading-relaxed text-ink-soft md:mt-3 md:text-sm md:leading-relaxed">
+                  {p.description_cn}
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* 规格参数 - 信息卡 */}
+        <section className="mt-6 rounded-2xl border border-ink-line bg-white p-4 md:mt-10 md:p-6">
+          <h2 className="flex items-center text-sm font-semibold text-ink md:text-base">
+            <span className="mr-2 inline-block h-4 w-1 rounded-full bg-industrial" />
+            规格参数
+          </h2>
+          <div className="mt-3 grid grid-cols-1 gap-x-8 gap-y-0 md:mt-5 md:grid-cols-2">
+            {specs
+              .filter((s) => s.value)
+              .map((s, i) => {
+                const Icon = s.icon;
+                return (
+                  <div
+                    key={i}
+                    className="flex items-start gap-3 border-b border-ink-line py-2.5 md:py-3"
+                  >
+                    <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-industrial-50">
+                      <Icon className="h-4 w-4 text-industrial" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[11px] text-ink-mute md:text-xs">{s.label}</p>
+                      <p className="mt-0.5 text-[13px] text-ink md:text-sm">{s.value}</p>
+                    </div>
+                  </div>
+                );
+              })}
           </div>
         </section>
-      )}
 
-      {/* 底部固定 CTA */}
-      <div className="fixed bottom-0 left-1/2 z-40 w-full max-w-h5 -translate-x-1/2 border-t border-ink-line bg-white/95 px-5 py-3 backdrop-blur-lg safe-bottom">
+        {/* 相关证书 */}
+        {certs.length > 0 && (
+          <section className="mt-6 rounded-2xl border border-ink-line bg-white p-4 md:mt-8 md:p-6">
+            <div className="flex items-center justify-between">
+              <h2 className="flex items-center gap-1.5 text-sm font-semibold text-ink md:text-base">
+                <Award className="h-4 w-4 text-brass" /> 相关证书
+              </h2>
+              <Link href="/certificates" className="text-[11px] text-industrial md:text-xs">
+                全部
+              </Link>
+            </div>
+            <div className="mt-3 grid grid-cols-2 gap-2 md:mt-5 md:grid-cols-4 md:gap-4">
+              {certs.map((c) => (
+                <Link
+                  key={c.id}
+                  href="/certificates"
+                  className="overflow-hidden rounded-xl border border-ink-line"
+                >
+                  <div className="aspect-[3/4]">
+                    <ProductImage
+                      src={c.image_url}
+                      alt={c.name_cn}
+                      placeholder="cert"
+                    />
+                  </div>
+                  <p className="line-clamp-1 px-2 py-1.5 text-[10px] text-ink md:text-[11px]">
+                    {c.name_cn}
+                  </p>
+                </Link>
+              ))}
+            </div>
+          </section>
+        )}
+      </ResponsiveContainer>
+
+      {/* mobile 底部固定 CTA */}
+      <div className="fixed bottom-0 left-0 z-40 w-full border-t border-ink-line bg-white/95 px-4 py-3 backdrop-blur-lg safe-bottom md:hidden">
         <div className="flex gap-2">
           {companyPhone && (
             <a

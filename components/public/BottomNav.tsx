@@ -13,9 +13,9 @@ const tabs = [
 ];
 
 /**
- * 底部 Tab 导航 - 微信 H5 / 小程序风格
- * - 固定底部，与 H5 容器同宽
- * - 当前选中项有顶部指示条 + 强调色
+ * 移动端底部 Tab 导航 - 微信 H5 / 小程序风格
+ * - 仅在 mobile（< md）显示
+ * - tablet/desktop 由 DesktopHeader 接管
  */
 export function BottomNav() {
   const pathname = usePathname();
@@ -26,7 +26,7 @@ export function BottomNav() {
   };
 
   return (
-    <nav className="fixed bottom-0 left-1/2 z-50 w-full max-w-h5 -translate-x-1/2 border-t border-ink-line bg-white/95 backdrop-blur-lg safe-bottom">
+    <nav className="fixed bottom-0 left-0 z-50 w-full border-t border-ink-line bg-white/95 backdrop-blur-lg safe-bottom md:hidden">
       <div className="flex items-stretch justify-around px-2">
         {tabs.map((tab) => {
           const active = isActive(tab.href);
@@ -40,7 +40,6 @@ export function BottomNav() {
                 active ? "text-industrial" : "text-ink-mute"
               )}
             >
-              {/* 顶部指示条 */}
               {active && (
                 <span className="absolute top-0 h-0.5 w-7 rounded-full bg-industrial" />
               )}

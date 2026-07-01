@@ -70,6 +70,12 @@ const config: Config = {
       },
       maxWidth: {
         h5: "440px",
+        // 响应式内容容器宽度
+        content: "1200px", // desktop 最大内容宽度
+        "content-narrow": "1024px", // 窄内容（如关于页正文）
+      },
+      screens: {
+        xs: "375px",
       },
       boxShadow: {
         card: "0 1px 3px rgba(26,29,33,0.04), 0 1px 2px rgba(26,29,33,0.06)",
