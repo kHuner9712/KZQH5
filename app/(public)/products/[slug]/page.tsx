@@ -198,6 +198,13 @@ export default async function ProductDetailPage({
   ];
 
   // JSON-LD Product
+  // KZQ 产品价格为 "Contact for quotation"，没有公开数值价格。
+  // 为避免误导搜索引擎（price: "0" 会被解读为免费），仅在存在公开价格时输出 price 字段，
+  // 否则只标记可询盘与库存状态。
+  const hasPublicPrice =
+    !!p.price_display_cn &&
+    !/联系|询盘|quotation|contact/i.test(p.price_display_cn);
+
   const jsonLd = {
     "@context": "https://schema.org",
     "@type": "Product",
@@ -209,14 +216,14 @@ export default async function ProductDetailPage({
     category: cat?.name_cn,
     offers: {
       "@type": "Offer",
-      priceCurrency: "CNY",
-      price: "0",
       availability: "https://schema.org/InStock",
-      priceSpecification: {
-        "@type": "PriceSpecification",
-        priceCurrency: "CNY",
-        price: "0",
-      },
+      // 仅在确认有公开数值价格时输出 price，否则不输出 price 字段
+      ...(hasPublicPrice
+        ? {
+            priceCurrency: "CNY",
+            price: p.price_display_cn!,
+          }
+        : {}),
     },
   };
 

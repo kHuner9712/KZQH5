@@ -3,6 +3,7 @@ import { isDemoMode } from "@/lib/demo";
 import { mockCompany } from "@/lib/mock-data";
 import { InquiryForm } from "@/components/public/InquiryForm";
 import { ContactCard } from "@/components/public/ContactCard";
+import { QRCodeImage } from "@/components/public/QRCodeImage";
 import { SectionHeader } from "@/components/public/SectionHeader";
 import { ResponsiveContainer } from "@/components/public/ResponsiveContainer";
 import type { Metadata } from "next";
@@ -104,22 +105,9 @@ export default async function ContactPage({
                   <QrCode className="h-4 w-4 text-industrial" /> 微信扫码咨询
                 </div>
                 <div className="mt-3 overflow-hidden rounded-lg bg-white p-1.5">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
+                  <QRCodeImage
                     src={company.wechat_qr_url}
-                    alt="微信二维码"
-                    className="h-32 w-32 rounded object-cover md:h-36 md:w-36"
-                    loading="lazy"
-                    onError={(e) => {
-                      const t = e.currentTarget;
-                      t.style.display = "none";
-                      const p = t.parentElement;
-                      if (p) {
-                        p.classList.add("flex", "items-center", "justify-center");
-                        p.innerHTML =
-                          '<div class="h-32 w-32 flex items-center justify-center text-ink-mute text-[10px] md:h-36 md:w-36">二维码待上传</div>';
-                      }
-                    }}
+                    className="h-32 w-32 md:h-36 md:w-36"
                   />
                 </div>
                 <p className="mt-2 text-[11px] text-ink-mute md:text-xs">扫码添加 KZQ 销售</p>

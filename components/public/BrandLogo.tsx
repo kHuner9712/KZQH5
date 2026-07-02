@@ -1,3 +1,6 @@
+"use client";
+
+import { useState } from "react";
 import { cn } from "@/lib/utils";
 
 interface BrandLogoProps {
@@ -11,7 +14,7 @@ interface BrandLogoProps {
  * 品牌徽标
  * - 有 logo_url 时显示图片，加载失败 fallback 到 KZQ 字母标识
  * - 无 logo_url 直接显示字母标识
- * - 永不出现破图
+ * - 使用 useState 管理 fallback 状态，不操作 DOM
  */
 export function BrandLogo({
   logoUrl,
@@ -19,6 +22,9 @@ export function BrandLogo({
   size = 40,
   className,
 }: BrandLogoProps) {
+  const [failed, setFailed] = useState(false);
+  const showImage = logoUrl && !failed;
+
   return (
     <div
       className={cn(
@@ -27,22 +33,13 @@ export function BrandLogo({
       )}
       style={{ width: size, height: size, fontSize: size * 0.38 }}
     >
-      {logoUrl ? (
+      {showImage ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img
-          src={logoUrl}
+          src={logoUrl as string}
           alt={alt}
           className="h-full w-full object-cover"
-          onError={(e) => {
-            const target = e.currentTarget;
-            target.style.display = "none";
-            const parent = target.parentElement;
-            if (parent) {
-              parent.classList.remove("bg-industrial");
-              parent.classList.add("bg-industrial");
-              parent.textContent = "KZQ";
-            }
-          }}
+          onError={() => setFailed(true)}
         />
       ) : (
         <span className="select-none">KZQ</span>

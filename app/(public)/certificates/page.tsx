@@ -11,7 +11,7 @@ import type { Certificate } from "@/types/database";
 export const metadata: Metadata = {
   title: "资质证书",
   description:
-    "KZQ 资质证书：E0 级环保检测、B 级防火检测、工厂品控能力评估等，第三方检测认证保障。",
+    "KZQ 资质证书：已确认可公开展示的环保、防火及相关产品资料，完整证书请联系销售。",
 };
 
 export const revalidate = 60;
@@ -70,9 +70,9 @@ export default async function CertificatesPage() {
             <div className="h-8 w-px bg-ink-line md:h-10" />
             <div className="text-right">
               <p className="text-[13px] font-semibold text-industrial md:text-base">
-                环保 / 防火 / 品控
+                环保 / 防火 / 产品资料
               </p>
-              <p className="text-[11px] text-ink-mute md:text-xs">三大认证方向</p>
+              <p className="text-[11px] text-ink-mute md:text-xs">完整资料请联系销售</p>
             </div>
           </div>
         </ResponsiveContainer>
