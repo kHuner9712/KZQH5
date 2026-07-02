@@ -16,16 +16,10 @@ const tabs = [
  * 移动端底部 Tab 导航 - 微信 H5 / 小程序风格
  * - 仅在 mobile（< md）显示
  * - tablet/desktop 由 DesktopHeader 接管
- * - 在产品详情页隐藏，避免与产品详情页底部询盘 CTA 冲突
+ * - 是否渲染由 MobileNavController 按路径决定（产品详情页隐藏）
  */
 export function BottomNav() {
   const pathname = usePathname();
-
-  // 产品详情页（/products/[slug]）有自己的底部 CTA，隐藏 BottomNav
-  // 注意：/products 列表页不隐藏（pathname 为 "/products"，不匹配 "/products/"）
-  if (pathname.startsWith("/products/")) {
-    return null;
-  }
 
   const isActive = (href: string) => {
     if (href === "/") return pathname === "/";
