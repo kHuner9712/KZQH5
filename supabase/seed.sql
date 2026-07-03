@@ -31,9 +31,9 @@ insert into public.subcategories (id, category_id, name_cn, name_en, slug, descr
 ('22222222-2222-2222-2222-222222222201', '11111111-1111-1111-1111-111111111101', '多层板', 'Multi-Layer Board', 'multi-layer-board', '结构稳定的多层工程基材。', 'Stable multi-layer engineering substrate.', 1, true),
 ('22222222-2222-2222-2222-222222222202', '11111111-1111-1111-1111-111111111101', '中密度纤维板', 'MDF Board', 'mdf-board', '高密度中密度板，表面平整易加工。', 'High-density MDF with smooth surface.', 2, true),
 ('22222222-2222-2222-2222-222222222203', '11111111-1111-1111-1111-111111111102', '三聚氰胺饰面板', 'Melamine Faced Panel', 'melamine-faced-panel', '耐磨饰面板，花色丰富。', 'Wear-resistant decorative panel.', 1, true),
-('22222222-2222-2222-2222-222222222204', 'UV 涂装板', 'UV Coated Panel', 'uv-coated-panel', 'UV 固化涂装，高光哑光可选。', 'UV cured coating, gloss or matte.', 2, true),
-('22222222-2222-2222-2222-222222222205', '玻镁防火板', 'Magnesium Oxide Fire Board', 'mgo-fire-board', 'B级防火基材，适用于隔墙吊顶。', 'B-rated fire substrate for partitions and ceilings.', 1, true),
-('22222222-2222-2222-2222-222222222206', '防火饰面板', 'Fire-Rated Decorative Panel', 'fire-rated-decorative-panel', '防火 + 装饰一体化饰面板。', 'Fire-rated decorative integrated panel.', 2, true);
+('22222222-2222-2222-2222-222222222204', '11111111-1111-1111-1111-111111111102', 'UV 涂装板', 'UV Coated Panel', 'uv-coated-panel', 'UV 固化涂装，高光哑光可选。', 'UV cured coating, gloss or matte.', 2, true),
+('22222222-2222-2222-2222-222222222205', '11111111-1111-1111-1111-111111111103', '玻镁防火板', 'Magnesium Oxide Fire Board', 'mgo-fire-board', 'B级防火基材，适用于隔墙吊顶。', 'B-rated fire substrate for partitions and ceilings.', 1, true),
+('22222222-2222-2222-2222-222222222206', '11111111-1111-1111-1111-111111111103', '防火饰面板', 'Fire-Rated Decorative Panel', 'fire-rated-decorative-panel', '防火 + 装饰一体化饰面板。', 'Fire-rated decorative integrated panel.', 2, true);
 
 -- ============================================================
 -- 产品（8 个） - 围绕板材/装饰/防火/E0环保/工程/海外采购
@@ -64,7 +64,7 @@ insert into public.products (
   '托盘打包，覆膜防潮', 'Pallet packed, film-wrapped',
   '国内整车 / 海外集装箱可发', 'Domestic truck / overseas container available',
   '高端定制家具、酒店精装、展柜', 'Custom furniture, hotel finishing, display cabinets',
-  '', null, null,
+  '', null,
   true, true, 1
 ),
 (
@@ -81,7 +81,7 @@ insert into public.products (
   '托盘打包', 'Pallet packed',
   '支持全国配送与海外出口', 'Nationwide delivery and overseas export',
   '定制家具、门板、展示架', 'Custom furniture, door panels, display racks',
-  '', null, null,
+  '', null,
   true, true, 2
 ),
 (
@@ -98,7 +98,7 @@ insert into public.products (
   '托盘打包，四角护角', 'Pallet packed with corner protectors',
   '国内整车 / 海外整柜', 'Domestic truck / overseas container',
   '全屋定制柜体、办公家具', 'Whole-house cabinets, office furniture',
-  '', null, null,
+  '', null,
   false, true, 3
 ),
 (
@@ -115,7 +115,7 @@ insert into public.products (
   '托盘打包，板间垫片', 'Pallet packed with separators',
   '国内配送 / 海外出口', 'Domestic delivery / overseas export',
   '衣柜门板、商业展示墙', 'Wardrobe doors, commercial display walls',
-  '', null, null,
+  '', null,
   true, true, 4
 ),
 (
@@ -132,7 +132,7 @@ insert into public.products (
   '托盘打包，防潮膜', 'Pallet packed, moisture film',
   '全国配送 / 海外集装箱', 'Nationwide / overseas container',
   '酒店隔墙、商场吊顶、医院墙体', 'Hotel partitions, mall ceilings, hospital walls',
-  '', null, null,
+  '', null,
   true, true, 5
 ),
 (
@@ -149,7 +149,7 @@ insert into public.products (
   '托盘打包，工程配送', 'Pallet packed, project delivery',
   '工程专车 / 海外整柜', 'Project truck / overseas container',
   '地铁、机场、学校、商业综合体', 'Subway, airport, school, commercial complex',
-  '', null, null,
+  '', null,
   true, true, 6
 ),
 (
@@ -166,7 +166,7 @@ insert into public.products (
   '出口托盘 + 熏蒸', 'Export pallet + fumigation',
   'FOB 宁波 / CIF 可协商', 'FOB Ningbo / CIF negotiable',
   '海外家具制造、工程承包商', 'Overseas furniture manufacturers, contractors',
-  '', null, null,
+  '', null,
   false, true, 7
 ),
 (
@@ -183,31 +183,19 @@ insert into public.products (
   '托盘打包，护角保护', 'Pallet packed with corner protectors',
   '国内配送 / 海外出口', 'Domestic / overseas export',
   '现代风格家具、办公空间', 'Modern furniture, office space',
-  '', null, null,
+  '', null,
   false, true, 8
 );
 
 -- ============================================================
--- 产品多图（每个产品 2 张）
--- 图片 URL 设为 null，后续由后台上传
+-- 产品多图
+-- schema 中 product_images.image_url 为 NOT NULL，但当前无真实图源
+-- （不使用 Unsplash，不使用未确认外部图源）
+-- 因此 seed 阶段不插入 product_images，产品默认无详情图
+-- 前台继续使用现有 ProductImage fallback / 占位逻辑
+-- 上线后通过后台 /admin/products/[id]/edit 上传真实图片到 Supabase Storage
 -- ============================================================
-insert into public.product_images (product_id, image_url, alt_cn, alt_en, sort_order) values
-('33333333-3333-3333-3333-333333333301', null, '多层板正面', 'Multi-layer board front', 1),
-('33333333-3333-3333-3333-333333333301', null, '多层板侧边', 'Multi-layer board edge', 2),
-('33333333-3333-3333-3333-333333333302', null, 'MDF 表面', 'MDF surface', 1),
-('33333333-3333-3333-3333-333333333302', null, 'MDF 切面', 'MDF cross-section', 2),
-('33333333-3333-3333-3333-333333333303', null, '木纹饰面板', 'Wood grain panel', 1),
-('33333333-3333-3333-3333-333333333303', null, '木纹细节', 'Wood grain detail', 2),
-('33333333-3333-3333-3333-333333333304', null, 'UV 高光面板', 'UV high-gloss panel', 1),
-('33333333-3333-3333-3333-333333333304', null, '高光细节', 'Gloss detail', 2),
-('33333333-3333-3333-3333-333333333305', null, '玻镁防火板', 'MGO fire board', 1),
-('33333333-3333-3333-3333-333333333305', null, '防火板结构', 'Fire board structure', 2),
-('33333333-3333-3333-3333-333333333306', null, '防火饰面板', 'Fire decorative panel', 1),
-('33333333-3333-3333-3333-333333333306', null, '饰面细节', 'Surface detail', 2),
-('33333333-3333-3333-3333-333333333307', null, '出口级多层板', 'Export board', 1),
-('33333333-3333-3333-3333-333333333307', null, '出口包装', 'Export packaging', 2),
-('33333333-3333-3333-3333-333333333308', null, '素色哑光板', 'Solid matte panel', 1),
-('33333333-3333-3333-3333-333333333308', null, '哑光细节', 'Matte detail', 2);
+-- （不插入 product_images 种子数据）
 
 -- ============================================================
 -- 证书（仅展示版/水印版，不出现未确认认证）
