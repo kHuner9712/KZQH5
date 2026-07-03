@@ -7,15 +7,27 @@ import {
   getMockCategoryBySlug,
   getMockSubcategories,
 } from "@/lib/mock-data";
+import { fetchPageContent } from "@/lib/queries/cms";
 import { ProductCard } from "@/components/public/ProductCard";
 import { EmptyState } from "@/components/public/EmptyState";
 import { SearchBox } from "@/components/public/SearchBox";
 import { ResponsiveContainer } from "@/components/public/ResponsiveContainer";
 import { cn } from "@/lib/utils";
 import { PackageOpen, ChevronRight } from "lucide-react";
+import type { Metadata } from "next";
 import type { Product, Category, Subcategory } from "@/types/database";
 
 export const revalidate = 60;
+
+export async function generateMetadata(): Promise<Metadata> {
+  const page = await fetchPageContent("products");
+  return {
+    title: page?.seo_title_cn ?? "产品中心",
+    description:
+      page?.seo_description_cn ??
+      "KZQ 工程级板材产品中心：防火板、饰面板、工程基材等多品类，支持规格定制与海外出口。",
+  };
+}
 
 export default async function ProductsPage({
   searchParams,
@@ -105,6 +117,9 @@ export default async function ProductsPage({
   const activeCategorySlug = searchParams.category;
   const activeCategory = categories.find((c) => c.slug === activeCategorySlug);
 
+  // CMS 页面内容（Demo 模式自动回退到 mock 数据）
+  const page = await fetchPageContent("products");
+
   function buildUrl(params: Record<string, string | undefined>) {
     const sp = new URLSearchParams();
     Object.entries(params).forEach(([k, v]) => {
@@ -123,11 +138,16 @@ export default async function ProductsPage({
             Products
           </p>
           <h1 className="mt-1.5 text-xl font-bold tracking-tight text-ink md:mt-2 md:text-3xl">
-            产品中心
+            {page?.title_cn ?? "产品中心"}
           </h1>
           <p className="mt-1 text-[12px] text-ink-soft md:mt-2 md:text-sm">
-            工程级板材 · 防火饰面 · 海外出口
+            {page?.subtitle_cn ?? "工程级板材 · 防火饰面 · 海外出口"}
           </p>
+          {page?.description_cn && (
+            <p className="mt-2 max-w-2xl text-[11.5px] leading-relaxed text-ink-mute md:text-xs md:leading-relaxed">
+              {page.description_cn}
+            </p>
+          )}
         </ResponsiveContainer>
       </div>
 

@@ -8,8 +8,14 @@ import { Button } from "@/components/ui/Button";
 import { Input, Textarea } from "@/components/ui/Input";
 import { ImageUpload } from "@/components/admin/ImageUpload";
 import { generateSlug } from "@/lib/utils";
-import type { Category, Subcategory, Product, ProductImage } from "@/types/database";
-import { Loader2, Plus, Trash2, Save } from "lucide-react";
+import type {
+  Category,
+  Subcategory,
+  Product,
+  ProductImage,
+  ProductFaqItem,
+} from "@/types/database";
+import { Loader2, Plus, Trash2, Save, ChevronUp, ChevronDown } from "lucide-react";
 
 interface ProductFormProps {
   initial?: Product | null;
@@ -45,6 +51,17 @@ interface FormState {
   is_featured: boolean;
   is_published: boolean;
   sort_order: number;
+  // ----- GEO / SEO 扩展字段（编辑态为字符串，保存时转换） -----
+  seo_title_cn: string;
+  seo_title_en: string;
+  seo_description_cn: string;
+  seo_description_en: string;
+  geo_summary_cn: string;
+  geo_summary_en: string;
+  keywords_cn: string;
+  keywords_en: string;
+  search_aliases: string;
+  schema_extra: string;
 }
 
 const defaultForm: FormState = {
@@ -76,6 +93,16 @@ const defaultForm: FormState = {
   is_featured: false,
   is_published: false,
   sort_order: 0,
+  seo_title_cn: "",
+  seo_title_en: "",
+  seo_description_cn: "",
+  seo_description_en: "",
+  geo_summary_cn: "",
+  geo_summary_en: "",
+  keywords_cn: "",
+  keywords_en: "",
+  search_aliases: "",
+  schema_extra: "",
 };
 
 export function ProductForm({ initial, initialImages = [] }: ProductFormProps) {
@@ -115,6 +142,18 @@ export function ProductForm({ initial, initialImages = [] }: ProductFormProps) {
           is_featured: initial.is_featured,
           is_published: initial.is_published,
           sort_order: initial.sort_order,
+          seo_title_cn: initial.seo_title_cn || "",
+          seo_title_en: initial.seo_title_en || "",
+          seo_description_cn: initial.seo_description_cn || "",
+          seo_description_en: initial.seo_description_en || "",
+          geo_summary_cn: initial.geo_summary_cn || "",
+          geo_summary_en: initial.geo_summary_en || "",
+          keywords_cn: initial.keywords_cn?.join(", ") || "",
+          keywords_en: initial.keywords_en?.join(", ") || "",
+          search_aliases: initial.search_aliases?.join(", ") || "",
+          schema_extra: initial.schema_extra
+            ? JSON.stringify(initial.schema_extra, null, 2)
+            : "",
         }
       : defaultForm
   );
@@ -131,6 +170,8 @@ export function ProductForm({ initial, initialImages = [] }: ProductFormProps) {
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [loadingMeta, setLoadingMeta] = useState(true);
+  const [faqCn, setFaqCn] = useState<ProductFaqItem[]>(initial?.faq_cn || []);
+  const [faqEn, setFaqEn] = useState<ProductFaqItem[]>(initial?.faq_en || []);
 
   // 加载类目
   useEffect(() => {
@@ -207,12 +248,77 @@ export function ProductForm({ initial, initialImages = [] }: ProductFormProps) {
     });
   }
 
+  // FAQ 中文
+  function addFaqCn() {
+    setFaqCn((p) => [...p, { question: "", answer: "" }]);
+  }
+  function removeFaqCn(idx: number) {
+    setFaqCn((p) => p.filter((_, i) => i !== idx));
+  }
+  function moveFaqCn(idx: number, dir: -1 | 1) {
+    setFaqCn((p) => {
+      const next = [...p];
+      const target = idx + dir;
+      if (target < 0 || target >= next.length) return p;
+      [next[idx], next[target]] = [next[target], next[idx]];
+      return next;
+    });
+  }
+  function updateFaqCn(idx: number, key: "question" | "answer", value: string) {
+    setFaqCn((p) => p.map((it, i) => (i === idx ? { ...it, [key]: value } : it)));
+  }
+
+  // FAQ 英文
+  function addFaqEn() {
+    setFaqEn((p) => [...p, { question: "", answer: "" }]);
+  }
+  function removeFaqEn(idx: number) {
+    setFaqEn((p) => p.filter((_, i) => i !== idx));
+  }
+  function moveFaqEn(idx: number, dir: -1 | 1) {
+    setFaqEn((p) => {
+      const next = [...p];
+      const target = idx + dir;
+      if (target < 0 || target >= next.length) return p;
+      [next[idx], next[target]] = [next[target], next[idx]];
+      return next;
+    });
+  }
+  function updateFaqEn(idx: number, key: "question" | "answer", value: string) {
+    setFaqEn((p) => p.map((it, i) => (i === idx ? { ...it, [key]: value } : it)));
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!validate()) {
       show("请检查表单必填项", "error");
       return;
     }
+
+    // 解析 schema_extra JSON（可选）
+    let schemaExtra: Record<string, unknown> | null = null;
+    if (form.schema_extra.trim()) {
+      try {
+        const parsed = JSON.parse(form.schema_extra);
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          schemaExtra = parsed as Record<string, unknown>;
+        } else {
+          show("schema_extra 必须是 JSON 对象", "error");
+          return;
+        }
+      } catch {
+        show("schema_extra JSON 格式错误", "error");
+        return;
+      }
+    }
+
+    // 转换 FAQ：过滤空项，空数组保存为 null
+    const faqCnFiltered = faqCn.filter(
+      (f) => f.question.trim() && f.answer.trim()
+    );
+    const faqEnFiltered = faqEn.filter(
+      (f) => f.question.trim() && f.answer.trim()
+    );
 
     setSaving(true);
 
@@ -245,6 +351,34 @@ export function ProductForm({ initial, initialImages = [] }: ProductFormProps) {
       is_featured: form.is_featured,
       is_published: form.is_published,
       sort_order: Number(form.sort_order) || 0,
+      // ----- GEO / SEO -----
+      seo_title_cn: form.seo_title_cn.trim() || null,
+      seo_title_en: form.seo_title_en.trim() || null,
+      seo_description_cn: form.seo_description_cn.trim() || null,
+      seo_description_en: form.seo_description_en.trim() || null,
+      geo_summary_cn: form.geo_summary_cn.trim() || null,
+      geo_summary_en: form.geo_summary_en.trim() || null,
+      keywords_cn: form.keywords_cn.trim()
+        ? form.keywords_cn
+            .split(/[,，]/)
+            .map((s) => s.trim())
+            .filter(Boolean)
+        : null,
+      keywords_en: form.keywords_en.trim()
+        ? form.keywords_en
+            .split(/[,，]/)
+            .map((s) => s.trim())
+            .filter(Boolean)
+        : null,
+      search_aliases: form.search_aliases.trim()
+        ? form.search_aliases
+            .split(/[,，]/)
+            .map((s) => s.trim())
+            .filter(Boolean)
+        : null,
+      schema_extra: schemaExtra,
+      faq_cn: faqCnFiltered.length > 0 ? faqCnFiltered : null,
+      faq_en: faqEnFiltered.length > 0 ? faqEnFiltered : null,
     };
 
     let productId = initial?.id;
@@ -504,6 +638,91 @@ export function ProductForm({ initial, initialImages = [] }: ProductFormProps) {
         />
       </Section>
 
+      {/* GEO / SEO */}
+      <Section title="GEO / SEO 内容" subtitle="搜索引擎优化、地理化摘要与 FAQ">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <Input
+            label="SEO 标题（中）"
+            value={form.seo_title_cn}
+            onChange={(e) => update("seo_title_cn", e.target.value)}
+          />
+          <Input
+            label="SEO 标题（英）"
+            value={form.seo_title_en}
+            onChange={(e) => update("seo_title_en", e.target.value)}
+          />
+        </div>
+        <Textarea
+          label="SEO 描述（中）"
+          rows={2}
+          value={form.seo_description_cn}
+          onChange={(e) => update("seo_description_cn", e.target.value)}
+        />
+        <Textarea
+          label="SEO 描述（英）"
+          rows={2}
+          value={form.seo_description_en}
+          onChange={(e) => update("seo_description_en", e.target.value)}
+        />
+        <Textarea
+          label="地理化摘要（中）"
+          rows={3}
+          value={form.geo_summary_cn}
+          onChange={(e) => update("geo_summary_cn", e.target.value)}
+        />
+        <Textarea
+          label="地理化摘要（英）"
+          rows={3}
+          value={form.geo_summary_en}
+          onChange={(e) => update("geo_summary_en", e.target.value)}
+        />
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <Input
+            label="关键词（中）"
+            value={form.keywords_cn}
+            onChange={(e) => update("keywords_cn", e.target.value)}
+            hint="多个关键词用英文逗号分隔"
+          />
+          <Input
+            label="关键词（英）"
+            value={form.keywords_en}
+            onChange={(e) => update("keywords_en", e.target.value)}
+            hint="多个关键词用英文逗号分隔"
+          />
+        </div>
+        <Input
+          label="搜索别名"
+          value={form.search_aliases}
+          onChange={(e) => update("search_aliases", e.target.value)}
+          hint="搜索别名，逗号分隔"
+        />
+        <Textarea
+          label="额外结构化数据 (JSON-LD)"
+          rows={3}
+          value={form.schema_extra}
+          onChange={(e) => update("schema_extra", e.target.value)}
+          hint="可选，额外 JSON-LD 结构化数据（JSON 对象）"
+          placeholder='{"@context":"https://schema.org","@type":"Product"}'
+        />
+
+        <FaqEditor
+          title="FAQ（中文）"
+          items={faqCn}
+          onAdd={addFaqCn}
+          onRemove={removeFaqCn}
+          onMove={moveFaqCn}
+          onUpdate={updateFaqCn}
+        />
+        <FaqEditor
+          title="FAQ（英文）"
+          items={faqEn}
+          onAdd={addFaqEn}
+          onRemove={removeFaqEn}
+          onMove={moveFaqEn}
+          onUpdate={updateFaqEn}
+        />
+      </Section>
+
       {/* 媒体 */}
       <Section title="媒体资源" subtitle="封面图、视频 URL、详情图片">
         <ImageUpload
@@ -728,5 +947,88 @@ function ImageUploadHelper({ onUploaded }: { onUploaded: (url: string) => void }
       aspect="wide"
       label="上传图片到图集"
     />
+  );
+}
+
+// ============================================================
+// 子组件：FAQ 编辑器（中/英复用）
+// ============================================================
+function FaqEditor({
+  title,
+  items,
+  onAdd,
+  onRemove,
+  onMove,
+  onUpdate,
+}: {
+  title: string;
+  items: ProductFaqItem[];
+  onAdd: () => void;
+  onRemove: (idx: number) => void;
+  onMove: (idx: number, dir: -1 | 1) => void;
+  onUpdate: (idx: number, key: "question" | "answer", value: string) => void;
+}) {
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between">
+        <label className="block text-sm font-medium text-gray-700">{title}</label>
+        <Button type="button" size="sm" variant="secondary" onClick={onAdd}>
+          <Plus className="h-3.5 w-3.5" /> 添加 FAQ
+        </Button>
+      </div>
+      {items.length > 0 && (
+        <div className="space-y-2">
+          {items.map((item, idx) => (
+            <div
+              key={idx}
+              className="space-y-2 rounded-lg border border-gray-200 bg-white p-3"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-gray-400">FAQ {idx + 1}</span>
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => onMove(idx, -1)}
+                    disabled={idx === 0}
+                    className="rounded p-1 text-gray-500 hover:bg-gray-100 disabled:opacity-30"
+                    aria-label="上移"
+                  >
+                    <ChevronUp className="h-4 w-4" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onMove(idx, 1)}
+                    disabled={idx === items.length - 1}
+                    className="rounded p-1 text-gray-500 hover:bg-gray-100 disabled:opacity-30"
+                    aria-label="下移"
+                  >
+                    <ChevronDown className="h-4 w-4" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onRemove(idx)}
+                    className="rounded p-1 text-red-500 hover:bg-red-50"
+                    aria-label="删除"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              </div>
+              <Input
+                value={item.question}
+                onChange={(e) => onUpdate(idx, "question", e.target.value)}
+                placeholder="问题"
+              />
+              <Textarea
+                rows={2}
+                value={item.answer}
+                onChange={(e) => onUpdate(idx, "answer", e.target.value)}
+                placeholder="答案"
+              />
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }

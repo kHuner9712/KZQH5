@@ -45,7 +45,16 @@ export async function generateMetadata({
   params: { slug: string };
 }): Promise<Metadata> {
   let product:
-    | Pick<Product, "name_cn" | "name_en" | "summary_cn" | "summary_en" | "cover_image_url">
+    | Pick<
+        Product,
+        | "name_cn"
+        | "name_en"
+        | "summary_cn"
+        | "summary_en"
+        | "cover_image_url"
+        | "seo_title_cn"
+        | "seo_description_cn"
+      >
     | null
     | undefined = null;
 
@@ -55,7 +64,9 @@ export async function generateMetadata({
     const supabase = createServerSupabaseClient();
     const { data } = await supabase
       .from("products")
-      .select("name_cn, name_en, summary_cn, summary_en, cover_image_url")
+      .select(
+        "name_cn, name_en, summary_cn, summary_en, cover_image_url, seo_title_cn, seo_description_cn"
+      )
       .eq("slug", params.slug)
       .eq("is_published", true)
       .single();
@@ -66,8 +77,8 @@ export async function generateMetadata({
     return { title: "产品未找到" };
   }
 
-  const title = `${product.name_cn} | KZQ`;
-  const description = product.summary_cn || product.name_cn;
+  const title = product.seo_title_cn ?? `${product.name_cn} | KZQ`;
+  const description = product.seo_description_cn ?? product.summary_cn ?? product.name_cn;
 
   return {
     title,
@@ -227,6 +238,23 @@ export default async function ProductDetailPage({
     },
   };
 
+  // FAQ JSON-LD（仅在产品存在 FAQ 时输出）
+  const faqJsonLd =
+    p.faq_cn && p.faq_cn.length > 0
+      ? {
+          "@context": "https://schema.org",
+          "@type": "FAQPage",
+          mainEntity: p.faq_cn.map((f) => ({
+            "@type": "Question",
+            name: f.question,
+            acceptedAnswer: {
+              "@type": "Answer",
+              text: f.answer,
+            },
+          })),
+        }
+      : null;
+
   return (
     <div className="animate-fade-in bg-canvas pb-24 md:pb-0">
       {/* 顶部返回 sticky（mobile top-0, desktop top-16） */}
@@ -346,6 +374,19 @@ export default async function ProductDetailPage({
           </div>
         </div>
 
+        {/* GEO 摘要 - 产品概览 */}
+        {p.geo_summary_cn && (
+          <section className="mt-6 rounded-2xl border border-ink-line bg-white p-4 md:mt-10 md:p-6">
+            <h2 className="flex items-center text-sm font-semibold text-ink md:text-base">
+              <span className="mr-2 inline-block h-4 w-1 rounded-full bg-industrial" />
+              产品概览
+            </h2>
+            <p className="mt-2 whitespace-pre-line text-[13px] leading-relaxed text-ink-soft md:mt-3 md:text-sm md:leading-relaxed">
+              {p.geo_summary_cn}
+            </p>
+          </section>
+        )}
+
         {/* 规格参数 - 信息卡 */}
         <section className="mt-6 rounded-2xl border border-ink-line bg-white p-4 md:mt-10 md:p-6">
           <h2 className="flex items-center text-sm font-semibold text-ink md:text-base">
@@ -408,6 +449,28 @@ export default async function ProductDetailPage({
             </div>
           </section>
         )}
+
+        {/* 常见问题 FAQ */}
+        {p.faq_cn && p.faq_cn.length > 0 && (
+          <section className="mt-6 rounded-2xl border border-ink-line bg-white p-4 md:mt-8 md:p-6">
+            <h2 className="flex items-center text-sm font-semibold text-ink md:text-base">
+              <span className="mr-2 inline-block h-4 w-1 rounded-full bg-industrial" />
+              常见问题
+            </h2>
+            <div className="mt-3 space-y-3 md:mt-5 md:space-y-4">
+              {p.faq_cn.map((f, i) => (
+                <div key={i} className="border-b border-ink-line pb-3 last:border-b-0 last:pb-0 md:pb-4">
+                  <h3 className="text-[13px] font-semibold text-ink md:text-sm">
+                    {f.question}
+                  </h3>
+                  <p className="mt-1 text-[12px] leading-relaxed text-ink-soft md:mt-1.5 md:text-[13px] md:leading-relaxed">
+                    {f.answer}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
       </ResponsiveContainer>
 
       {/* mobile 底部固定 CTA */}
@@ -435,6 +498,12 @@ export default async function ProductDetailPage({
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
       />
+      {faqJsonLd && (
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{ __html: JSON.stringify(faqJsonLd) }}
+        />
+      )}
     </div>
   );
 }

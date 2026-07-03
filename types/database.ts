@@ -36,6 +36,12 @@ export interface Subcategory {
   updated_at: string;
 }
 
+// 产品 FAQ 项结构（faq_cn / faq_en jsonb 数组元素）
+export interface ProductFaqItem {
+  question: string;
+  answer: string;
+}
+
 export interface Product {
   id: string;
   category_id: string | null;
@@ -66,6 +72,20 @@ export interface Product {
   is_featured: boolean;
   is_published: boolean;
   sort_order: number;
+  // ----- GEO / SEO 扩展字段 -----
+  seo_title_cn: string | null;
+  seo_title_en: string | null;
+  seo_description_cn: string | null;
+  seo_description_en: string | null;
+  geo_summary_cn: string | null;
+  geo_summary_en: string | null;
+  keywords_cn: string[] | null;
+  keywords_en: string[] | null;
+  faq_cn: ProductFaqItem[] | null;
+  faq_en: ProductFaqItem[] | null;
+  search_aliases: string[] | null;
+  schema_extra: Record<string, unknown> | null;
+  // ------------------------------
   created_at: string;
   updated_at: string;
   // 关联查询字段（非数据库列）
@@ -145,11 +165,99 @@ export interface CompanyProfile {
 export interface SiteSettings {
   id: string;
   site_name: string;
+  // ----- 扩展字段 -----
+  site_name_cn: string | null;
+  site_name_en: string | null;
+  brand_name: string | null;
   default_language: string;
+  global_meta_title_cn: string | null;
+  global_meta_title_en: string | null;
+  global_meta_description_cn: string | null;
+  global_meta_description_en: string | null;
+  default_og_image_url: string | null;
+  footer_text_cn: string | null;
+  footer_text_en: string | null;
+  navigation_json: NavItem[] | null;
+  // --------------------
+  // 保留旧字段（向后兼容）
   meta_title_cn: string | null;
   meta_title_en: string | null;
   meta_description_cn: string | null;
   meta_description_en: string | null;
+  updated_at: string;
+}
+
+// 导航菜单项结构（site_settings.navigation_json 数组元素）
+export interface NavItem {
+  label_cn: string;
+  label_en: string;
+  href: string;
+  sort_order?: number;
+}
+
+// 首页核心优势项（homepage_content.features_cn / features_en jsonb 数组元素）
+export interface HomeFeatureItem {
+  icon: string;
+  title: string;
+  description: string;
+}
+
+export interface HomepageContent {
+  id: string;
+  hero_eyebrow_cn: string | null;
+  hero_eyebrow_en: string | null;
+  hero_title_cn: string | null;
+  hero_title_en: string | null;
+  hero_highlight_cn: string | null;
+  hero_highlight_en: string | null;
+  hero_description_cn: string | null;
+  hero_description_en: string | null;
+  primary_cta_text_cn: string | null;
+  primary_cta_text_en: string | null;
+  secondary_cta_text_cn: string | null;
+  secondary_cta_text_en: string | null;
+  feature_section_title_cn: string | null;
+  feature_section_title_en: string | null;
+  feature_section_subtitle_cn: string | null;
+  feature_section_subtitle_en: string | null;
+  features_cn: HomeFeatureItem[] | null;
+  features_en: HomeFeatureItem[] | null;
+  category_section_title_cn: string | null;
+  category_section_subtitle_cn: string | null;
+  featured_products_title_cn: string | null;
+  featured_products_subtitle_cn: string | null;
+  bottom_cta_title_cn: string | null;
+  bottom_cta_title_en: string | null;
+  bottom_cta_description_cn: string | null;
+  bottom_cta_description_en: string | null;
+  is_active: boolean;
+  updated_at: string;
+}
+
+// 页面内容区块结构（page_content.sections_cn / sections_en jsonb 数组元素）
+export interface PageSection {
+  title?: string;
+  subtitle?: string;
+  body?: string;
+  icon?: string;
+  items?: string[];
+}
+
+export interface PageContent {
+  id: string;
+  page_key: string;
+  title_cn: string | null;
+  title_en: string | null;
+  subtitle_cn: string | null;
+  subtitle_en: string | null;
+  description_cn: string | null;
+  description_en: string | null;
+  sections_cn: PageSection[] | null;
+  sections_en: PageSection[] | null;
+  seo_title_cn: string | null;
+  seo_title_en: string | null;
+  seo_description_cn: string | null;
+  seo_description_en: string | null;
   updated_at: string;
 }
 
@@ -215,6 +323,16 @@ export type Database = {
         Row: SiteSettings;
         Insert: Partial<SiteSettings>;
         Update: Partial<SiteSettings>;
+      };
+      homepage_content: {
+        Row: HomepageContent;
+        Insert: Partial<HomepageContent>;
+        Update: Partial<HomepageContent>;
+      };
+      page_content: {
+        Row: PageContent;
+        Insert: Partial<PageContent>;
+        Update: Partial<PageContent>;
       };
     };
     Views: Record<string, never>;

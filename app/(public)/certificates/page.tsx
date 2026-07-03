@@ -1,6 +1,7 @@
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { isDemoMode } from "@/lib/demo";
 import { mockCertificates } from "@/lib/mock-data";
+import { fetchPageContent } from "@/lib/queries/cms";
 import { CertificateCard } from "@/components/public/CertificateCard";
 import { EmptyState } from "@/components/public/EmptyState";
 import { ResponsiveContainer } from "@/components/public/ResponsiveContainer";
@@ -8,13 +9,17 @@ import { Award, ShieldCheck } from "lucide-react";
 import type { Metadata } from "next";
 import type { Certificate } from "@/types/database";
 
-export const metadata: Metadata = {
-  title: "资质证书",
-  description:
-    "KZQ 资质证书：已确认可公开展示的环保、防火及相关产品资料，完整证书请联系销售。",
-};
-
 export const revalidate = 60;
+
+export async function generateMetadata(): Promise<Metadata> {
+  const page = await fetchPageContent("certificates");
+  return {
+    title: page?.seo_title_cn ?? "资质证书",
+    description:
+      page?.seo_description_cn ??
+      "KZQ 资质证书：已确认可公开展示的环保、防火及相关产品资料，完整证书请联系销售。",
+  };
+}
 
 export default async function CertificatesPage() {
   let certificates: Certificate[] = [];
@@ -33,6 +38,9 @@ export default async function CertificatesPage() {
     certificates = (data as Certificate[] | null) || [];
   }
 
+  // CMS 页面内容（Demo 模式自动回退到 mock 数据）
+  const page = await fetchPageContent("certificates");
+
   return (
     <div className="animate-fade-in bg-canvas">
       {/* Hero */}
@@ -45,15 +53,21 @@ export default async function CertificatesPage() {
             Certificates
           </p>
           <h1 className="mt-1 text-xl font-bold tracking-tight text-ink md:mt-2 md:text-3xl">
-            资质证书
+            {page?.title_cn ?? "资质证书"}
           </h1>
           <p className="mt-1 text-[12px] text-ink-soft md:mt-2 md:text-sm">
-            第三方检测认证 · 工程级品质保障
+            {page?.subtitle_cn ?? "第三方检测认证 · 工程级品质保障"}
           </p>
-          <div className="mt-3 inline-flex items-center gap-1.5 rounded-full border border-ink-line bg-white px-3 py-1 text-[11px] text-ink-soft md:text-xs">
-            <ShieldCheck className="h-3 w-3 text-emerald-600" />
-            仅展示水印版/展示版，完整资料请联系销售
-          </div>
+          {page?.description_cn ? (
+            <p className="mt-2 max-w-2xl text-[11.5px] leading-relaxed text-ink-mute md:text-xs md:leading-relaxed">
+              {page.description_cn}
+            </p>
+          ) : (
+            <div className="mt-3 inline-flex items-center gap-1.5 rounded-full border border-ink-line bg-white px-3 py-1 text-[11px] text-ink-soft md:text-xs">
+              <ShieldCheck className="h-3 w-3 text-emerald-600" />
+              仅展示水印版/展示版，完整资料请联系销售
+            </div>
+          )}
         </ResponsiveContainer>
       </div>
 

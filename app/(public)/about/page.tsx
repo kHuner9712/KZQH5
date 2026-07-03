@@ -2,11 +2,13 @@ import Link from "next/link";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { isDemoMode } from "@/lib/demo";
 import { mockCompany } from "@/lib/mock-data";
+import { fetchPageContent } from "@/lib/queries/cms";
 import { siteUrl } from "@/lib/utils";
 import { SectionHeader } from "@/components/public/SectionHeader";
 import { ResponsiveContainer } from "@/components/public/ResponsiveContainer";
 import type { Metadata } from "next";
-import type { CompanyProfile } from "@/types/database";
+import type { LucideIcon } from "lucide-react";
+import type { CompanyProfile, PageSection } from "@/types/database";
 import {
   Boxes,
   ShieldCheck,
@@ -16,13 +18,17 @@ import {
   Phone,
 } from "lucide-react";
 
-export const metadata: Metadata = {
-  title: "公司介绍",
-  description:
-    "KZQ 公司介绍：产品能力、品控能力、生产与交付能力、面向国内与海外客户的服务能力。",
-};
-
 export const revalidate = 60;
+
+export async function generateMetadata(): Promise<Metadata> {
+  const page = await fetchPageContent("about");
+  return {
+    title: page?.seo_title_cn ?? "公司介绍",
+    description:
+      page?.seo_description_cn ??
+      "KZQ 公司介绍：产品能力、品控能力、生产与交付能力、面向国内与海外客户的服务能力。",
+  };
+}
 
 export default async function AboutPage() {
   let company: CompanyProfile | null = null;
@@ -38,6 +44,19 @@ export default async function AboutPage() {
       .maybeSingle();
     company = (data as CompanyProfile | null) || null;
   }
+
+  // CMS 页面内容（Demo 模式自动回退到 mock 数据）
+  const page = await fetchPageContent("about");
+
+  // 核心能力图标映射
+  const sectionIconMap: Record<string, LucideIcon> = {
+    boxes: Boxes,
+    shield: ShieldCheck,
+    factory: Factory,
+    globe: Globe2,
+  };
+  const dynamicSections: PageSection[] =
+    page?.sections_cn && page.sections_cn.length > 0 ? page.sections_cn : [];
 
   const jsonLd = {
     "@context": "https://schema.org",
@@ -92,11 +111,15 @@ export default async function AboutPage() {
             About KZQ
           </p>
           <h1 className="mt-2 text-2xl font-bold tracking-tight text-ink md:mt-3 md:text-4xl">
-            {company?.title_cn || "KZQ · 工程级板材品牌"}
+            {page?.title_cn ?? (company?.title_cn ?? "KZQ · 工程级板材品牌")}
           </h1>
+          <p className="mt-1 text-[12px] text-ink-soft md:mt-2 md:text-sm">
+            {page?.subtitle_cn ?? "工程级板材品牌供应商"}
+          </p>
           <p className="mt-3 max-w-2xl text-[13px] leading-relaxed text-ink-soft md:mt-4 md:text-base md:leading-relaxed">
-            {company?.description_cn ||
-              "KZQ 专注于工程级板材与装饰饰面板，服务国内工程精装与海外采购，欢迎通过询盘表单联系。"}
+            {page?.description_cn ??
+              (company?.description_cn ||
+                "KZQ 专注于工程级板材与装饰饰面板，服务国内工程精装与海外采购，欢迎通过询盘表单联系。")}
           </p>
           {company?.address_cn && (
             <p className="mt-3 text-[11px] text-ink-mute md:text-xs">
@@ -115,24 +138,45 @@ export default async function AboutPage() {
         />
         {/* mobile 单列堆叠 / desktop 2x2 网格 */}
         <div className="mt-4 grid grid-cols-1 gap-3 md:mt-6 md:grid-cols-2 md:gap-4">
-          {capabilities.map((cap, i) => {
-            const Icon = cap.icon;
-            return (
-              <div key={i} className="card-base flex gap-3.5 p-4 md:p-5">
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-industrial-50 md:h-12 md:w-12">
-                  <Icon className="h-5 w-5 text-industrial md:h-6 md:w-6" />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <h3 className="text-[13px] font-semibold text-ink md:text-base">
-                    {cap.title}
-                  </h3>
-                  <p className="mt-1 text-[11.5px] leading-relaxed text-ink-soft md:mt-2 md:text-sm md:leading-relaxed">
-                    {cap.desc}
-                  </p>
-                </div>
-              </div>
-            );
-          })}
+          {dynamicSections.length > 0
+            ? dynamicSections.map((sec, i) => {
+                const Icon = (sec.icon && sectionIconMap[sec.icon]) || Boxes;
+                return (
+                  <div key={i} className="card-base flex gap-3.5 p-4 md:p-5">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-industrial-50 md:h-12 md:w-12">
+                      <Icon className="h-5 w-5 text-industrial md:h-6 md:w-6" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <h3 className="text-[13px] font-semibold text-ink md:text-base">
+                        {sec.title}
+                      </h3>
+                      {sec.body && (
+                        <p className="mt-1 text-[11.5px] leading-relaxed text-ink-soft md:mt-2 md:text-sm md:leading-relaxed">
+                          {sec.body}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                );
+              })
+            : capabilities.map((cap, i) => {
+                const Icon = cap.icon;
+                return (
+                  <div key={i} className="card-base flex gap-3.5 p-4 md:p-5">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-industrial-50 md:h-12 md:w-12">
+                      <Icon className="h-5 w-5 text-industrial md:h-6 md:w-6" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <h3 className="text-[13px] font-semibold text-ink md:text-base">
+                        {cap.title}
+                      </h3>
+                      <p className="mt-1 text-[11.5px] leading-relaxed text-ink-soft md:mt-2 md:text-sm md:leading-relaxed">
+                        {cap.desc}
+                      </p>
+                    </div>
+                  </div>
+                );
+              })}
         </div>
       </ResponsiveContainer>
 

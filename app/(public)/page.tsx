@@ -2,6 +2,7 @@ import Link from "next/link";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { isDemoMode } from "@/lib/demo";
 import { mockCompany, mockCategories, getMockFeaturedProducts } from "@/lib/mock-data";
+import { fetchHomepageContent } from "@/lib/queries/cms";
 import { BrandLogo } from "@/components/public/BrandLogo";
 import { FeatureCard } from "@/components/public/FeatureCard";
 import { CategoryCard } from "@/components/public/CategoryCard";
@@ -10,7 +11,8 @@ import { SectionHeader } from "@/components/public/SectionHeader";
 import { ResponsiveContainer } from "@/components/public/ResponsiveContainer";
 import { ProductImage } from "@/components/public/ProductImage";
 import { ArrowRight, Flame, Leaf, Truck, Globe2, ChevronRight } from "lucide-react";
-import type { Product, Category, CompanyProfile } from "@/types/database";
+import type { LucideIcon } from "lucide-react";
+import type { Product, Category, CompanyProfile, HomeFeatureItem } from "@/types/database";
 
 export const revalidate = 60;
 
@@ -53,6 +55,19 @@ export default async function HomePage() {
     company = (companyData as CompanyProfile | null) || null;
   }
 
+  // CMS 首页内容（Demo 模式自动回退到 mock 数据）
+  const home = await fetchHomepageContent();
+
+  // 核心优势图标映射
+  const featureIconMap: Record<string, LucideIcon> = {
+    flame: Flame,
+    leaf: Leaf,
+    truck: Truck,
+    globe: Globe2,
+  };
+  const dynamicFeatures: HomeFeatureItem[] =
+    home?.features_cn && home.features_cn.length > 0 ? home.features_cn : [];
+
   // Hero 右侧预览产品（取前 3 个主推产品做预览卡）
   const heroPreviewProducts = featuredProducts.slice(0, 3);
 
@@ -87,16 +102,16 @@ export default async function HomePage() {
               {/* 主标题区 */}
               <div className="mt-6 md:mt-0">
                 <p className="text-[10px] uppercase tracking-[0.22em] text-brass md:text-xs">
-                  Engineering Boards · Fire-Rated Decorative Panels
+                  {home?.hero_eyebrow_cn ?? "Engineering Boards · Fire-Rated Decorative Panels"}
                 </p>
                 <h1 className="mt-2.5 text-[26px] font-bold leading-[1.25] tracking-tight text-ink md:text-4xl lg:text-5xl md:leading-[1.2]">
-                  专注 B 级防火
+                  {home?.hero_title_cn ?? "专注 B 级防火"}
                   <br />
-                  <span className="text-industrial-gradient">E0 环保</span> 工程板材
+                  <span className="text-industrial-gradient">{home?.hero_highlight_cn ?? "E0 环保 工程板材"}</span>
                 </h1>
                 <p className="mt-3 max-w-md text-[12.5px] leading-relaxed text-ink-soft md:mt-5 md:text-base md:leading-relaxed">
-                  KZQ 是工程级板材与装饰饰面板品牌供应商，服务国内工程精装与海外采购，
-                  覆盖防火板、饰面板、工程基材等多品类，支持规格定制与 FOB/CIF 出口。
+                  {home?.hero_description_cn ??
+                    "KZQ 是工程级板材与装饰饰面板品牌供应商，服务国内工程精装与海外采购，覆盖防火板、饰面板、工程基材等多品类，支持规格定制与 FOB/CIF 出口。"}
                 </p>
 
                 {/* CTA */}
@@ -105,14 +120,14 @@ export default async function HomePage() {
                     href="/products"
                     className="btn-primary h-11 flex-1 text-[13px] md:h-12 md:flex-none md:px-7 md:text-sm"
                   >
-                    浏览产品
+                    {home?.primary_cta_text_cn ?? "浏览产品"}
                     <ArrowRight className="h-4 w-4" />
                   </Link>
                   <Link
                     href="/contact"
                     className="btn-outline h-11 flex-1 text-[13px] md:h-12 md:flex-none md:px-7 md:text-sm"
                   >
-                    立即询盘
+                    {home?.secondary_cta_text_cn ?? "立即询盘"}
                   </Link>
                 </div>
 
@@ -188,32 +203,48 @@ export default async function HomePage() {
       {/* ========== 核心优势 ========== */}
       <section className="container-responsive py-8 md:py-16">
         <SectionHeader
-          title="核心优势"
-          subtitle="为什么选择 KZQ 工程级板材"
+          title={home?.feature_section_title_cn ?? "核心优势"}
+          subtitle={home?.feature_section_subtitle_cn ?? "为什么选择 KZQ 工程级板材"}
           size="large"
         />
         {/* mobile 2x2 / desktop 4 列横排 */}
         <div className="mt-4 grid grid-cols-2 gap-2.5 md:mt-6 md:grid-cols-4 md:gap-4">
-          <FeatureCard
-            icon={Flame}
-            title="B 级防火"
-            desc="第三方燃烧性能检测，达到 B 级防火标准"
-          />
-          <FeatureCard
-            icon={Leaf}
-            title="E0 环保"
-            desc="甲醛释放量达到 E0 级，适用于室内精装"
-          />
-          <FeatureCard
-            icon={Truck}
-            title="工程交付"
-            desc="稳定产能保障工程批量供货，规格可定制"
-          />
-          <FeatureCard
-            icon={Globe2}
-            title="海外出口"
-            desc="支持集装箱 FOB/CIF 出口，多语言询盘响应"
-          />
+          {dynamicFeatures.length > 0
+            ? dynamicFeatures.map((item, i) => {
+                const Icon = featureIconMap[item.icon] || Flame;
+                return (
+                  <FeatureCard
+                    key={i}
+                    icon={Icon}
+                    title={item.title}
+                    desc={item.description}
+                  />
+                );
+              })
+            : (
+              <>
+                <FeatureCard
+                  icon={Flame}
+                  title="B 级防火"
+                  desc="第三方燃烧性能检测，达到 B 级防火标准"
+                />
+                <FeatureCard
+                  icon={Leaf}
+                  title="E0 环保"
+                  desc="甲醛释放量达到 E0 级，适用于室内精装"
+                />
+                <FeatureCard
+                  icon={Truck}
+                  title="工程交付"
+                  desc="稳定产能保障工程批量供货，规格可定制"
+                />
+                <FeatureCard
+                  icon={Globe2}
+                  title="海外出口"
+                  desc="支持集装箱 FOB/CIF 出口，多语言询盘响应"
+                />
+              </>
+            )}
         </div>
       </section>
 
@@ -221,8 +252,8 @@ export default async function HomePage() {
       {categories.length > 0 && (
         <section className="container-responsive py-8 md:py-12">
           <SectionHeader
-            title="产品类目"
-            subtitle="按应用场景选择合适的板材"
+            title={home?.category_section_title_cn ?? "产品类目"}
+            subtitle={home?.category_section_subtitle_cn ?? "按应用场景选择合适的板材"}
             size="large"
             action={
               <Link
@@ -246,8 +277,8 @@ export default async function HomePage() {
       {featuredProducts.length > 0 && (
         <section className="container-responsive py-8 md:py-12">
           <SectionHeader
-            title="主推产品"
-            subtitle="B 级防火 · E0 环保 · 工程批量供货"
+            title={home?.featured_products_title_cn ?? "主推产品"}
+            subtitle={home?.featured_products_subtitle_cn ?? "B 级防火 · E0 环保 · 工程批量供货"}
             size="large"
             action={
               <Link
@@ -286,10 +317,10 @@ export default async function HomePage() {
                 Get Quotation
               </p>
               <h3 className="mt-1 text-base font-semibold md:mt-2 md:text-2xl">
-                联系 KZQ 获取报价
+                {home?.bottom_cta_title_cn ?? "联系 KZQ 获取报价"}
               </h3>
               <p className="mt-0.5 text-[11px] text-white/70 md:mt-1 md:text-sm">
-                国内工程 · 海外采购 · 规格定制
+                {home?.bottom_cta_description_cn ?? "国内工程 · 海外采购 · 规格定制"}
               </p>
             </div>
             <div className="flex h-10 w-10 items-center justify-center rounded-full bg-white/15 backdrop-blur-sm md:h-14 md:w-14">

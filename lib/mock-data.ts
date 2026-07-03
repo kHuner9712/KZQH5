@@ -11,6 +11,12 @@ import type {
   ProductImage,
   Certificate,
   CompanyProfile,
+  SiteSettings,
+  HomepageContent,
+  PageContent,
+  ProductFaqItem,
+  HomeFeatureItem,
+  NavItem,
 } from "@/types/database";
 
 // ---------- 工具：生成稳定的 mock id ----------
@@ -241,7 +247,16 @@ function cover(): null {
 }
 
 // ---------- 产品列表（8 个） ----------
-export const mockProducts: Product[] = [
+// rawProducts 不含 GEO 字段，下方通过 map 注入 GEO 默认值与示例 FAQ
+type RawProduct = Omit<
+  Product,
+  | "seo_title_cn" | "seo_title_en" | "seo_description_cn" | "seo_description_en"
+  | "geo_summary_cn" | "geo_summary_en"
+  | "keywords_cn" | "keywords_en"
+  | "faq_cn" | "faq_en"
+  | "search_aliases" | "schema_extra"
+>;
+const rawProducts: RawProduct[] = [
   {
     id: id("p1"),
     category_id: id("cat-fireproof"),
@@ -553,6 +568,95 @@ export const mockProducts: Product[] = [
   },
 ];
 
+// ---------- 产品 GEO / SEO 字段示例 ----------
+// 为部分产品注入 GEO 内容（FAQ / keywords / geo_summary），其余保持 null。
+// 口径：B级防火 / E0环保 / 无实木/A1/未确认认证。
+const productGeoMap: Record<
+  string,
+  {
+    seo_title_cn?: string;
+    seo_description_cn?: string;
+    geo_summary_cn?: string;
+    keywords_cn?: string[];
+    keywords_en?: string[];
+    faq_cn?: ProductFaqItem[];
+  }
+> = {
+  "kzq-magnesium-fire-board-1220x2440x9": {
+    seo_title_cn: "KZQ 玻镁防火板 1220×2440×9mm | B级防火 E0环保",
+    seo_description_cn:
+      "KZQ 玻镁防火板 9mm，B 级防火，遇火不燃，无有毒烟雾，适用于酒店、商场等公共场所防火饰面。",
+    geo_summary_cn:
+      "KZQ 玻镁防火板面向公共空间防火饰面工程，B 级防火，可定制规格，支持国内配送与海外出口。",
+    keywords_cn: ["玻镁防火板", "B级防火板", "防火基材", "工程防火板", "海外出口防火板"],
+    keywords_en: ["magnesium fire board", "B-rated fire board", "fire substrate", "export fire board"],
+    faq_cn: [
+      {
+        question: "KZQ 玻镁防火板适合哪些应用？",
+        answer: "适用于酒店、商场、写字楼等公共场所的防火饰面工程。",
+      },
+      {
+        question: "防火与环保等级是什么？",
+        answer: "B 级防火，E0 级环保，具体以产品详情与资质证书为准。",
+      },
+      {
+        question: "是否支持海外出口？",
+        answer: "支持，国内整车配送 / 海外集装箱 FOB / CIF。",
+      },
+    ],
+  },
+  "kzq-fire-retardant-core-1220x2440x12": {
+    seo_title_cn: "KZQ 阻燃基材板 1220×2440×12mm | B级防火",
+    seo_description_cn: "KZQ 阻燃基材板，B 级防火，基材稳定，适合工程批量供货与海外出口。",
+    geo_summary_cn: "KZQ 阻燃基材板面向工程防火应用，B 级防火，规格可定制，支持 FOB/CIF 出口。",
+    keywords_cn: ["阻燃基材板", "B级防火板", "工程基材", "海外出口板材"],
+    keywords_en: ["fire-retardant core", "B-rated fire board", "engineering substrate", "export board"],
+    faq_cn: [
+      {
+        question: "阻燃基材板的防火等级？",
+        answer: "B 级防火，基材稳定不易变形。",
+      },
+    ],
+  },
+  "kzq-melamine-faced-panel-wood-grain": {
+    seo_title_cn: "KZQ 三聚氰胺饰面板 木纹系列 | B级 E0",
+    seo_description_cn: "KZQ 木纹三聚氰胺饰面板，耐磨抗刮，B 级防火，E0 环保，适用于全屋定制与办公家具。",
+    geo_summary_cn: "KZQ 三聚氰胺饰面板木纹系列面向全屋定制与办公家具，B 级防火、E0 环保，花色可定制。",
+    keywords_cn: ["三聚氰胺饰面板", "木纹饰面板", "B级防火饰面板", "E0环保饰面板", "定制饰面板"],
+    keywords_en: ["melamine faced panel", "wood grain panel", "B-rated fire panel", "E0 eco panel"],
+    faq_cn: [
+      {
+        question: "KZQ 三聚氰胺饰面板可以定制花色吗？",
+        answer: "可以，支持多种纹理与色彩定制，工程批量供货。",
+      },
+      {
+        question: "防火与环保等级？",
+        answer: "B 级防火，E0 级环保。",
+      },
+    ],
+  },
+};
+
+// 将 rawProducts 合并 GEO 字段后导出为完整 Product[]
+export const mockProducts: Product[] = rawProducts.map((p) => {
+  const geo = productGeoMap[p.slug];
+  return {
+    ...p,
+    seo_title_cn: geo?.seo_title_cn ?? null,
+    seo_title_en: null,
+    seo_description_cn: geo?.seo_description_cn ?? null,
+    seo_description_en: null,
+    geo_summary_cn: geo?.geo_summary_cn ?? null,
+    geo_summary_en: null,
+    keywords_cn: geo?.keywords_cn ?? null,
+    keywords_en: geo?.keywords_en ?? null,
+    faq_cn: geo?.faq_cn ?? null,
+    faq_en: null,
+    search_aliases: null,
+    schema_extra: null,
+  };
+});
+
 // 暴露为图集（含 product_id 关联）
 export const mockProductImages: ProductImage[] = mockProducts.flatMap((p) =>
   (p.product_images || []).map((im) => ({ ...im, product_id: p.id }))
@@ -641,4 +745,192 @@ export function getMockSubcategories(categoryId?: string): Subcategory[] {
   let list = [...mockSubcategories].sort((a, b) => a.sort_order - b.sort_order);
   if (categoryId) list = list.filter((s) => s.category_id === categoryId);
   return list;
+}
+
+// ============================================================
+// CMS 内容：site_settings / homepage_content / page_content
+// 口径：B级防火 / E0级环保 / 不出现 A1、未确认 ISO/CARB、不强调实木
+// ============================================================
+
+// ---------- 站点设置（含扩展字段） ----------
+export const mockSiteSettings: SiteSettings = {
+  id: id("settings"),
+  site_name: "KZQ Product Catalog",
+  site_name_cn: "KZQ 工程级板材",
+  site_name_en: "KZQ Engineering Boards",
+  brand_name: "KZQ",
+  default_language: "zh",
+  global_meta_title_cn: "KZQ | 工程级板材·B级防火·E0环保饰面板",
+  global_meta_title_en: "KZQ | Engineering Boards, B-Rated Fire & E0 Eco Panels",
+  global_meta_description_cn:
+    "KZQ 专注工程级板材、B 级防火与 E0 环保饰面板，服务国内工程精装与海外采购，支持规格定制与 FOB/CIF 出口。",
+  global_meta_description_en:
+    "KZQ specializes in engineering boards, B-rated fire and E0 eco panels for domestic projects and overseas procurement.",
+  default_og_image_url: null,
+  footer_text_cn: "© KZQ 工程级板材 · B级防火 · E0环保 · 国内工程与海外出口",
+  footer_text_en: "© KZQ Engineering Boards · B-Rated Fire · E0 Eco · Domestic & Export",
+  navigation_json: [
+    { label_cn: "首页", label_en: "Home", href: "/", sort_order: 1 },
+    { label_cn: "产品中心", label_en: "Products", href: "/products", sort_order: 2 },
+    { label_cn: "资质证书", label_en: "Certificates", href: "/certificates", sort_order: 3 },
+    { label_cn: "关于我们", label_en: "About", href: "/about", sort_order: 4 },
+    { label_cn: "联系询盘", label_en: "Contact", href: "/contact", sort_order: 5 },
+  ],
+  // 旧字段保留（向后兼容）
+  meta_title_cn: "KZQ | 工程级板材·B级防火·E0环保饰面板",
+  meta_title_en: "KZQ | Engineering Boards, B-Rated Fire & E0 Eco Panels",
+  meta_description_cn:
+    "KZQ 专注工程级板材、B 级防火与 E0 环保饰面板，服务国内工程精装与海外采购，支持规格定制与 FOB/CIF 出口。",
+  meta_description_en:
+    "KZQ specializes in engineering boards, B-rated fire and E0 eco panels for domestic projects and overseas procurement.",
+  updated_at: now,
+};
+
+// ---------- 首页内容（单例） ----------
+const homeFeaturesCn: HomeFeatureItem[] = [
+  { icon: "flame", title: "B 级防火", description: "第三方燃烧性能检测，达到 B 级防火标准" },
+  { icon: "leaf", title: "E0 环保", description: "甲醛释放量达到 E0 级，适用于室内精装" },
+  { icon: "truck", title: "工程交付", description: "稳定产能保障工程批量供货，规格可定制" },
+  { icon: "globe", title: "海外出口", description: "支持集装箱 FOB/CIF 出口，多语言询盘响应" },
+];
+const homeFeaturesEn: HomeFeatureItem[] = [
+  { icon: "flame", title: "B-Rated Fire", description: "Third-party tested to B-class fire performance" },
+  { icon: "leaf", title: "E0 Eco", description: "E0 formaldehyde emission for interior use" },
+  { icon: "truck", title: "Project Delivery", description: "Stable capacity for batch supply and custom sizes" },
+  { icon: "globe", title: "Overseas Export", description: "FOB/CIF container export, multilingual inquiry" },
+];
+
+export const mockHomepageContent: HomepageContent = {
+  id: id("homepage"),
+  hero_eyebrow_cn: "Engineering Boards · Fire-Rated Decorative Panels",
+  hero_eyebrow_en: "Engineering Boards · Fire-Rated Decorative Panels",
+  hero_title_cn: "专注 B 级防火",
+  hero_title_en: "B-Rated Fire & E0 Eco Engineering Boards",
+  hero_highlight_cn: "E0 环保 工程板材",
+  hero_highlight_en: "E0 Eco Engineering Boards",
+  hero_description_cn:
+    "KZQ 是工程级板材与装饰饰面板品牌供应商，服务国内工程精装与海外采购，覆盖防火板、饰面板、工程基材等多品类，支持规格定制与 FOB/CIF 出口。",
+  hero_description_en:
+    "KZQ is a brand supplier of engineering-grade boards and decorative panels, serving domestic projects and overseas buyers with B-rated fire and E0 eco solutions.",
+  primary_cta_text_cn: "浏览产品",
+  primary_cta_text_en: "Browse Products",
+  secondary_cta_text_cn: "立即询盘",
+  secondary_cta_text_en: "Get Quotation",
+  feature_section_title_cn: "核心优势",
+  feature_section_title_en: "Core Advantages",
+  feature_section_subtitle_cn: "为什么选择 KZQ 工程级板材",
+  feature_section_subtitle_en: "Why choose KZQ engineering boards",
+  features_cn: homeFeaturesCn,
+  features_en: homeFeaturesEn,
+  category_section_title_cn: "产品类目",
+  category_section_subtitle_cn: "按应用场景选择合适的板材",
+  featured_products_title_cn: "主推产品",
+  featured_products_subtitle_cn: "B 级防火 · E0 环保 · 工程批量供货",
+  bottom_cta_title_cn: "联系 KZQ 获取报价",
+  bottom_cta_title_en: "Contact KZQ for Quotation",
+  bottom_cta_description_cn: "国内工程 · 海外采购 · 规格定制",
+  bottom_cta_description_en: "Domestic projects · Overseas procurement · Custom specs",
+  is_active: true,
+  updated_at: now,
+};
+
+// ---------- 页面内容（about / certificates / contact / products） ----------
+export const mockPageContents: PageContent[] = [
+  {
+    id: id("page-about"),
+    page_key: "about",
+    title_cn: "公司介绍",
+    title_en: "About KZQ",
+    subtitle_cn: "工程级板材品牌供应商",
+    subtitle_en: "Engineering-Grade Board Brand Supplier",
+    description_cn:
+      "KZQ 专注于工程级板材与装饰饰面板，服务国内工程精装与海外采购，提供 B 级防火、E0 环保等级的高品质板材，支持规格定制与出口。",
+    description_en:
+      "KZQ specializes in engineering-grade boards and decorative panels, serving domestic projects and overseas buyers with B-rated fire and E0 eco solutions.",
+    sections_cn: [
+      { icon: "boxes", title: "产品能力", body: "提供工程级板材与装饰饰面板等多品类产品，规格可定制，详见产品中心。" },
+      { icon: "shield", title: "品控能力", body: "建立完整品控流程，产品按公开的防火与环保等级交付，具体等级以产品详情与资质证书为准。" },
+      { icon: "factory", title: "生产与交付能力", body: "稳定产能保障工程批量供货，支持定制规格生产，国内配送与海外出口并行。" },
+      { icon: "globe", title: "国内与海外服务", body: "国内服务工程精装项目；海外支持多语言询盘响应，贸易条款与认证要求可在线咨询。" },
+    ],
+    sections_en: [
+      { icon: "boxes", title: "Product Capability", body: "Multi-category engineering boards and decorative panels with custom sizes." },
+      { icon: "shield", title: "Quality Control", body: "Full QC process; fire and eco grades per product detail and certificates." },
+      { icon: "factory", title: "Production & Delivery", body: "Stable capacity for batch supply, custom sizes, domestic and export logistics." },
+      { icon: "globe", title: "Domestic & Overseas", body: "Domestic project finishing; overseas multilingual inquiry and trade terms." },
+    ],
+    seo_title_cn: "KZQ 公司介绍 | 工程级板材品牌",
+    seo_title_en: "About KZQ | Engineering Board Brand",
+    seo_description_cn: "KZQ 公司介绍：产品能力、品控能力、生产与交付能力、面向国内与海外客户的服务能力。",
+    seo_description_en: "KZQ company intro: product, quality, production & delivery, and domestic/overseas service capabilities.",
+    updated_at: now,
+  },
+  {
+    id: id("page-certificates"),
+    page_key: "certificates",
+    title_cn: "资质证书",
+    title_en: "Certificates",
+    subtitle_cn: "第三方检测认证 · 工程级品质保障",
+    subtitle_en: "Third-party tested · Engineering-grade quality",
+    description_cn: "KZQ 资质证书：已确认可公开展示的环保、防火及相关产品资料，完整证书请联系销售。",
+    description_en: "KZQ certificates: confirmed public eco, fire and product documents. Full docs on request.",
+    sections_cn: [],
+    sections_en: [],
+    seo_title_cn: "KZQ 资质证书 | B级防火 · E0环保",
+    seo_title_en: "KZQ Certificates | B-Rated Fire & E0 Eco",
+    seo_description_cn: "KZQ 资质证书：已确认可公开展示的环保、防火及相关产品资料，完整证书请联系销售。",
+    seo_description_en: "KZQ certificates: confirmed public eco, fire and product documents.",
+    updated_at: now,
+  },
+  {
+    id: id("page-contact"),
+    page_key: "contact",
+    title_cn: "联系询盘",
+    title_en: "Contact Us",
+    subtitle_cn: "国内工程 · 海外采购 · 规格定制",
+    subtitle_en: "Domestic projects · Overseas procurement · Custom specs",
+    description_cn: "提交询盘表单获取专属报价，1 个工作日内回复；紧急需求可直接电话或 WhatsApp 联系。",
+    description_en: "Submit an inquiry for a tailored quotation within 1 business day; urgent needs via phone or WhatsApp.",
+    sections_cn: [],
+    sections_en: [],
+    seo_title_cn: "联系 KZQ | 获取产品报价",
+    seo_title_en: "Contact KZQ | Get Quotation",
+    seo_description_cn: "联系 KZQ 获取产品报价。支持电话、邮箱、WhatsApp、微信咨询，海外客户可直接提交询盘表单。",
+    seo_description_en: "Contact KZQ for quotations. Phone, email, WhatsApp, WeChat supported; overseas buyers can submit inquiries online.",
+    updated_at: now,
+  },
+  {
+    id: id("page-products"),
+    page_key: "products",
+    title_cn: "产品中心",
+    title_en: "Products",
+    subtitle_cn: "工程级板材 · 防火饰面 · 海外出口",
+    subtitle_en: "Engineering boards · Fire-rated panels · Export",
+    description_cn: "KZQ 工程级板材产品中心，涵盖防火板、饰面板、工程基材等品类，支持规格定制与海外出口。",
+    description_en: "KZQ engineering board product center: fire boards, decorative panels, engineering substrates, custom sizes and export.",
+    sections_cn: [],
+    sections_en: [],
+    seo_title_cn: "KZQ 产品中心 | 工程级板材",
+    seo_title_en: "KZQ Products | Engineering Boards",
+    seo_description_cn: "KZQ 工程级板材产品中心：防火板、饰面板、工程基材，B 级防火、E0 环保，支持定制与出口。",
+    seo_description_en: "KZQ engineering boards: fire boards, decorative panels, substrates. B-rated fire, E0 eco, custom and export.",
+    updated_at: now,
+  },
+];
+
+export function getMockHomepageContent(): HomepageContent {
+  return mockHomepageContent;
+}
+
+export function getMockPageContent(pageKey: string): PageContent | null {
+  return mockPageContents.find((p) => p.page_key === pageKey) || null;
+}
+
+export function getMockSiteSettings(): SiteSettings {
+  return mockSiteSettings;
+}
+
+// 导航菜单（站点设置 navigation_json）
+export function getMockNavigation(): NavItem[] {
+  return mockSiteSettings.navigation_json || [];
 }

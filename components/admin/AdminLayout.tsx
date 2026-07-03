@@ -16,10 +16,16 @@ import {
   Menu,
   X,
   ExternalLink,
+  Settings,
+  LayoutTemplate,
+  FileText,
 } from "lucide-react";
 
 const navItems = [
   { href: "/admin", label: "Dashboard", icon: LayoutDashboard, exact: true },
+  { href: "/admin/site-settings", label: "站点设置", icon: Settings },
+  { href: "/admin/homepage", label: "首页内容", icon: LayoutTemplate },
+  { href: "/admin/pages", label: "页面内容", icon: FileText },
   { href: "/admin/categories", label: "类目管理", icon: FolderTree },
   { href: "/admin/products", label: "产品管理", icon: Package },
   { href: "/admin/certificates", label: "证书管理", icon: Award },

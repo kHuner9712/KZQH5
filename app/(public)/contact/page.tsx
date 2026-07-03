@@ -1,6 +1,7 @@
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { isDemoMode } from "@/lib/demo";
 import { mockCompany } from "@/lib/mock-data";
+import { fetchPageContent } from "@/lib/queries/cms";
 import { InquiryForm } from "@/components/public/InquiryForm";
 import { ContactCard } from "@/components/public/ContactCard";
 import { QRCodeImage } from "@/components/public/QRCodeImage";
@@ -10,11 +11,17 @@ import type { Metadata } from "next";
 import type { CompanyProfile } from "@/types/database";
 import { Phone, Mail, MessageCircle, MapPin, QrCode } from "lucide-react";
 
-export const metadata: Metadata = {
-  title: "联系询盘",
-  description:
-    "联系 KZQ 获取产品报价。支持电话、邮箱、WhatsApp、微信咨询，海外客户可直接提交询盘表单。",
-};
+export const revalidate = 60;
+
+export async function generateMetadata(): Promise<Metadata> {
+  const page = await fetchPageContent("contact");
+  return {
+    title: page?.seo_title_cn ?? "联系询盘",
+    description:
+      page?.seo_description_cn ??
+      "联系 KZQ 获取产品报价。支持电话、邮箱、WhatsApp、微信咨询，海外客户可直接提交询盘表单。",
+  };
+}
 
 export default async function ContactPage({
   searchParams,
@@ -35,6 +42,9 @@ export default async function ContactPage({
     company = (data as CompanyProfile | null) || null;
   }
 
+  // CMS 页面内容（Demo 模式自动回退到 mock 数据）
+  const page = await fetchPageContent("contact");
+
   const defaultProduct = searchParams.product || "";
 
   return (
@@ -46,13 +56,14 @@ export default async function ContactPage({
             Contact Us
           </p>
           <h1 className="mt-1.5 text-xl font-bold tracking-tight text-ink md:mt-2 md:text-3xl">
-            联系询盘
+            {page?.title_cn ?? "联系询盘"}
           </h1>
           <p className="mt-1 text-[12px] text-ink-soft md:mt-2 md:text-sm">
-            国内工程 · 海外采购 · 规格定制
+            {page?.subtitle_cn ?? "国内工程 · 海外采购 · 规格定制"}
           </p>
           <p className="mt-2 max-w-2xl text-[11.5px] leading-relaxed text-ink-mute md:text-xs md:leading-relaxed">
-            提交询盘表单获取专属报价，1 个工作日内回复；紧急需求可直接电话或 WhatsApp 联系。
+            {page?.description_cn ??
+              "提交询盘表单获取专属报价，1 个工作日内回复；紧急需求可直接电话或 WhatsApp 联系。"}
           </p>
         </ResponsiveContainer>
       </section>

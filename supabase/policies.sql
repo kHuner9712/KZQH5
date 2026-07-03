@@ -241,3 +241,41 @@ create policy "private_assets_admin_all"
   with check (
     bucket_id = 'private-assets' and public.is_admin()
   );
+
+-- ============================================================
+-- 10. homepage_content - 首页内容（单例）
+-- anon 可读 is_active=true；admin 全部读写
+-- ============================================================
+alter table public.homepage_content enable row level security;
+
+drop policy if exists "homepage_content_public_read" on public.homepage_content;
+create policy "homepage_content_public_read"
+  on public.homepage_content for select
+  to anon, authenticated
+  using (is_active = true);
+
+drop policy if exists "homepage_content_admin_all" on public.homepage_content;
+create policy "homepage_content_admin_all"
+  on public.homepage_content for all
+  to authenticated
+  using (public.is_admin())
+  with check (public.is_admin());
+
+-- ============================================================
+-- 11. page_content - 页面内容（about / certificates / contact / products）
+-- 页面标题/描述/SEO/sections 均为公开内容，anon 全部可读；admin 全部读写
+-- ============================================================
+alter table public.page_content enable row level security;
+
+drop policy if exists "page_content_public_read" on public.page_content;
+create policy "page_content_public_read"
+  on public.page_content for select
+  to anon, authenticated
+  using (true);
+
+drop policy if exists "page_content_admin_all" on public.page_content;
+create policy "page_content_admin_all"
+  on public.page_content for all
+  to authenticated
+  using (public.is_admin())
+  with check (public.is_admin());
