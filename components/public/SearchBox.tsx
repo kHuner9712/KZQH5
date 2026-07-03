@@ -22,6 +22,8 @@ function SearchBoxInner() {
     } else {
       params.delete("q");
     }
+    // 新搜索/清除搜索时重置到第 1 页，避免在新的筛选结果下停留在无效页码
+    params.delete("page");
     router.push(`/products?${params.toString()}`);
   }
 

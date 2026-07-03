@@ -2,6 +2,7 @@
 
 import { usePathname } from "next/navigation";
 import { BottomNav } from "./BottomNav";
+import type { SiteSettings } from "@/types/database";
 
 /**
  * 移动端底部导航控制器
@@ -10,7 +11,11 @@ import { BottomNav } from "./BottomNav";
  *   隐藏 BottomNav 避免两者重叠
  * - /products 列表页与其它页面正常显示 BottomNav
  */
-export function MobileNavController() {
+export function MobileNavController({
+  siteSettings,
+}: {
+  siteSettings?: SiteSettings | null;
+}) {
   const pathname = usePathname();
 
   // 产品详情页：/products/[slug]（pathname 形如 "/products/xxx"）
@@ -19,5 +24,5 @@ export function MobileNavController() {
     return null;
   }
 
-  return <BottomNav />;
+  return <BottomNav siteSettings={siteSettings} />;
 }

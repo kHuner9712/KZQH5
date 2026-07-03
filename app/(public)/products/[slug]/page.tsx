@@ -210,11 +210,21 @@ export default async function ProductDetailPage({
 
   // JSON-LD Product
   // KZQ 产品价格为 "Contact for quotation"，没有公开数值价格。
-  // 为避免误导搜索引擎（price: "0" 会被解读为免费），仅在存在公开价格时输出 price 字段，
+  // 为避免误导搜索引擎（price: "0" 会被解读为免费，非数字字符串为无效 price），
+  // 仅当能从 price_display_cn 中解析出有效数值时才输出 price 字段，
   // 否则只标记可询盘与库存状态。
-  const hasPublicPrice =
-    !!p.price_display_cn &&
-    !/联系|询盘|quotation|contact/i.test(p.price_display_cn);
+  function extractNumericPrice(raw: string | null | undefined): number | null {
+    if (!raw) return null;
+    // 排除明显的"询盘/联系"类描述
+    if (/联系|询盘|quotation|contact|报价|面议|negotiat/i.test(raw)) return null;
+    // 提取首个数字（支持小数与千分位）
+    const match = raw.replace(/,/g, "").match(/\d+(?:\.\d+)?/);
+    if (!match) return null;
+    const num = Number(match[0]);
+    return Number.isFinite(num) && num > 0 ? num : null;
+  }
+
+  const numericPrice = extractNumericPrice(p.price_display_cn);
 
   const jsonLd = {
     "@context": "https://schema.org",
@@ -228,11 +238,11 @@ export default async function ProductDetailPage({
     offers: {
       "@type": "Offer",
       availability: "https://schema.org/InStock",
-      // 仅在确认有公开数值价格时输出 price，否则不输出 price 字段
-      ...(hasPublicPrice
+      // 仅在解析出有效数值价格时输出 price；否则不输出 price 字段，避免无效 JSON-LD
+      ...(numericPrice !== null
         ? {
             priceCurrency: "CNY",
-            price: p.price_display_cn!,
+            price: String(numericPrice),
           }
         : {}),
     },

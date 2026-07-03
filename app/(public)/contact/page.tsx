@@ -47,6 +47,19 @@ export default async function ContactPage({
 
   const defaultProduct = searchParams.product || "";
 
+  // 联系方式 / 在线询盘 区块文案：优先从 page_content.sections_cn 读取
+  // sections_cn 约定前两项分别为联系方式区块、在线询盘区块
+  // 每项结构：{ title?, subtitle?, body?, icon?, items? }
+  const contactMethodsSection = page?.sections_cn?.[0] || null;
+  const inquiryFormSection = page?.sections_cn?.[1] || null;
+
+  const contactMethodsTitle = contactMethodsSection?.title ?? "联系方式";
+  const inquiryFormTitle = inquiryFormSection?.title ?? "在线询盘";
+  const inquiryFormSubtitle =
+    inquiryFormSection?.subtitle ??
+    inquiryFormSection?.body ??
+    "填写下方表单，我们会在 1 个工作日内回复您";
+
   return (
     <div className="animate-fade-in bg-canvas">
       {/* Hero */}
@@ -73,7 +86,7 @@ export default async function ContactPage({
         <div className="md:grid md:grid-cols-5 md:gap-10 lg:gap-14">
           {/* 左侧：联系方式（desktop 占 2/5） */}
           <div className="md:col-span-2">
-            <SectionHeader title="联系方式" size="large" />
+            <SectionHeader title={contactMethodsTitle} size="large" />
             <div className="mt-4 space-y-2.5 md:mt-6 md:space-y-3">
               {company?.phone && (
                 <ContactCard
@@ -129,8 +142,8 @@ export default async function ContactPage({
           {/* 右侧：询盘表单（desktop 占 3/5） */}
           <div className="mt-8 md:mt-0 md:col-span-3">
             <SectionHeader
-              title="在线询盘"
-              subtitle="填写下方表单，我们会在 1 个工作日内回复您"
+              title={inquiryFormTitle}
+              subtitle={inquiryFormSubtitle}
               size="large"
             />
             <div className="mt-4 md:mt-6">
