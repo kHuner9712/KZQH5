@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { isDemoMode } from "@/lib/demo";
 import {
@@ -60,10 +61,24 @@ export default async function ProductsPage({
   let subcategories: Subcategory[] = [];
   let products: Product[] = [];
   let total = 0;
+  let totalPages = 1;
+  let currentPage = 1;
 
   // 分页参数
-  const page = parsePage(searchParams.page);
+  const requestedPage = parsePage(searchParams.page);
   const pageSize = parsePageSize(searchParams.pageSize);
+
+  // 越界重定向辅助：构建保留所有筛选参数 + 指定页码的 URL
+  function buildPageUrl(p: number): string {
+    const sp = new URLSearchParams();
+    if (searchParams.category) sp.set("category", searchParams.category);
+    if (searchParams.subcategory) sp.set("subcategory", searchParams.subcategory);
+    if (searchParams.q) sp.set("q", searchParams.q);
+    if (pageSize !== DEFAULT_PAGE_SIZE) sp.set("pageSize", String(pageSize));
+    if (p > 1) sp.set("page", String(p));
+    const str = sp.toString();
+    return str ? `/products?${str}` : "/products";
+  }
 
   if (isDemoMode()) {
     categories = [...mockCategories].sort((a, b) => a.sort_order - b.sort_order);
@@ -94,11 +109,15 @@ export default async function ProductsPage({
       return a.sort_order - b.sort_order;
     });
 
-    // Demo 模式模拟分页
+    // Demo 模式模拟分页：先 count，越界则重定向到合法页码，再用 clamp 后的页码切片
     total = filtered.length;
-    const from = (page - 1) * pageSize;
-    const to = from + pageSize;
-    products = filtered.slice(from, to);
+    totalPages = Math.max(1, Math.ceil(total / pageSize));
+    if (total > 0 && requestedPage > totalPages) {
+      redirect(buildPageUrl(totalPages));
+    }
+    currentPage = Math.min(requestedPage, totalPages);
+    const from = (currentPage - 1) * pageSize;
+    products = filtered.slice(from, from + pageSize);
   } else {
     const supabase = createServerSupabaseClient();
 
@@ -152,14 +171,20 @@ export default async function ProductsPage({
       countQuery = countQuery.or(orExpr);
     }
 
-    // range 分页
-    const from = (page - 1) * pageSize;
+    // range 分页（先用 requestedPage，越界时下方 redirect 到合法页码）
+    const from = (requestedPage - 1) * pageSize;
     const to = from + pageSize - 1;
     productsQuery = productsQuery.range(from, to);
 
     const [listRes, countRes] = await Promise.all([productsQuery, countQuery]);
-    products = (listRes.data as Product[] | null) || [];
     total = countRes.count || 0;
+    totalPages = Math.max(1, Math.ceil(total / pageSize));
+    // 越界重定向：page=999 等情况跳转到合法页码，保留所有筛选参数
+    if (total > 0 && requestedPage > totalPages) {
+      redirect(buildPageUrl(totalPages));
+    }
+    currentPage = Math.min(requestedPage, totalPages);
+    products = (listRes.data as Product[] | null) || [];
   }
 
   const activeCategorySlug = searchParams.category;
@@ -167,10 +192,6 @@ export default async function ProductsPage({
 
   // CMS 页面内容（Demo 模式自动回退到 mock 数据）
   const cmsPage = await fetchPageContent("products");
-
-  // 分页计算
-  const totalPages = Math.max(1, Math.ceil(total / pageSize));
-  const currentPage = Math.min(page, totalPages);
 
   // 构建带筛选参数 + page 的 URL（保留 category/subcategory/q/pageSize）
   function buildUrl(
