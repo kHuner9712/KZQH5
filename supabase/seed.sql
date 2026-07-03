@@ -1,6 +1,8 @@
 -- ============================================================
 -- KZQ 品牌 H5 - 种子数据
 -- 在执行完 schema.sql + policies.sql 后执行
+-- 口径：B级防火 / E0级环保 / 不出现实木、A1、B1、ISO9001、CARB P2 / 不使用 Unsplash
+-- 幂等：先清空再插入，可重复执行
 -- ============================================================
 
 -- 先清空（注意顺序，避免外键冲突）
@@ -23,19 +25,21 @@ insert into public.categories (id, name_cn, name_en, slug, description_cn, descr
 
 -- ============================================================
 -- 二级类目（每个一级类目 2 个）
+-- 口径：不使用"实木"描述
 -- ============================================================
 insert into public.subcategories (id, category_id, name_cn, name_en, slug, description_cn, description_en, sort_order, is_active) values
-('22222222-2222-2222-2222-222222222201', '11111111-1111-1111-1111-111111111101', '多层实木板', 'Multi-Layer Solid Board', 'multi-layer-solid-board', '结构稳定的多层实木基材。', 'Stable multi-layer solid substrate.', 1, true),
+('22222222-2222-2222-2222-222222222201', '11111111-1111-1111-1111-111111111101', '多层板', 'Multi-Layer Board', 'multi-layer-board', '结构稳定的多层工程基材。', 'Stable multi-layer engineering substrate.', 1, true),
 ('22222222-2222-2222-2222-222222222202', '11111111-1111-1111-1111-111111111101', '中密度纤维板', 'MDF Board', 'mdf-board', '高密度中密度板，表面平整易加工。', 'High-density MDF with smooth surface.', 2, true),
 ('22222222-2222-2222-2222-222222222203', '11111111-1111-1111-1111-111111111102', '三聚氰胺饰面板', 'Melamine Faced Panel', 'melamine-faced-panel', '耐磨饰面板，花色丰富。', 'Wear-resistant decorative panel.', 1, true),
-('22222222-2222-2222-2222-222222222204', '11111111-1111-1111-1111-111111111102', 'UV 涂装板', 'UV Coated Panel', 'uv-coated-panel', 'UV 固化涂装，高光哑光可选。', 'UV cured coating, gloss or matte.', 2, true),
-('22222222-2222-2222-2222-222222222205', '11111111-1111-1111-1111-111111111103', '玻镁防火板', 'Magnesium Oxide Fire Board', 'mgo-fire-board', 'A1/B1 级防火基材，适用于隔墙吊顶。', 'A1/B1 fire substrate for partitions and ceilings.', 1, true),
-('22222222-2222-2222-2222-222222222206', '11111111-1111-1111-1111-111111111103', '防火饰面板', 'Fire-Rated Decorative Panel', 'fire-rated-decorative-panel', '防火 + 装饰一体化饰面板。', 'Fire-rated decorative integrated panel.', 2, true);
+('22222222-2222-2222-2222-222222222204', 'UV 涂装板', 'UV Coated Panel', 'uv-coated-panel', 'UV 固化涂装，高光哑光可选。', 'UV cured coating, gloss or matte.', 2, true),
+('22222222-2222-2222-2222-222222222205', '玻镁防火板', 'Magnesium Oxide Fire Board', 'mgo-fire-board', 'B级防火基材，适用于隔墙吊顶。', 'B-rated fire substrate for partitions and ceilings.', 1, true),
+('22222222-2222-2222-2222-222222222206', '防火饰面板', 'Fire-Rated Decorative Panel', 'fire-rated-decorative-panel', '防火 + 装饰一体化饰面板。', 'Fire-rated decorative integrated panel.', 2, true);
 
 -- ============================================================
 -- 产品（8 个） - 围绕板材/装饰/防火/E0环保/工程/海外采购
--- 默认 fire_rating=B级, eco_grade=E0级
--- 价格字段统一为"请联系销售获取报价"
+-- 统一 fire_rating=B级, eco_grade=E0级
+-- 价格统一为"请联系销售获取报价" / "Contact for quotation"
+-- 图片 URL 设为 null，后续由后台上传 Supabase Storage
 -- ============================================================
 insert into public.products (
   id, category_id, subcategory_id, name_cn, name_en, slug,
@@ -50,18 +54,17 @@ insert into public.products (
   '33333333-3333-3333-3333-333333333301',
   '11111111-1111-1111-1111-111111111101',
   '22222222-2222-2222-2222-222222222201',
-  'KZQ 工程级多层实木板 18mm', 'KZQ Engineering Multi-Layer Solid Board 18mm', 'kzq-engineering-multi-layer-board-18mm',
-  '18mm 多层实木基材，结构稳定，E0 级环保。', '18mm multi-layer solid substrate, stable structure, E0 eco grade.',
-  'KZQ 工程级多层实木板采用优质原木单板交叉层压而成，含水率控制稳定，握钉力强，适用于高端定制家具与工程精装项目。通过 E0 级环保检测，甲醛释放量≤0.05mg/m³。',
-  'KZQ engineering multi-layer solid board is cross-laminated from premium veneer with stable moisture content and strong nail holding. E0 grade formaldehyde emission ≤0.05mg/m³.',
+  'KZQ 工程级多层板 18mm', 'KZQ Engineering Multi-Layer Board 18mm', 'kzq-engineering-multi-layer-board-18mm',
+  '18mm 多层工程基材，结构稳定，E0 级环保。', '18mm multi-layer engineering substrate, stable structure, E0 eco grade.',
+  'KZQ 工程级多层板采用优质单板交叉层压而成，含水率控制稳定，握钉力强，适用于高端定制家具与工程精装项目。通过 E0 级环保检测，甲醛释放量≤0.05mg/m³。',
+  'KZQ engineering multi-layer board is cross-laminated from premium veneer with stable moisture content and strong nail holding. E0 grade formaldehyde emission ≤0.05mg/m³.',
   '优质杨木/桉木单板', 'Premium poplar/eucalyptus veneer',
   '2440×1220×18mm', 'B级', 'E0级',
   '请联系销售获取报价', 'Contact for quotation', '100 张',
   '托盘打包，覆膜防潮', 'Pallet packed, film-wrapped',
   '国内整车 / 海外集装箱可发', 'Domestic truck / overseas container available',
   '高端定制家具、酒店精装、展柜', 'Custom furniture, hotel finishing, display cabinets',
-  '', 'https://images.unsplash.com/photo-1604147706283-d7119b5b822c?w=800',
-  'https://images.unsplash.com/photo-1604147706283-d7119b5b822c?w=800',
+  '', null, null,
   true, true, 1
 ),
 (
@@ -78,8 +81,7 @@ insert into public.products (
   '托盘打包', 'Pallet packed',
   '支持全国配送与海外出口', 'Nationwide delivery and overseas export',
   '定制家具、门板、展示架', 'Custom furniture, door panels, display racks',
-  '', 'https://images.unsplash.com/photo-1581094794329-c8112a89af12?w=800',
-  'https://images.unsplash.com/photo-1581094794329-c8112a89af12?w=800',
+  '', null, null,
   true, true, 2
 ),
 (
@@ -96,8 +98,7 @@ insert into public.products (
   '托盘打包，四角护角', 'Pallet packed with corner protectors',
   '国内整车 / 海外整柜', 'Domestic truck / overseas container',
   '全屋定制柜体、办公家具', 'Whole-house cabinets, office furniture',
-  '', 'https://images.unsplash.com/photo-1567016432779-094069958ea5?w=800',
-  'https://images.unsplash.com/photo-1567016432779-094069958ea5?w=800',
+  '', null, null,
   false, true, 3
 ),
 (
@@ -114,8 +115,7 @@ insert into public.products (
   '托盘打包，板间垫片', 'Pallet packed with separators',
   '国内配送 / 海外出口', 'Domestic delivery / overseas export',
   '衣柜门板、商业展示墙', 'Wardrobe doors, commercial display walls',
-  '', 'https://images.unsplash.com/photo-1503387762-592deb58ef4e?w=800',
-  'https://images.unsplash.com/photo-1503387762-592deb58ef4e?w=800',
+  '', null, null,
   true, true, 4
 ),
 (
@@ -123,7 +123,7 @@ insert into public.products (
   '11111111-1111-1111-1111-111111111103',
   '22222222-2222-2222-2222-222222222205',
   'KZQ 玻镁防火板 12mm', 'KZQ Magnesium Oxide Fire Board 12mm', 'kzq-mgo-fire-board-12mm',
-  'A1/B1 级防火基材，耐潮不燃。', 'A1/B1 fire substrate, moisture resistant.',
+  'B级防火基材，耐潮不燃。', 'B-rated fire substrate, moisture resistant.',
   'KZQ 玻镁防火板以氧化镁、氯化镁为主材，添加阻燃纤维增强，达到 B 级防火标准，遇火不燃，无有毒烟雾，适用于酒店、商场、医院等公共场所隔墙与吊顶。',
   'KZQ MGO fire board uses magnesium oxide and chloride with fire-resistant fiber, meets B-rated fire standard, non-combustible and low smoke.',
   '氧化镁、氯化镁、玻纤布', 'MgO, MgCl2, fiberglass mesh',
@@ -132,8 +132,7 @@ insert into public.products (
   '托盘打包，防潮膜', 'Pallet packed, moisture film',
   '全国配送 / 海外集装箱', 'Nationwide / overseas container',
   '酒店隔墙、商场吊顶、医院墙体', 'Hotel partitions, mall ceilings, hospital walls',
-  '', 'https://images.unsplash.com/photo-1581094288338-2314dddb7e14?w=800',
-  'https://images.unsplash.com/photo-1581094288338-2314dddb7e14?w=800',
+  '', null, null,
   true, true, 5
 ),
 (
@@ -150,8 +149,7 @@ insert into public.products (
   '托盘打包，工程配送', 'Pallet packed, project delivery',
   '工程专车 / 海外整柜', 'Project truck / overseas container',
   '地铁、机场、学校、商业综合体', 'Subway, airport, school, commercial complex',
-  '', 'https://images.unsplash.com/photo-1503387762-592deb58ef4e?w=800',
-  'https://images.unsplash.com/photo-1503387762-592deb58ef4e?w=800',
+  '', null, null,
   true, true, 6
 ),
 (
@@ -159,17 +157,16 @@ insert into public.products (
   '11111111-1111-1111-1111-111111111101',
   '22222222-2222-2222-2222-222222222201',
   'KZQ 海外出口级多层板 17mm', 'KZQ Export-Grade Multi-Layer Board 17mm', 'kzq-export-grade-multi-layer-board-17mm',
-  '海外出口规格，CARB P2 / E0 认证。', 'Export spec, CARB P2 / E0 certified.',
-  'KZQ 海外出口级多层板专门针对海外客户规格生产，符合 CARB Phase 2 与 E0 标准，含水率与胶合强度满足国际海运要求，可定制尺寸与包装，支持 FOB / CIF 条款。',
-  'KZQ export-grade multi-layer board is produced to overseas specs, CARB Phase 2 and E0 compliant, suitable for international shipping.',
+  '海外出口规格，E0 级环保。', 'Export spec, E0 eco grade.',
+  'KZQ 海外出口级多层板专门针对海外客户规格生产，符合 E0 标准要求，含水率与胶合强度满足国际海运要求，可定制尺寸与包装，支持 FOB / CIF 条款。',
+  'KZQ export-grade multi-layer board is produced to overseas specs, E0 compliant, suitable for international shipping.',
   '出口级杨木/桉木单板', 'Export-grade poplar/eucalyptus veneer',
   '2440×1220×17mm（可定制）', 'B级', 'E0级',
   '请联系销售获取报价', 'Contact for quotation', '1×20GP 集装箱',
   '出口托盘 + 熏蒸', 'Export pallet + fumigation',
   'FOB 宁波 / CIF 可协商', 'FOB Ningbo / CIF negotiable',
   '海外家具制造、工程承包商', 'Overseas furniture manufacturers, contractors',
-  '', 'https://images.unsplash.com/photo-1604147706283-d7119b5b822c?w=800',
-  'https://images.unsplash.com/photo-1604147706283-d7119b5b822c?w=800',
+  '', null, null,
   false, true, 7
 ),
 (
@@ -186,57 +183,60 @@ insert into public.products (
   '托盘打包，护角保护', 'Pallet packed with corner protectors',
   '国内配送 / 海外出口', 'Domestic / overseas export',
   '现代风格家具、办公空间', 'Modern furniture, office space',
-  '', 'https://images.unsplash.com/photo-1567016432779-094069958ea5?w=800',
-  'https://images.unsplash.com/photo-1567016432779-094069958ea5?w=800',
+  '', null, null,
   false, true, 8
 );
 
 -- ============================================================
 -- 产品多图（每个产品 2 张）
+-- 图片 URL 设为 null，后续由后台上传
 -- ============================================================
 insert into public.product_images (product_id, image_url, alt_cn, alt_en, sort_order) values
-('33333333-3333-3333-3333-333333333301', 'https://images.unsplash.com/photo-1604147706283-d7119b5b822c?w=800', '多层实木板正面', 'Multi-layer board front', 1),
-('33333333-3333-3333-3333-333333333301', 'https://images.unsplash.com/photo-1581094794329-c8112a89af12?w=800', '多层实木板侧边', 'Multi-layer board edge', 2),
-('33333333-3333-3333-3333-333333333302', 'https://images.unsplash.com/photo-1581094794329-c8112a89af12?w=800', 'MDF 表面', 'MDF surface', 1),
-('33333333-3333-3333-3333-333333333302', 'https://images.unsplash.com/photo-1604147706283-d7119b5b822c?w=800', 'MDF 切面', 'MDF cross-section', 2),
-('33333333-3333-3333-3333-333333333303', 'https://images.unsplash.com/photo-1567016432779-094069958ea5?w=800', '木纹饰面板', 'Wood grain panel', 1),
-('33333333-3333-3333-3333-333333333303', 'https://images.unsplash.com/photo-1503387762-592deb58ef4e?w=800', '木纹细节', 'Wood grain detail', 2),
-('33333333-3333-3333-3333-333333333304', 'https://images.unsplash.com/photo-1503387762-592deb58ef4e?w=800', 'UV 高光面板', 'UV high-gloss panel', 1),
-('33333333-3333-3333-3333-333333333304', 'https://images.unsplash.com/photo-1567016432779-094069958ea5?w=800', '高光细节', 'Gloss detail', 2),
-('33333333-3333-3333-3333-333333333305', 'https://images.unsplash.com/photo-1581094288338-2314dddb7e14?w=800', '玻镁防火板', 'MGO fire board', 1),
-('33333333-3333-3333-3333-333333333305', 'https://images.unsplash.com/photo-1604147706283-d7119b5b822c?w=800', '防火板结构', 'Fire board structure', 2),
-('33333333-3333-3333-3333-333333333306', 'https://images.unsplash.com/photo-1503387762-592deb58ef4e?w=800', '防火饰面板', 'Fire decorative panel', 1),
-('33333333-3333-3333-3333-333333333306', 'https://images.unsplash.com/photo-1581094288338-2314dddb7e14?w=800', '饰面细节', 'Surface detail', 2),
-('33333333-3333-3333-3333-333333333307', 'https://images.unsplash.com/photo-1604147706283-d7119b5b822c?w=800', '出口级多层板', 'Export board', 1),
-('33333333-3333-3333-3333-333333333307', 'https://images.unsplash.com/photo-1567016432779-094069958ea5?w=800', '出口包装', 'Export packaging', 2),
-('33333333-3333-3333-3333-333333333308', 'https://images.unsplash.com/photo-1567016432779-094069958ea5?w=800', '素色哑光板', 'Solid matte panel', 1),
-('33333333-3333-3333-3333-333333333308', 'https://images.unsplash.com/photo-1503387762-592deb58ef4e?w=800', '哑光细节', 'Matte detail', 2);
+('33333333-3333-3333-3333-333333333301', null, '多层板正面', 'Multi-layer board front', 1),
+('33333333-3333-3333-3333-333333333301', null, '多层板侧边', 'Multi-layer board edge', 2),
+('33333333-3333-3333-3333-333333333302', null, 'MDF 表面', 'MDF surface', 1),
+('33333333-3333-3333-3333-333333333302', null, 'MDF 切面', 'MDF cross-section', 2),
+('33333333-3333-3333-3333-333333333303', null, '木纹饰面板', 'Wood grain panel', 1),
+('33333333-3333-3333-3333-333333333303', null, '木纹细节', 'Wood grain detail', 2),
+('33333333-3333-3333-3333-333333333304', null, 'UV 高光面板', 'UV high-gloss panel', 1),
+('33333333-3333-3333-3333-333333333304', null, '高光细节', 'Gloss detail', 2),
+('33333333-3333-3333-3333-333333333305', null, '玻镁防火板', 'MGO fire board', 1),
+('33333333-3333-3333-3333-333333333305', null, '防火板结构', 'Fire board structure', 2),
+('33333333-3333-3333-3333-333333333306', null, '防火饰面板', 'Fire decorative panel', 1),
+('33333333-3333-3333-3333-333333333306', null, '饰面细节', 'Surface detail', 2),
+('33333333-3333-3333-3333-333333333307', null, '出口级多层板', 'Export board', 1),
+('33333333-3333-3333-3333-333333333307', null, '出口包装', 'Export packaging', 2),
+('33333333-3333-3333-3333-333333333308', null, '素色哑光板', 'Solid matte panel', 1),
+('33333333-3333-3333-3333-333333333308', null, '哑光细节', 'Matte detail', 2);
 
 -- ============================================================
--- 证书（3 个，仅展示版图片 URL）
+-- 证书（仅展示版/水印版，不出现未确认认证）
+-- 只保留环保 / 防火 / 产品资料等已确认可公开展示的资料
+-- 图片 URL 设为 null，后续由后台上传展示版/水印版图片
 -- ============================================================
 insert into public.certificates (id, name_cn, name_en, description_cn, description_en, image_url, applicable_scope_cn, applicable_scope_en, is_published, sort_order) values
 ('44444444-4444-4444-4444-444444444401',
  'E0 级环保检测报告', 'E0 Environmental Test Report',
- 'KZQ 板材甲醛释放量经第三方检测达到 E0 级标准。', 'KZQ boards formaldehyde emission tested to E0 grade by third party.',
- 'https://images.unsplash.com/photo-1568667256549-094345857637?w=800',
+ 'KZQ 板材甲醛释放量经第三方检测达到 E0 级标准（展示版）。', 'KZQ boards formaldehyde emission tested to E0 grade by third party (display version).',
+ null,
  '全系列板材产品', 'All board series',
  true, 1),
 ('44444444-4444-4444-4444-444444444402',
  'B 级防火检测报告', 'B-Rated Fire Test Report',
- 'KZQ 防火系列板材通过 B 级燃烧性能检测。', 'KZQ fire-rated series passed B-rated combustion performance test.',
- 'https://images.unsplash.com/photo-1581094288338-2314dddb7e14?w=800',
+ 'KZQ 防火系列板材通过 B 级燃烧性能检测（展示版）。', 'KZQ fire-rated series passed B-rated combustion performance test (display version).',
+ null,
  '防火板系列', 'Fire-rated panel series',
  true, 2),
 ('44444444-4444-4444-4444-444444444403',
- 'ISO 9001 质量管理体系认证', 'ISO 9001 Quality Management Certification',
- 'KZQ 通过 ISO 9001 质量管理体系认证，保障稳定的产品质量。', 'KZQ is ISO 9001 certified for stable product quality.',
- 'https://images.unsplash.com/photo-1450101499163-c8848c66ca85?w=800',
- '全公司质量管理体系', 'Company-wide quality system',
+ '产品技术资料摘要', 'Product Technical Data Sheet',
+ 'KZQ 板材产品规格、应用与物性参数摘要（展示版）。', 'KZQ board specs, applications and physical properties summary (display version).',
+ null,
+ '全系列板材产品', 'All board series',
  true, 3);
 
 -- ============================================================
 -- 公司信息（单例）
+-- 口径：不出现实木 / CARB P2 / ISO9001 等未确认认证
 -- ============================================================
 insert into public.company_profile (
   id, title_cn, title_en, description_cn, description_en,
@@ -246,27 +246,27 @@ insert into public.company_profile (
 ) values (
   '55555555-5555-5555-5555-555555555501',
   'KZQ · 专注工程级板材与防火饰面', 'KZQ · Engineering-Grade Boards & Fire Decorative Panels',
-  'KZQ 是一家专注于工程级板材、装饰饰面板与防火板材的品牌供应商。我们服务国内工程精装项目与海外经销商采购，提供 B 级防火、E0 环保等级的高品质板材产品。产品涵盖多层实木板、MDF、三聚氰胺饰面板、UV 涂装板、玻镁防火板等，支持规格定制与海外出口。',
-  'KZQ is a brand supplier specializing in engineering-grade boards, decorative panels and fire-rated panels. We serve domestic project finishing and overseas distributor procurement, offering B-rated fire and E0 eco grade boards. Products cover multi-layer solid boards, MDF, melamine panels, UV panels and MGO fire boards, with custom sizes and export support.',
+  'KZQ 是一家专注于工程级板材、装饰饰面板与防火板材的品牌供应商。我们服务国内工程精装项目与海外经销商采购，提供 B 级防火、E0 环保等级的高品质板材产品。产品涵盖多层板、MDF、三聚氰胺饰面板、UV 涂装板、玻镁防火板等，支持规格定制与海外出口。',
+  'KZQ is a brand supplier specializing in engineering-grade boards, decorative panels and fire-rated panels. We serve domestic project finishing and overseas distributor procurement, offering B-rated fire and E0 eco grade boards. Products cover multi-layer boards, MDF, melamine panels, UV panels and MGO fire boards, with custom sizes and export support.',
   '[
     {"icon":"flame","title_cn":"B 级防火","title_en":"B-Rated Fire","desc_cn":"防火系列通过 B 级燃烧性能检测，适用于公共场所。","desc_en":"Fire series passed B-rated combustion test for public spaces."},
     {"icon":"leaf","title_cn":"E0 环保","title_en":"E0 Eco","desc_cn":"甲醛释放量≤0.05mg/m³，达到 E0 级标准。","desc_en":"Formaldehyde ≤0.05mg/m³, E0 grade standard."},
     {"icon":"truck","title_cn":"工程交付","title_en":"Project Delivery","desc_cn":"支持大型工程批量供货与定制规格生产。","desc_en":"Bulk supply for large projects and custom sizes."},
-    {"icon":"globe","title_cn":"海外出口","title_en":"Overseas Export","desc_cn":"符合 CARB P2 / E0 标准，支持 FOB / CIF。","desc_en":"CARB P2 / E0 compliant, FOB / CIF supported."}
+    {"icon":"globe","title_cn":"海外出口","title_en":"Overseas Export","desc_cn":"支持集装箱 FOB / CIF 出口，多语言询盘响应。","desc_en":"Container FOB / CIF export, multilingual inquiry."}
   ]'::jsonb,
   '[
     {"icon":"flame","title_cn":"B-Rated Fire","title_en":"B-Rated Fire","desc_cn":"Fire series passed B-rated combustion test.","desc_en":"Fire series passed B-rated combustion test for public spaces."},
     {"icon":"leaf","title_cn":"E0 Eco","title_en":"E0 Eco","desc_cn":"Formaldehyde ≤0.05mg/m³, E0 grade.","desc_en":"Formaldehyde ≤0.05mg/m³, E0 grade standard."},
     {"icon":"truck","title_cn":"Project Delivery","title_en":"Project Delivery","desc_cn":"Bulk supply for large projects.","desc_en":"Bulk supply for large projects and custom sizes."},
-    {"icon":"globe","title_cn":"Overseas Export","title_en":"Overseas Export","desc_cn":"CARB P2 / E0 compliant, FOB / CIF.","desc_en":"CARB P2 / E0 compliant, FOB / CIF supported."}
+    {"icon":"globe","title_cn":"Overseas Export","title_en":"Overseas Export","desc_cn":"Container FOB / CIF export.","desc_en":"Container FOB / CIF export, multilingual inquiry."}
   ]'::jsonb,
   '+86 138-0000-0000',
   'sales@kzq-example.com',
   '+86 138 0000 0000',
   '中国浙江省杭州市 XX 区 XX 路 XX 号',
   'No. XX Road, XX District, Hangzhou, Zhejiang, China',
-  'https://images.unsplash.com/photo-1611162617474-5b21e879e113?w=400',
-  'https://images.unsplash.com/photo-1611162616475-46b635cb6898?w=200'
+  null,
+  null
 );
 
 -- ============================================================
@@ -288,7 +288,8 @@ insert into public.site_settings (
 
 -- ============================================================
 -- 示例询盘（2 条，方便后台演示）
+-- 口径：不出现实木 / 未确认认证 / 内部价格
 -- ============================================================
 insert into public.inquiries (name, company, country, email, whatsapp, interested_product, quantity, message, status, source) values
-('John Smith', 'Smith Furniture LLC', 'United States', 'john@smithfurniture.com', '+1 555 123 4567', 'KZQ Export-Grade Multi-Layer Board 17mm', '1×20GP container', 'We are looking for a stable supplier of multi-layer boards for our furniture factory. Please send catalog and FOB Ningbo price.', 'new', 'h5'),
-(' Ahmed Hassan', 'Gulf Interiors', 'UAE', 'ahmed@gulfinteriors.ae', '+971 50 123 4567', 'KZQ Fire-Rated Decorative Panel Custom', '5000 sqm', 'Need fire-rated decorative panels for a hotel project in Dubai. B-rated fire certification required. Please contact us urgently.', 'new', 'h5');
+('John Smith', 'Smith Furniture LLC', 'United States', 'john@smithfurniture.com', '+1 555 123 4567', 'KZQ Export-Grade Multi-Layer Board 17mm', '1×20GP container', 'We are looking for a stable supplier of multi-layer boards for our furniture factory. Please send catalog and FOB Ningbo quotation.', 'new', 'h5'),
+('Ahmed Hassan', 'Gulf Interiors', 'UAE', 'ahmed@gulfinteriors.ae', '+971 50 123 4567', 'KZQ Fire-Rated Decorative Panel Custom', '5000 sqm', 'Need fire-rated decorative panels for a hotel project in Dubai. B-rated fire certification required. Please contact us for quotation.', 'new', 'h5');

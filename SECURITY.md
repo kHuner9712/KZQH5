@@ -76,10 +76,24 @@ KZQ 是**对外展示型**系统，类似品牌官网 + 海外询盘站。系统
 
 1. 前台表单提交到 `/api/inquiries` 路由
 2. 路由使用 `service_role` 在服务端写入 `inquiries`
-3. 服务端做字段校验、长度限制、蜜罐字段检测
+3. 服务端做多层防滥用检测（见 4.5）
 4. 写入成功后返回成功响应
 
-### 4.5 管理员登录流程
+### 4.5 询盘接口防滥用机制
+
+`/api/inquiries` 路由实现了以下多层防滥用保护：
+
+| 层级 | 机制 | 说明 |
+|------|------|------|
+| 1 | 服务端 honeypot 检测 | 接收 `honeypot` / `company_website` 字段；若有值则返回 `success: true` 但不写入数据库，不暴露"触发反垃圾"提示 |
+| 2 | 内存级限流 | 按 IP + User-Agent 做简单内存限流，10 分钟内最多 5 次，超限返回 429 |
+| 3 | 字段校验 | name 必填、email 格式校验、email/whatsapp 至少一个、字段长度限制 |
+| 4 | message 垃圾内容判断 | message 中 URL 数量 ≥ 3 时拒绝；message 超长截断至 2000 字符 |
+| 5 | Demo 模式 | Demo 模式下不写入 Supabase，直接返回成功（用于前端 Mock Preview） |
+
+> ⚠️ Vercel serverless 环境中内存级限流不是强一致（不同实例间不共享状态），仅作为第一层保护。如需更强限流，建议在 Vercel 层面配置 Rate Limiting 或使用 Upstash Redis 等外部存储。
+
+### 4.6 管理员登录流程
 
 1. 用户在 `/admin/login` 输入邮箱密码
 2. 调用 Supabase Auth `signInWithPassword`

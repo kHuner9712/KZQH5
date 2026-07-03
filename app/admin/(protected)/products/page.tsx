@@ -6,6 +6,7 @@ import { createBrowserSupabaseClient } from "@/lib/supabase/client";
 import { useToast } from "@/components/admin/Toast";
 import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/admin/Modal";
+import { normalizeSearchTerm } from "@/lib/utils";
 import type { Product, Category, Subcategory, ProductImage } from "@/types/database";
 import {
   Plus,
@@ -63,9 +64,10 @@ export default function AdminProductsPage() {
     if (filterCat) query = query.eq("category_id", filterCat);
     if (filterSub) query = query.eq("subcategory_id", filterSub);
 
-    if (search.trim()) {
+    const safeSearch = normalizeSearchTerm(search);
+    if (safeSearch) {
       query = query.or(
-        `name_cn.ilike.%${search}%,name_en.ilike.%${search}%,slug.ilike.%${search}%`
+        `name_cn.ilike.%${safeSearch}%,name_en.ilike.%${safeSearch}%,slug.ilike.%${safeSearch}%`
       );
     }
 
@@ -92,9 +94,9 @@ export default function AdminProductsPage() {
     else if (filterStatus === "featured") countQuery = countQuery.eq("is_featured", true);
     if (filterCat) countQuery = countQuery.eq("category_id", filterCat);
     if (filterSub) countQuery = countQuery.eq("subcategory_id", filterSub);
-    if (search.trim()) {
+    if (safeSearch) {
       countQuery = countQuery.or(
-        `name_cn.ilike.%${search}%,name_en.ilike.%${search}%,slug.ilike.%${search}%`
+        `name_cn.ilike.%${safeSearch}%,name_en.ilike.%${safeSearch}%,slug.ilike.%${safeSearch}%`
       );
     }
 

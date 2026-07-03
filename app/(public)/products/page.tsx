@@ -13,7 +13,7 @@ import { ProductCard } from "@/components/public/ProductCard";
 import { EmptyState } from "@/components/public/EmptyState";
 import { SearchBox } from "@/components/public/SearchBox";
 import { ResponsiveContainer } from "@/components/public/ResponsiveContainer";
-import { cn } from "@/lib/utils";
+import { cn, normalizeSearchTerm } from "@/lib/utils";
 import { PackageOpen, ChevronRight, ChevronLeft, ChevronsLeft, ChevronsRight } from "lucide-react";
 import type { Metadata } from "next";
 import type { Product, Category, Subcategory } from "@/types/database";
@@ -166,9 +166,12 @@ export default async function ProductsPage({
       }
     }
     if (searchParams.q) {
-      const orExpr = `name_cn.ilike.%${searchParams.q}%,name_en.ilike.%${searchParams.q}%,summary_cn.ilike.%${searchParams.q}%`;
-      productsQuery = productsQuery.or(orExpr);
-      countQuery = countQuery.or(orExpr);
+      const safeQ = normalizeSearchTerm(searchParams.q);
+      if (safeQ) {
+        const orExpr = `name_cn.ilike.%${safeQ}%,name_en.ilike.%${safeQ}%,summary_cn.ilike.%${safeQ}%`;
+        productsQuery = productsQuery.or(orExpr);
+        countQuery = countQuery.or(orExpr);
+      }
     }
 
     // range 分页（先用 requestedPage，越界时下方 redirect 到合法页码）

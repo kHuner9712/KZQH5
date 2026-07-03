@@ -49,3 +49,25 @@ export function siteUrl(path: string = ""): string {
   const base = process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";
   return `${base.replace(/\/$/, "")}${path}`;
 }
+
+// 搜索关键词清洗：用于安全拼入 Supabase PostgREST .or() 表达式
+// - 限制最大长度（80 字符）
+// - trim
+// - 移除会破坏 PostgREST filter 表达式的字符：% , . ( ) 换行 等
+// - 返回清洗后的搜索词；若清洗后为空则返回空字符串（调用方据此跳过 .or()）
+export function normalizeSearchTerm(input: string | undefined | null): string {
+  if (!input) return "";
+  const trimmed = input.trim();
+  if (!trimmed) return "";
+  // 限制最大长度
+  const sliced = trimmed.slice(0, 80);
+  // 移除会破坏 PostgREST .or() 表达式的字符：
+  //   %  -> ilike 通配符，避免注入额外通配
+  //   ,  -> .or() 字段分隔符
+  //   .  -> 操作符分隔（如 ilike.）
+  //   ( ) -> 分组符号
+  //   :  -> 操作符分隔
+  //   换行/制表符
+  const cleaned = sliced.replace(/[%`,().:\\\n\r\t]/g, " ").replace(/\s+/g, " ").trim();
+  return cleaned;
+}

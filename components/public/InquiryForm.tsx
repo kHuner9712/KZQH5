@@ -50,10 +50,7 @@ export function InquiryForm({ defaultProduct }: { defaultProduct?: string }) {
     if (!form.email && !form.whatsapp) {
       e.email = "请至少填写邮箱或 WhatsApp 之一，方便我们联系您";
     }
-    if (form.honeypot) {
-      // 蜜罐触发，静默失败
-      return false;
-    }
+    // honeypot 不在客户端拦截，保留字段提交到服务端做反垃圾检测
     setErrors(e);
     return Object.keys(e).length === 0;
   }
@@ -66,7 +63,13 @@ export function InquiryForm({ defaultProduct }: { defaultProduct?: string }) {
     setErrorMsg("");
 
     try {
-      const { honeypot, ...payload } = form;
+      // 保留 honeypot 字段提交到服务端，由服务端做反垃圾检测
+      // 字段名为 honeypot（同时兼容 company_website）
+      const payload = {
+        ...form,
+        honeypot: form.honeypot,
+        company_website: form.honeypot,
+      };
       const res = await fetch("/api/inquiries", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
