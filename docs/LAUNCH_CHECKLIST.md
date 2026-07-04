@@ -38,11 +38,13 @@
 - [ ] `/certificates` 资质证书列表展示正常
 - [ ] `/about` 公司介绍内容完整
 - [ ] `/contact` 联系询盘表单可提交
-- [ ] 移动端 BottomNav 正常切换（首页/产品/证书/联系）
+- [ ] 移动端 BottomNav 正常切换，固定显示"首页 / 产品 / 资质 / 询盘"（不出现"关于"）
 - [ ] 产品详情页移动端 BottomNav 隐藏，底部询盘 CTA 正常
+- [ ] 产品详情页点击"立即询盘"后，联系页表单"感兴趣产品"字段自动带入当前产品名
 - [ ] PC 端 DesktopHeader 正常显示
 - [ ] 响应式布局正常（375px / 390px / 414px / 768px / 1024px / 1440px）
 - [ ] 图片加载失败有 onError fallback（渐变占位 / KZQ 占位）
+- [ ] PC 端 Footer 显示 site_settings.footer_text_cn（无配置时显示默认文案）
 
 ---
 
@@ -100,6 +102,8 @@
 - [ ] 非管理员账号登录后被拒绝
 - [ ] 前台无法直接读取 `/admin` API
 - [ ] Storage `private-assets` bucket 无法被前台直接访问
+- [ ] **匿名用户不能直接 insert inquiries**（用 anon key 直接写 Supabase 应被 RLS 拒绝）
+- [ ] 询盘提交必须通过 `/api/inquiries` 路由（service_role 写入）
 - [ ] 询盘接口 honeypot 触发后返回 success 但不写入数据库
 - [ ] 询盘接口 message 含过多 URL 时被拒绝
 - [ ] 搜索关键词清洗生效（特殊字符不破坏 Supabase `.or()` 表达式）

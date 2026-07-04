@@ -142,12 +142,12 @@ npm run dev
 
 ## 核心特性
 
-- **响应式**：手机端微信小程序风格 H5（底部 Tab 导航），PC 端企业目录网站（DesktopHeader）
+- **响应式**：手机端微信小程序风格 H5（底部 Tab 导航固定为：首页 / 产品 / 资质 / 询盘），PC 端企业目录网站（DesktopHeader 顶部导航可包含关于我们）
 - **CMS 化**：站点设置、首页内容、页面内容、产品 GEO 字段均可在后台维护
 - **双语字段**：所有内容表均预留中英文字段，便于海外 GEO 优化
-- **RLS 权限**：前台匿名只能读已发布内容、写询盘；后台需登录 + admin_profiles 校验
+- **RLS 权限**：前台匿名只能读已发布内容；询盘提交必须通过 `/api/inquiries` 路由（服务端 `service_role` 写入），不开放 anon 直接 insert `inquiries`；后台需登录 + admin_profiles 校验
 - **SEO / GEO**：每页 metadata、产品 JSON-LD、Organization JSON-LD、FAQ JSON-LD、sitemap.xml、robots.txt
-- **询盘表单**：服务端 honeypot + 内存限流 + 垃圾内容判断 + 字段校验
+- **询盘表单**：提交必须通过 `/api/inquiries`，服务端做 honeypot + 内存限流 + 垃圾内容判断 + 字段校验；Supabase anon key 不能绕过 API 直接写询盘
 - **图片上传**：基于 Supabase Storage，5MB 限制，仅上传展示版/水印版图片
 
 ## 业务口径

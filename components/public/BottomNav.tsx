@@ -27,7 +27,10 @@ const iconMap: Record<string, LucideIcon> = {
  * - 仅在 mobile（< md）显示
  * - tablet/desktop 由 DesktopHeader 接管
  * - 是否渲染由 MobileNavController 按路径决定（产品详情页隐藏）
- * - 优先使用 site_settings.navigation_json 前 4 项，无配置时 fallback 到默认 tabs
+ * - 固定优先展示 4 个入口：/ /products /certificates /contact
+ * - 如果 site_settings.navigation_json 中存在这些 href，使用 CMS 中对应的 label_cn
+ * - 如果 CMS 中缺少某项，则使用 defaultTabs fallback
+ * - /about 不出现在移动端底部 Tab，保留在 PC 顶部导航
  * - 图标根据 href 映射：/ → Home，/products → LayoutGrid，/certificates → Award，/contact → Phone
  */
 export function BottomNav({
@@ -37,19 +40,29 @@ export function BottomNav({
 }) {
   const pathname = usePathname();
 
-  // 解析 tabs：优先 site_settings.navigation_json 前 4 项
-  let tabs: Array<{ href: string; label: string; icon: LucideIcon }>;
+  // 固定优先展示的 4 个入口
+  const fixedHrefs = ["/", "/products", "/certificates", "/contact"];
+
+  // 从 CMS navigation_json 中提取 label（按 href 匹配）
+  const navMap = new Map<string, NavItem>();
   if (siteSettings?.navigation_json && siteSettings.navigation_json.length > 0) {
-    tabs = siteSettings.navigation_json
-      .slice(0, 4)
-      .map((n: NavItem) => ({
-        href: n.href,
-        label: n.label_cn,
-        icon: iconMap[n.href] || Home,
-      }));
-  } else {
-    tabs = defaultTabs;
+    for (const n of siteSettings.navigation_json) {
+      if (n?.href) navMap.set(n.href, n);
+    }
   }
+
+  // 组装 tabs：固定 4 项，CMS 有 label 用 CMS，否则用 defaultTabs fallback
+  const tabs: Array<{ href: string; label: string; icon: LucideIcon }> = fixedHrefs.map(
+    (href) => {
+      const cmsItem = navMap.get(href);
+      const fallback = defaultTabs.find((t) => t.href === href);
+      return {
+        href,
+        label: cmsItem?.label_cn || fallback?.label || "",
+        icon: iconMap[href] || Home,
+      };
+    }
+  );
 
   const isActive = (href: string) => {
     if (href === "/") return pathname === "/";

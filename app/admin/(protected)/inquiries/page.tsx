@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import { createBrowserSupabaseClient } from "@/lib/supabase/client";
 import { useToast } from "@/components/admin/Toast";
 import { Button } from "@/components/ui/Button";
-import { formatDate } from "@/lib/utils";
+import { formatDate, normalizeSearchTerm } from "@/lib/utils";
 import type { Inquiry, InquiryStatus } from "@/types/database";
 import {
   Loader2,
@@ -44,9 +44,10 @@ export default function InquiriesPage() {
       .order("created_at", { ascending: false });
 
     if (filterStatus !== "all") query = query.eq("status", filterStatus);
-    if (search.trim()) {
+    const safeSearch = normalizeSearchTerm(search);
+    if (safeSearch) {
       query = query.or(
-        `name.ilike.%${search}%,email.ilike.%${search}%,whatsapp.ilike.%${search}%,interested_product.ilike.%${search}%`
+        `name.ilike.%${safeSearch}%,email.ilike.%${safeSearch}%,whatsapp.ilike.%${safeSearch}%,interested_product.ilike.%${safeSearch}%`
       );
     }
 

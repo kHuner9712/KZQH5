@@ -198,6 +198,9 @@ export default async function ProductDetailPage({
   const sub = subcategory as Subcategory | null;
   const certs = certificates;
 
+  // 询盘 CTA 跳转联系页时带上当前产品名，联系页表单自动带入"感兴趣产品"字段
+  const inquiryHref = `/contact?product=${encodeURIComponent(p.name_cn)}`;
+
   // 规格表
   const specs: Array<{ icon: typeof Ruler; label: string; value?: string | null }> = [
     { icon: Ruler, label: "规格尺寸", value: p.size },
@@ -338,7 +341,7 @@ export default async function ProductDetailPage({
 
             {/* desktop CTA：右侧固定询盘按钮 */}
             <div className="mt-4 hidden flex-col gap-2 md:mt-5 md:flex">
-              <Link href="/contact" className="btn-primary h-12 w-full text-sm">
+              <Link href={inquiryHref} className="btn-primary h-12 w-full text-sm">
                 立即询盘 · Get Quotation
                 <ArrowRight className="h-4 w-4" />
               </Link>
@@ -479,7 +482,7 @@ export default async function ProductDetailPage({
               <Phone className="h-5 w-5" />
             </a>
           )}
-          <Link href="/contact" className="flex-1">
+          <Link href={inquiryHref} className="flex-1">
             <span className="btn-primary flex h-12 w-full items-center justify-center text-sm">
               立即询盘 · Get Quotation
             </span>

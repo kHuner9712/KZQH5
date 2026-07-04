@@ -165,16 +165,15 @@ create policy "site_settings_admin_all"
   with check (public.is_admin());
 
 -- ============================================================
--- 9. inquiries - 匿名仅可 INSERT，不可 SELECT / UPDATE / DELETE
+-- 9. inquiries - 不开放 anon 直接写入
+-- 询盘提交必须通过 /api/inquiries 路由（服务端 service_role 写入）
+-- 服务端做 honeypot、限流、字段校验、垃圾内容判断
+-- 不再开放 Supabase anon 直接 insert inquiries，避免绕过 API 防滥用
 -- ============================================================
 alter table public.inquiries enable row level security;
 
--- 匿名可插入
+-- 删除旧的匿名 insert policy（如存在），不再重新创建
 drop policy if exists "inquiries_public_insert" on public.inquiries;
-create policy "inquiries_public_insert"
-  on public.inquiries for insert
-  to anon, authenticated
-  with check (true);
 
 -- 管理员全部读写（前台用户无法读取他人询盘）
 drop policy if exists "inquiries_admin_all" on public.inquiries;

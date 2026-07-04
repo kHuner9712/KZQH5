@@ -59,9 +59,10 @@ KZQ 是**对外展示型**系统，类似品牌官网 + 海外询盘站。系统
   - 可读 `product_images` 中所属产品 `is_published = true` 的图片
   - 可读 `certificates` 中 `is_published = true` 的数据
   - 可读 `company_profile` / `site_settings`
-  - **只能写入 `inquiries`，不能读取**
+  - **不能直接写入任何表**（`inquiries` 也必须通过 `/api/inquiries` 路由提交，由服务端 `service_role` 写入）
 - 管理员（`admin_profiles` 中存在的用户）：可对所有业务表 CRUD
 - `admin_profiles` 表**完全不开放** RLS 读写，仅通过 `service_role` 在服务端读取校验
+- `inquiries` 表**不开放 anon 直接 insert**：询盘提交必须通过 `/api/inquiries` 路由（服务端 `service_role` 写入），Supabase anon key 不能绕过 API 直接写询盘
 
 ### 4.3 Storage Bucket 权限
 
@@ -72,12 +73,14 @@ KZQ 是**对外展示型**系统，类似品牌官网 + 海外询盘站。系统
 
 ### 4.4 询盘写入流程
 
-前台询盘表单不直接用 anon key 写 `inquiries` 表（避免 anon 用户拥有任意写权限）。流程：
+前台询盘表单**不直接用 anon key 写 `inquiries` 表**。`inquiries` 表不开放 anon insert policy，Supabase anon key 不能绕过 `/api/inquiries` 直接写询盘。流程：
 
 1. 前台表单提交到 `/api/inquiries` 路由
-2. 路由使用 `service_role` 在服务端写入 `inquiries`
+2. 路由使用 `service_role` 在服务端写入 `inquiries`（绕过 RLS）
 3. 服务端做多层防滥用检测（见 4.5）
 4. 写入成功后返回成功响应
+
+> ⚠️ `supabase/policies.sql` 中已删除 `inquiries_public_insert` policy，重新执行 `policies.sql` 后 anon 将无法直接 insert。
 
 ### 4.5 询盘接口防滥用机制
 
