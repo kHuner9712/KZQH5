@@ -7,7 +7,7 @@
 // ============================================================
 
 import { isDemoMode } from "@/lib/demo";
-import { createServerSupabaseClient } from "@/lib/supabase/server";
+import { createPublicSupabaseClient } from "@/lib/supabase/public";
 import {
   getMockSiteSettings,
   getMockHomepageContent,
@@ -25,7 +25,7 @@ export async function fetchSiteSettings(): Promise<SiteSettings | null> {
     return getMockSiteSettings();
   }
   try {
-    const supabase = createServerSupabaseClient();
+    const supabase = createPublicSupabaseClient();
     const { data } = await supabase
       .from("site_settings")
       .select("*")
@@ -44,7 +44,7 @@ export async function fetchHomepageContent(): Promise<HomepageContent | null> {
     return getMockHomepageContent();
   }
   try {
-    const supabase = createServerSupabaseClient();
+    const supabase = createPublicSupabaseClient();
     const { data } = await supabase
       .from("homepage_content")
       .select("*")
@@ -67,7 +67,7 @@ export async function fetchPageContent(
     return getMockPageContent(pageKey);
   }
   try {
-    const supabase = createServerSupabaseClient();
+    const supabase = createPublicSupabaseClient();
     const { data } = await supabase
       .from("page_content")
       .select("*")

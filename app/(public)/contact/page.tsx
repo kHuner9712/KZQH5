@@ -1,4 +1,4 @@
-import { createServerSupabaseClient } from "@/lib/supabase/server";
+import { createPublicSupabaseClient } from "@/lib/supabase/public";
 import { isDemoMode } from "@/lib/demo";
 import { mockCompany } from "@/lib/mock-data";
 import { fetchPageContent } from "@/lib/queries/cms";
@@ -11,7 +11,7 @@ import type { Metadata } from "next";
 import type { CompanyProfile } from "@/types/database";
 import { Phone, Mail, MessageCircle, MapPin, QrCode } from "lucide-react";
 
-export const revalidate = 60;
+export const revalidate = 300;
 
 export async function generateMetadata(): Promise<Metadata> {
   const page = await fetchPageContent("contact");
@@ -33,7 +33,7 @@ export default async function ContactPage({
   if (isDemoMode()) {
     company = mockCompany;
   } else {
-    const supabase = createServerSupabaseClient();
+    const supabase = createPublicSupabaseClient();
     const { data } = await supabase
       .from("company_profile")
       .select("*")

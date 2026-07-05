@@ -1,6 +1,9 @@
 import type { MetadataRoute } from "next";
-import { createServerSupabaseClient } from "@/lib/supabase/server";
+import { createPublicSupabaseClient } from "@/lib/supabase/public";
 import { siteUrl } from "@/lib/utils";
+
+// sitemap 仅读取公开产品 slug，不依赖 cookies，允许 ISR 缓存。
+export const revalidate = 300;
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const base = siteUrl();
@@ -13,7 +16,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   ];
 
   try {
-    const supabase = createServerSupabaseClient();
+    const supabase = createPublicSupabaseClient();
     const { data: products } = await supabase
       .from("products")
       .select("slug, updated_at")

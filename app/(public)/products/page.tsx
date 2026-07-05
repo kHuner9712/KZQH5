@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { createServerSupabaseClient } from "@/lib/supabase/server";
+import { createPublicSupabaseClient } from "@/lib/supabase/public";
 import { isDemoMode } from "@/lib/demo";
 import {
   mockCategories,
@@ -18,7 +18,7 @@ import { PackageOpen, ChevronRight, ChevronLeft, ChevronsLeft, ChevronsRight } f
 import type { Metadata } from "next";
 import type { Product, Category, Subcategory } from "@/types/database";
 
-export const revalidate = 60;
+export const revalidate = 300;
 
 export async function generateMetadata(): Promise<Metadata> {
   const page = await fetchPageContent("products");
@@ -119,7 +119,7 @@ export default async function ProductsPage({
     const from = (currentPage - 1) * pageSize;
     products = filtered.slice(from, from + pageSize);
   } else {
-    const supabase = createServerSupabaseClient();
+    const supabase = createPublicSupabaseClient();
 
     const { data: categoriesData } = await supabase
       .from("categories")

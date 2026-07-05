@@ -1,4 +1,4 @@
-import { createServerSupabaseClient } from "@/lib/supabase/server";
+import { createPublicSupabaseClient } from "@/lib/supabase/public";
 import { isDemoMode } from "@/lib/demo";
 import { mockCertificates } from "@/lib/mock-data";
 import { fetchPageContent } from "@/lib/queries/cms";
@@ -9,7 +9,7 @@ import { Award, ShieldCheck } from "lucide-react";
 import type { Metadata } from "next";
 import type { Certificate } from "@/types/database";
 
-export const revalidate = 60;
+export const revalidate = 300;
 
 export async function generateMetadata(): Promise<Metadata> {
   const page = await fetchPageContent("certificates");
@@ -29,7 +29,7 @@ export default async function CertificatesPage() {
       (a, b) => a.sort_order - b.sort_order
     );
   } else {
-    const supabase = createServerSupabaseClient();
+    const supabase = createPublicSupabaseClient();
     const { data } = await supabase
       .from("certificates")
       .select("*")

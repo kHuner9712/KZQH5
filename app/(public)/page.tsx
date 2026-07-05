@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { createServerSupabaseClient } from "@/lib/supabase/server";
+import { createPublicSupabaseClient } from "@/lib/supabase/public";
 import { isDemoMode } from "@/lib/demo";
 import { mockCompany, mockCategories, getMockFeaturedProducts } from "@/lib/mock-data";
 import { fetchHomepageContent } from "@/lib/queries/cms";
@@ -14,7 +14,7 @@ import { ArrowRight, Flame, Leaf, Truck, Globe2, ChevronRight } from "lucide-rea
 import type { LucideIcon } from "lucide-react";
 import type { Product, Category, CompanyProfile, HomeFeatureItem } from "@/types/database";
 
-export const revalidate = 60;
+export const revalidate = 300;
 
 export default async function HomePage() {
   let featuredProducts: Product[] = [];
@@ -26,7 +26,7 @@ export default async function HomePage() {
     categories = [...mockCategories].sort((a, b) => a.sort_order - b.sort_order);
     company = mockCompany;
   } else {
-    const supabase = createServerSupabaseClient();
+    const supabase = createPublicSupabaseClient();
     const [
       { data: featuredData },
       { data: categoriesData },

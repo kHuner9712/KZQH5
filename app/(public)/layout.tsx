@@ -1,10 +1,14 @@
 import { ResponsiveShell } from "@/components/public/ResponsiveShell";
 import { isDemoMode } from "@/lib/demo";
-import { createServerSupabaseClient } from "@/lib/supabase/server";
+import { createPublicSupabaseClient } from "@/lib/supabase/public";
 import { fetchSiteSettings } from "@/lib/queries/cms";
 import { mockCompany } from "@/lib/mock-data";
 import type { Metadata } from "next";
 import type { CompanyProfile, SiteSettings } from "@/types/database";
+
+// 公共布局只读取公开内容（company_profile / site_settings），
+// 不依赖 cookies，允许 ISR 缓存。
+export const revalidate = 300;
 
 /**
  * 前台公共布局 - 响应式
@@ -25,7 +29,7 @@ export default async function PublicLayout({
     siteSettings = await fetchSiteSettings();
   } else {
     try {
-      const supabase = createServerSupabaseClient();
+      const supabase = createPublicSupabaseClient();
       const [{ data: companyData }, settings] = await Promise.all([
         supabase
           .from("company_profile")

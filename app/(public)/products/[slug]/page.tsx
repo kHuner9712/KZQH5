@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
-import { createServerSupabaseClient } from "@/lib/supabase/server";
+import { createPublicSupabaseClient } from "@/lib/supabase/public";
 import { isDemoMode } from "@/lib/demo";
 import {
   mockCategories,
@@ -36,7 +36,7 @@ import type {
   Certificate,
 } from "@/types/database";
 
-export const revalidate = 60;
+export const revalidate = 300;
 
 // 动态 metadata
 export async function generateMetadata({
@@ -61,7 +61,7 @@ export async function generateMetadata({
   if (isDemoMode()) {
     product = getMockProductBySlug(params.slug) || null;
   } else {
-    const supabase = createServerSupabaseClient();
+    const supabase = createPublicSupabaseClient();
     const { data } = await supabase
       .from("products")
       .select(
@@ -117,7 +117,7 @@ export default async function ProductDetailPage({
       companyPhone = mockCompany.phone;
     }
   } else {
-    const supabase = createServerSupabaseClient();
+    const supabase = createPublicSupabaseClient();
 
     const { data: productData } = await supabase
       .from("products")
