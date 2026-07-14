@@ -24,52 +24,86 @@ export function normalizeProductSearch(input?: string | null): string {
     .replace(/[\s\p{P}\p{S}]+/gu, "");
 }
 
-function demoSearch(request: ProductSearchRequest): ProductSearchResult {
+export function searchProductsInMemory(
+  products: Product[],
+  request: ProductSearchRequest,
+): ProductSearchResult {
   const normalized = normalizeProductSearch(request.query);
-  const searchable = (product: Product) => normalizeProductSearch([
-    product.name_cn,
-    product.name_en,
-    product.slug,
-    product.summary_cn,
-    product.summary_en,
-    product.material_cn,
-    product.material_en,
-    product.size,
-    product.application_cn,
-    product.application_en,
-    ...(product.search_aliases || []),
-    ...(product.keywords_cn || []),
-    ...(product.keywords_en || []),
-  ].filter(Boolean).join(" "));
+  const searchable = (product: Product) =>
+    normalizeProductSearch(
+      [
+        product.name_cn,
+        product.name_en,
+        product.slug,
+        product.summary_cn,
+        product.summary_en,
+        product.material_cn,
+        product.material_en,
+        product.size,
+        product.application_cn,
+        product.application_en,
+        ...(product.search_aliases || []),
+        ...(product.keywords_cn || []),
+        ...(product.keywords_en || []),
+      ]
+        .filter(Boolean)
+        .join(" "),
+    );
 
-  const exact = (product: Product) => normalized && [
-    product.slug,
-    product.size,
-    ...(product.search_aliases || []),
-  ].some((value) => normalizeProductSearch(value) === normalized);
+  const exact = (product: Product) =>
+    normalized &&
+    [product.slug, product.size, ...(product.search_aliases || [])].some(
+      (value) => normalizeProductSearch(value) === normalized,
+    );
 
-  const filtered = mockProducts
+  const filtered = products
     .filter((product) => product.is_published)
-    .filter((product) => !request.categoryId || product.category_id === request.categoryId)
-    .filter((product) => !request.subcategoryId || product.subcategory_id === request.subcategoryId)
-    .filter((product) => !normalized || searchable(product).includes(normalized))
-    .sort((left, right) => Number(exact(right)) - Number(exact(left))
-      || Number(right.is_featured) - Number(left.is_featured)
-      || left.sort_order - right.sort_order);
-  const offset = (request.page - 1) * request.pageSize;
-  return { items: filtered.slice(offset, offset + request.pageSize), total: filtered.length };
+    .filter(
+      (product) =>
+        !request.categoryId || product.category_id === request.categoryId,
+    )
+    .filter(
+      (product) =>
+        !request.subcategoryId ||
+        product.subcategory_id === request.subcategoryId,
+    )
+    .filter(
+      (product) => !normalized || searchable(product).includes(normalized),
+    )
+    .sort(
+      (left, right) =>
+        Number(exact(right)) - Number(exact(left)) ||
+        Number(right.is_featured) - Number(left.is_featured) ||
+        left.sort_order - right.sort_order,
+    );
+  const safePage = Math.max(1, Math.floor(request.page || 1));
+  const safePageSize = Math.min(
+    100,
+    Math.max(1, Math.floor(request.pageSize || 24)),
+  );
+  const totalPages = Math.max(1, Math.ceil(filtered.length / safePageSize));
+  const offset = (Math.min(safePage, totalPages) - 1) * safePageSize;
+  return {
+    items: filtered.slice(offset, offset + safePageSize),
+    total: filtered.length,
+  };
 }
 
-export async function searchProducts(request: ProductSearchRequest): Promise<ProductSearchResult> {
-  if (isDemoMode()) return demoSearch(request);
+export async function searchProducts(
+  request: ProductSearchRequest,
+): Promise<ProductSearchResult> {
+  if (isDemoMode()) return searchProductsInMemory(mockProducts, request);
 
-  const { data, error } = await createPublicSupabaseClient().rpc("search_published_products", {
-    p_query: request.query?.slice(0, 120) || null,
-    p_category_id: request.categoryId || null,
-    p_subcategory_id: request.subcategoryId || null,
-    p_offset: (request.page - 1) * request.pageSize,
-    p_limit: request.pageSize,
-  });
+  const { data, error } = await createPublicSupabaseClient().rpc(
+    "search_published_products",
+    {
+      p_query: request.query?.slice(0, 120) || null,
+      p_category_id: request.categoryId || null,
+      p_subcategory_id: request.subcategoryId || null,
+      p_offset: (request.page - 1) * request.pageSize,
+      p_limit: request.pageSize,
+    },
+  );
   if (error) throw error;
   const payload = data as { items?: Product[]; total?: number } | null;
   return {
@@ -77,4 +111,3 @@ export async function searchProducts(request: ProductSearchRequest): Promise<Pro
     total: Number.isFinite(Number(payload?.total)) ? Number(payload?.total) : 0,
   };
 }
-

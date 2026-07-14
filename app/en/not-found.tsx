@@ -1,2 +1,6 @@
 import { NotFoundContent } from "@/components/public/UtilityPages";
-export default function EnglishNotFound() { return <NotFoundContent locale="en" />; }
+import type { Metadata } from "next";
+export const metadata: Metadata = { robots: { index: false, follow: false } };
+export default function EnglishNotFound() {
+  return <NotFoundContent locale="en" />;
+}

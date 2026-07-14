@@ -299,10 +299,6 @@ revoke all on table
   public.site_settings,
   public.homepage_content,
   public.page_content,
-  public.product_assets,
-  public.projects,
-  public.project_images,
-  public.project_products,
   public.inquiries
 from public, anon, authenticated;
 
@@ -315,11 +311,7 @@ grant select on table
   public.company_profile,
   public.site_settings,
   public.homepage_content,
-  public.page_content,
-  public.product_assets,
-  public.projects,
-  public.project_images,
-  public.project_products
+  public.page_content
 to anon, authenticated;
 
 grant insert, update, delete on table
@@ -332,10 +324,6 @@ grant insert, update, delete on table
   public.site_settings,
   public.homepage_content,
   public.page_content,
-  public.product_assets,
-  public.projects,
-  public.project_images,
-  public.project_products,
   public.inquiries
 to authenticated;
 
@@ -351,53 +339,5 @@ grant all on table
   public.site_settings,
   public.homepage_content,
   public.page_content,
-  public.product_assets,
-  public.projects,
-  public.project_images,
-  public.project_products,
   public.inquiries
 to service_role;
-
--- ============================================================
--- 12. product_assets / projects / project_images / project_products
--- ============================================================
-alter table public.product_assets enable row level security;
-alter table public.projects enable row level security;
-alter table public.project_images enable row level security;
-alter table public.project_products enable row level security;
-
-drop policy if exists "product_assets_public_read" on public.product_assets;
-create policy "product_assets_public_read" on public.product_assets for select
-  to anon, authenticated
-  using (is_published = true and (product_id is null or exists (
-    select 1 from public.products p where p.id = product_assets.product_id and p.is_published = true
-  )));
-drop policy if exists "product_assets_admin_all" on public.product_assets;
-create policy "product_assets_admin_all" on public.product_assets for all
-  to authenticated using ((select public.is_admin())) with check ((select public.is_admin()));
-
-drop policy if exists "projects_public_read" on public.projects;
-create policy "projects_public_read" on public.projects for select
-  to anon, authenticated using (is_published = true);
-drop policy if exists "projects_admin_all" on public.projects;
-create policy "projects_admin_all" on public.projects for all
-  to authenticated using ((select public.is_admin())) with check ((select public.is_admin()));
-
-drop policy if exists "project_images_public_read" on public.project_images;
-create policy "project_images_public_read" on public.project_images for select
-  to anon, authenticated using (exists (
-    select 1 from public.projects p where p.id = project_images.project_id and p.is_published = true
-  ));
-drop policy if exists "project_images_admin_all" on public.project_images;
-create policy "project_images_admin_all" on public.project_images for all
-  to authenticated using ((select public.is_admin())) with check ((select public.is_admin()));
-
-drop policy if exists "project_products_public_read" on public.project_products;
-create policy "project_products_public_read" on public.project_products for select
-  to anon, authenticated using (
-    exists (select 1 from public.projects pr where pr.id = project_products.project_id and pr.is_published = true)
-    and exists (select 1 from public.products p where p.id = project_products.product_id and p.is_published = true)
-  );
-drop policy if exists "project_products_admin_all" on public.project_products;
-create policy "project_products_admin_all" on public.project_products for all
-  to authenticated using ((select public.is_admin())) with check ((select public.is_admin()));

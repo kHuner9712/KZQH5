@@ -5,29 +5,47 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "build:demo": "cross-env NEXT_PUBLIC_DEMO_MODE=true next build",
     "start": "next start",
     "lint": "next lint",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "npm run test:unit",
+    "test:unit": "vitest run",
+    "test:e2e": "playwright test",
+    "test:e2e:demo": "cross-env NEXT_PUBLIC_DEMO_MODE=true playwright test",
+    "test:smoke": "vitest run --config vitest.smoke.config.ts",
+    "test:database": "node scripts/verify-database.mjs",
+    "check": "npm run typecheck && npm run lint && npm run test:unit && npm run build:demo"
   },
   "dependencies": {
     "@supabase/ssr": "^0.5.2",
     "@supabase/supabase-js": "^2.45.4",
     "clsx": "^2.1.1",
     "lucide-react": "^0.454.0",
-    "next": "14.2.15",
+    "next": "14.2.35",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "tailwind-merge": "^2.5.4"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.1",
     "@types/node": "^20.16.11",
     "@types/react": "^18.3.11",
     "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^6.0.3",
     "autoprefixer": "^10.4.20",
+    "cross-env": "^10.1.0",
     "eslint": "^8.57.1",
-    "eslint-config-next": "14.2.15",
+    "eslint-config-next": "14.2.35",
+    "jsdom": "^29.1.1",
     "postcss": "^8.4.47",
+    "prettier": "3.6.2",
+    "supabase": "^2.109.1",
     "tailwindcss": "^3.4.13",
-    "typescript": "^5.6.3"
+    "typescript": "^5.6.3",
+    "vitest": "^4.1.10"
   }
 }

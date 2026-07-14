@@ -18,13 +18,15 @@ export class MemoryRateLimiter implements RateLimiter {
 
   constructor(
     private readonly maximum: number,
-    private readonly windowMs: number
+    private readonly windowMs: number,
+    private readonly now: () => number = Date.now,
   ) {}
 
   async check(key: string): Promise<RateLimitResult> {
-    const now = Date.now();
+    const now = this.now();
     for (const [storedKey, entry] of this.entries) {
-      if (now - entry.firstRequestAt >= this.windowMs) this.entries.delete(storedKey);
+      if (now - entry.firstRequestAt >= this.windowMs)
+        this.entries.delete(storedKey);
     }
 
     const entry = this.entries.get(key);
@@ -40,13 +42,17 @@ export class MemoryRateLimiter implements RateLimiter {
     entry.count += 1;
     const retryAfterSeconds = Math.max(
       1,
-      Math.ceil((this.windowMs - (now - entry.firstRequestAt)) / 1000)
+      Math.ceil((this.windowMs - (now - entry.firstRequestAt)) / 1000),
     );
     return {
       allowed: entry.count <= this.maximum,
       remaining: Math.max(0, this.maximum - entry.count),
       retryAfterSeconds,
     };
+  }
+
+  entryCount(): number {
+    return this.entries.size;
   }
 }
 
@@ -56,11 +62,13 @@ let inquiryLimiter: RateLimiter | null = null;
 let analyticsLimiter: RateLimiter | null = null;
 
 export function getInquiryRateLimiter(): RateLimiter {
-  if (!inquiryLimiter) inquiryLimiter = new MemoryRateLimiter(5, 10 * 60 * 1000);
+  if (!inquiryLimiter)
+    inquiryLimiter = new MemoryRateLimiter(5, 10 * 60 * 1000);
   return inquiryLimiter;
 }
 
 export function getAnalyticsRateLimiter(): RateLimiter {
-  if (!analyticsLimiter) analyticsLimiter = new MemoryRateLimiter(60, 60 * 1000);
+  if (!analyticsLimiter)
+    analyticsLimiter = new MemoryRateLimiter(60, 60 * 1000);
   return analyticsLimiter;
 }

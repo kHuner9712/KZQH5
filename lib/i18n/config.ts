@@ -38,9 +38,12 @@ export function localeFromPathname(pathname: string): Locale {
 }
 
 export function pathWithoutLocale(pathname: string): string {
-  if (pathname === "/en") return "/";
-  if (pathname.startsWith("/en/")) return pathname.slice(3) || "/";
-  return pathname || "/";
+  const match = pathname.match(/^([^?#]*)([?#].*)?$/);
+  const path = match?.[1] || "/";
+  const suffix = match?.[2] || "";
+  if (path === "/en") return `/${suffix}`;
+  if (path.startsWith("/en/")) return `${path.slice(3) || "/"}${suffix}`;
+  return `${path || "/"}${suffix}`;
 }
 
 export function switchLocalePath(pathname: string, target: Locale): string {
@@ -54,11 +57,12 @@ export function alternateLocale(locale: Locale): Locale {
 export function formatLocaleDate(
   value: string | Date,
   locale: Locale,
-  options?: Intl.DateTimeFormatOptions
+  options?: Intl.DateTimeFormatOptions,
 ): string {
-  return new Intl.DateTimeFormat(localeConfig[locale].dateLocale, options).format(
-    typeof value === "string" ? new Date(value) : value
-  );
+  return new Intl.DateTimeFormat(
+    localeConfig[locale].dateLocale,
+    options,
+  ).format(typeof value === "string" ? new Date(value) : value);
 }
 
 export function formatLocaleNumber(value: number, locale: Locale): string {

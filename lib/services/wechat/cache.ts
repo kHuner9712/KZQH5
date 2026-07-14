@@ -1,6 +1,7 @@
 export interface WechatCache {
   get<T>(key: string): Promise<T | null>;
   set<T>(key: string, value: T, ttlSeconds: number): Promise<void>;
+  delete(key: string): Promise<void>;
 }
 
 interface MemoryValue {
@@ -26,6 +27,10 @@ class MemoryWechatCache implements WechatCache {
       value,
       expiresAt: Date.now() + Math.max(1, ttlSeconds) * 1000,
     });
+  }
+
+  async delete(key: string): Promise<void> {
+    this.values.delete(key);
   }
 }
 

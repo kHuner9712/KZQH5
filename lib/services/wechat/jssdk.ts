@@ -22,6 +22,21 @@ export interface WechatJsSdkConfig {
   signature: string;
 }
 
+const inFlight = new Map<string, Promise<string>>();
+
+async function singleFlight(
+  key: string,
+  load: () => Promise<string>,
+): Promise<string> {
+  const existing = inFlight.get(key);
+  if (existing) return existing;
+  const pending = load().finally(() => inFlight.delete(key));
+  inFlight.set(key, pending);
+  return pending;
+}
+
+class WechatTokenExpiredError extends Error {}
+
 export function isWechatConfigured(): boolean {
   return Boolean(process.env.WECHAT_APP_ID && process.env.WECHAT_APP_SECRET);
 }
@@ -30,7 +45,10 @@ async function fetchWechatJson<T>(url: string): Promise<T> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 8000);
   try {
-    const response = await fetch(url, { cache: "no-store", signal: controller.signal });
+    const response = await fetch(url, {
+      cache: "no-store",
+      signal: controller.signal,
+    });
     const text = await response.text();
     if (!response.ok) throw new Error(`WeChat HTTP ${response.status}`);
     try {
@@ -43,42 +61,79 @@ async function fetchWechatJson<T>(url: string): Promise<T> {
   }
 }
 
-async function getAccessToken(appId: string, appSecret: string): Promise<string> {
+async function getAccessToken(
+  appId: string,
+  appSecret: string,
+): Promise<string> {
   const cache = getWechatCache();
   const cacheKey = `wechat:access-token:${appId}`;
   const cached = await cache.get<string>(cacheKey);
   if (cached) return cached;
-  const response = await fetchWechatJson<WechatAccessTokenResponse>(
-    `https://api.weixin.qq.com/cgi-bin/token?grant_type=client_credential&appid=${encodeURIComponent(appId)}&secret=${encodeURIComponent(appSecret)}`
-  );
-  if (!response.access_token || response.errcode) {
-    throw new Error(`WeChat access token failed (${response.errcode || "unknown"})`);
-  }
-  await cache.set(cacheKey, response.access_token, Math.max(60, (response.expires_in || 7200) - 300));
-  return response.access_token;
+  return singleFlight(cacheKey, async () => {
+    const response = await fetchWechatJson<WechatAccessTokenResponse>(
+      `https://api.weixin.qq.com/cgi-bin/token?grant_type=client_credential&appid=${encodeURIComponent(appId)}&secret=${encodeURIComponent(appSecret)}`,
+    );
+    if (!response.access_token || response.errcode) {
+      throw new Error(
+        `WeChat access token failed (${response.errcode || "unknown"})`,
+      );
+    }
+    await cache.set(
+      cacheKey,
+      response.access_token,
+      Math.max(60, (response.expires_in || 7200) - 300),
+    );
+    return response.access_token;
+  });
 }
 
-async function getJsApiTicket(appId: string, accessToken: string): Promise<string> {
+async function getJsApiTicket(
+  appId: string,
+  accessToken: string,
+): Promise<string> {
   const cache = getWechatCache();
   const cacheKey = `wechat:jsapi-ticket:${appId}`;
   const cached = await cache.get<string>(cacheKey);
   if (cached) return cached;
-  const response = await fetchWechatJson<WechatTicketResponse>(
-    `https://api.weixin.qq.com/cgi-bin/ticket/getticket?access_token=${encodeURIComponent(accessToken)}&type=jsapi`
-  );
-  if (!response.ticket || response.errcode) {
-    throw new Error(`WeChat JSAPI ticket failed (${response.errcode || "unknown"})`);
-  }
-  await cache.set(cacheKey, response.ticket, Math.max(60, (response.expires_in || 7200) - 300));
-  return response.ticket;
+  return singleFlight(cacheKey, async () => {
+    const response = await fetchWechatJson<WechatTicketResponse>(
+      `https://api.weixin.qq.com/cgi-bin/ticket/getticket?access_token=${encodeURIComponent(accessToken)}&type=jsapi`,
+    );
+    if ([40001, 40014, 42001].includes(response.errcode || 0)) {
+      throw new WechatTokenExpiredError("WeChat access token expired");
+    }
+    if (!response.ticket || response.errcode) {
+      throw new Error(
+        `WeChat JSAPI ticket failed (${response.errcode || "unknown"})`,
+      );
+    }
+    await cache.set(
+      cacheKey,
+      response.ticket,
+      Math.max(60, (response.expires_in || 7200) - 300),
+    );
+    return response.ticket;
+  });
 }
 
-export async function createWechatJsSdkConfig(url: string): Promise<WechatJsSdkConfig | null> {
+export async function createWechatJsSdkConfig(
+  url: string,
+): Promise<WechatJsSdkConfig | null> {
   const appId = process.env.WECHAT_APP_ID;
   const appSecret = process.env.WECHAT_APP_SECRET;
   if (!appId || !appSecret) return null;
-  const accessToken = await getAccessToken(appId, appSecret);
-  const ticket = await getJsApiTicket(appId, accessToken);
+  let accessToken = await getAccessToken(appId, appSecret);
+  let ticket: string;
+  try {
+    ticket = await getJsApiTicket(appId, accessToken);
+  } catch (error) {
+    if (!(error instanceof WechatTokenExpiredError)) throw error;
+    const cache = getWechatCache();
+    await cache.delete(`wechat:access-token:${appId}`);
+    await cache.delete(`wechat:jsapi-ticket:${appId}`);
+    accessToken = await getAccessToken(appId, appSecret);
+    ticket = await getJsApiTicket(appId, accessToken);
+  }
   const timestamp = Math.floor(Date.now() / 1000);
   const nonceStr = randomBytes(16).toString("hex");
   const signatureSource = `jsapi_ticket=${ticket}&noncestr=${nonceStr}&timestamp=${timestamp}&url=${url.split("#")[0]}`;
