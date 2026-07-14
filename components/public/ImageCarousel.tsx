@@ -1,9 +1,12 @@
 "use client";
 
 import { useState, useRef } from "react";
+import { usePathname } from "next/navigation";
 import { ChevronLeft, ChevronRight, Play } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ProductImage } from "./ProductImage";
+import { localeFromPathname, type Locale } from "@/lib/i18n/config";
+import { getDictionary } from "@/lib/i18n/dictionary";
 
 interface CarouselImage {
   url: string;
@@ -13,14 +16,18 @@ interface CarouselImage {
 export function ImageCarousel({
   images,
   videoUrl,
+  locale,
 }: {
   images: CarouselImage[];
   videoUrl?: string | null;
+  locale?: Locale;
 }) {
+  const pathname = usePathname();
+  const copy = getDictionary(locale || localeFromPathname(pathname)).products;
   const hasVideo = !!videoUrl;
   const slides: Array<{ type: "video" | "image"; url: string; alt: string }> = [];
   if (hasVideo) {
-    slides.push({ type: "video", url: videoUrl!, alt: "产品视频" });
+    slides.push({ type: "video", url: videoUrl!, alt: copy.productVideo });
   }
   images.forEach((img) => slides.push({ type: "image", url: img.url, alt: img.alt }));
 
@@ -35,7 +42,7 @@ export function ImageCarousel({
   if (slides.length === 0) {
     return (
       <div className="aspect-[4/3] w-full">
-        <ProductImage src={null} alt="KZQ 产品" placeholder="product" loading="eager" />
+        <ProductImage src={null} alt="KZQ" placeholder="product" loading="eager" />
       </div>
     );
   }
@@ -83,14 +90,14 @@ export function ImageCarousel({
           <button
             onClick={() => go(active - 1)}
             className="absolute left-2 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-full bg-black/40 text-white backdrop-blur-sm transition hover:bg-black/60"
-            aria-label="上一张"
+            aria-label={copy.previousImage}
           >
             <ChevronLeft className="h-4 w-4" />
           </button>
           <button
             onClick={() => go(active + 1)}
             className="absolute right-2 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-full bg-black/40 text-white backdrop-blur-sm transition hover:bg-black/60"
-            aria-label="下一张"
+            aria-label={copy.nextImage}
           >
             <ChevronRight className="h-4 w-4" />
           </button>
@@ -109,7 +116,7 @@ export function ImageCarousel({
 
           {hasVideo && (
             <div className="pointer-events-none absolute right-2 top-2 rounded-md bg-black/50 px-1.5 py-0.5 text-[10px] text-white">
-              <Play className="mr-0.5 inline h-2.5 w-2.5" /> 视频
+              <Play className="mr-0.5 inline h-2.5 w-2.5" /> {copy.productVideo}
             </div>
           )}
         </>

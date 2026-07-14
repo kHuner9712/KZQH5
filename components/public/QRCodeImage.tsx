@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Image from "next/image";
 import { cn } from "@/lib/utils";
 
 interface QRCodeImageProps {
@@ -23,13 +24,14 @@ export function QRCodeImage({
   const showImage = src && !failed;
 
   if (showImage) {
-    // eslint-disable-next-line @next/next/no-img-element
     return (
-      <img
+      <Image
         src={src as string}
         alt={alt}
+        width={288}
+        height={288}
+        sizes="144px"
         className={cn("rounded object-cover", className)}
-        loading="lazy"
         onError={() => setFailed(true)}
       />
     );

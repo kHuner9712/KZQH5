@@ -50,6 +50,11 @@ export function siteUrl(path: string = ""): string {
   return `${base.replace(/\/$/, "")}${path}`;
 }
 
+// JSON-LD 会写入 <script> 文本节点；转义小于号可阻止 CMS 文本闭合 script 标签。
+export function serializeJsonLd(value: unknown): string {
+  return JSON.stringify(value).replace(/</g, "\\u003c");
+}
+
 // 搜索关键词清洗：用于安全拼入 Supabase PostgREST .or() 表达式
 // - 限制最大长度（80 字符）
 // - trim

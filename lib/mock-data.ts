@@ -17,11 +17,26 @@ import type {
   ProductFaqItem,
   HomeFeatureItem,
   NavItem,
+  Inquiry,
+  InquiryItem,
+  ProductAsset,
+  Project,
+  ProjectImage,
+  ProjectProduct,
+  AnalyticsEvent,
 } from "@/types/database";
 
 // ---------- 工具：生成稳定的 mock id ----------
 const id = (s: string) => `mock-${s}`;
 const now = "2026-06-01T00:00:00.000Z";
+
+// 采购资料和真实案例不使用虚构 Demo 内容。空数组用于验证正常空状态。
+export const mockProductAssets: ProductAsset[] = [];
+export const mockProjects: Project[] = [];
+export const mockProjectImages: ProjectImage[] = [];
+export const mockProjectProducts: ProjectProduct[] = [];
+// 统计后台在 Demo 模式保持真实的零值，不生成虚构访问量或来源数据。
+export const mockAnalyticsEvents: AnalyticsEvent[] = [];
 
 // ---------- 公司信息 ----------
 export const mockCompany: CompanyProfile = {
@@ -93,6 +108,7 @@ export const mockCompany: CompanyProfile = {
     },
   ],
   phone: "+86 400-888-0000",
+  wechat: null,
   email: "sales@kzq-demo.com",
   whatsapp: "+86 138 0000 0000",
   address_cn: "中国 · 广东省 · 工程级板材产业基地",
@@ -101,6 +117,55 @@ export const mockCompany: CompanyProfile = {
   logo_url: null,
   updated_at: now,
 };
+
+// ---------- 询盘（仅供 Demo/测试，不写入数据库或触发真实通知） ----------
+export const mockInquiryItems: InquiryItem[] = [{
+  id: id("inquiry-item-1"),
+  inquiry_id: id("inquiry-zh"),
+  product_id: id("p1"),
+  product_slug: "kzq-magnesium-fire-board-1220x2440x9",
+  product_name_cn: "KZQ 玻镁防火板 1220×2440×9mm",
+  product_name_en: "KZQ Magnesium Fire Board 1220×2440×9mm",
+  quantity: "500 平方米",
+  sort_order: 0,
+  created_at: now,
+}];
+
+export const mockInquiries: Inquiry[] = [
+  {
+    id: id("inquiry-zh"),
+    name: "演示客户",
+    company: null,
+    country: "浙江",
+    phone: "13800000000",
+    wechat: null,
+    email: null,
+    whatsapp: null,
+    interested_product: "防火饰面板",
+    quantity: null,
+    message: "Demo 模式询盘示例",
+    status: "new",
+    language: "zh",
+    source: "wechat-menu",
+    channel: "wechat",
+    page_url: "/contact",
+    referrer: null,
+    product_id: null,
+    product_slug: null,
+    utm_source: null,
+    utm_medium: null,
+    utm_campaign: null,
+    utm_content: null,
+    utm_term: null,
+    is_read: false,
+    read_at: null,
+    notes: null,
+    assignee: null,
+    created_at: now,
+    updated_at: now,
+    inquiry_items: mockInquiryItems,
+  },
+];
 
 // ---------- 一级类目 ----------
 export const mockCategories: Category[] = [
@@ -255,6 +320,7 @@ type RawProduct = Omit<
   | "keywords_cn" | "keywords_en"
   | "faq_cn" | "faq_en"
   | "search_aliases" | "schema_extra"
+  | "search_document"
 >;
 const rawProducts: RawProduct[] = [
   {
@@ -575,11 +641,15 @@ const productGeoMap: Record<
   string,
   {
     seo_title_cn?: string;
+    seo_title_en?: string;
     seo_description_cn?: string;
+    seo_description_en?: string;
     geo_summary_cn?: string;
+    geo_summary_en?: string;
     keywords_cn?: string[];
     keywords_en?: string[];
     faq_cn?: ProductFaqItem[];
+    faq_en?: ProductFaqItem[];
   }
 > = {
   "kzq-magnesium-fire-board-1220x2440x9": {
@@ -643,17 +713,18 @@ export const mockProducts: Product[] = rawProducts.map((p) => {
   return {
     ...p,
     seo_title_cn: geo?.seo_title_cn ?? null,
-    seo_title_en: null,
+    seo_title_en: geo?.seo_title_en ?? `${p.name_en || p.name_cn} | KZQ`,
     seo_description_cn: geo?.seo_description_cn ?? null,
-    seo_description_en: null,
+    seo_description_en: geo?.seo_description_en ?? p.summary_en ?? p.description_en,
     geo_summary_cn: geo?.geo_summary_cn ?? null,
-    geo_summary_en: null,
+    geo_summary_en: geo?.geo_summary_en ?? p.summary_en ?? p.description_en,
     keywords_cn: geo?.keywords_cn ?? null,
     keywords_en: geo?.keywords_en ?? null,
     faq_cn: geo?.faq_cn ?? null,
-    faq_en: null,
+    faq_en: geo?.faq_en ?? (geo?.faq_cn?.length ? [{ question: `What is ${p.name_en || p.name_cn}?`, answer: p.summary_en || p.description_en || p.name_en || p.name_cn }] : null),
     search_aliases: null,
     schema_extra: null,
+    search_document: "",
   };
 });
 
@@ -772,9 +843,10 @@ export const mockSiteSettings: SiteSettings = {
   navigation_json: [
     { label_cn: "首页", label_en: "Home", href: "/", sort_order: 1 },
     { label_cn: "产品中心", label_en: "Products", href: "/products", sort_order: 2 },
-    { label_cn: "资质证书", label_en: "Certificates", href: "/certificates", sort_order: 3 },
-    { label_cn: "关于我们", label_en: "About", href: "/about", sort_order: 4 },
-    { label_cn: "联系询盘", label_en: "Contact", href: "/contact", sort_order: 5 },
+    { label_cn: "应用案例", label_en: "Projects", href: "/projects", sort_order: 3 },
+    { label_cn: "资质证书", label_en: "Certificates", href: "/certificates", sort_order: 4 },
+    { label_cn: "关于我们", label_en: "About", href: "/about", sort_order: 5 },
+    { label_cn: "联系询盘", label_en: "Contact", href: "/contact", sort_order: 6 },
   ],
   // 旧字段保留（向后兼容）
   meta_title_cn: "KZQ | 工程级板材·B级防火·E0环保饰面板",

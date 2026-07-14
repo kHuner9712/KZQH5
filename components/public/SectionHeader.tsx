@@ -24,30 +24,29 @@ export function SectionHeader({
   size = "default",
 }: SectionHeaderProps) {
   return (
-    <div className={cn("flex items-end justify-between gap-3", className)}>
+    <div className={cn("flex items-end justify-between gap-4", className)}>
       <div className="min-w-0">
+        <div className="mb-1.5 flex items-center gap-2">
+          <span className="h-px w-7 bg-gold" />
+          <span className={cn("text-[9px] font-medium uppercase tracking-[0.2em]", light ? "text-gold-light" : "text-gold-dark")}>
+            KZQ Collection
+          </span>
+        </div>
         <h2
           className={cn(
-            "flex items-center font-semibold leading-tight",
+            "font-semibold leading-tight tracking-tight",
             size === "large"
-              ? "text-base md:text-2xl"
+              ? "text-lg md:text-2xl"
               : "text-base md:text-xl",
             light ? "text-white" : "text-ink"
           )}
         >
-          <span
-            className={cn(
-              "mr-2 inline-block w-1 rounded-full",
-              size === "large" ? "h-4 md:h-5" : "h-4",
-              light ? "bg-brass" : "bg-industrial"
-            )}
-          />
           {title}
         </h2>
         {subtitle && (
           <p
             className={cn(
-              "mt-1.5 pl-3 text-xs leading-relaxed md:text-sm",
+              "mt-1.5 max-w-2xl text-xs leading-relaxed md:text-sm",
               light ? "text-white/60" : "text-ink-mute"
             )}
           >

@@ -9,41 +9,45 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        // 暖白 / 米白 / 浅灰主调（高端 B2B 产品目录）
+        // KZQ public-site design tokens: premium graphite + restrained warm gold.
+        page: "#0D0F10",
+        surface: {
+          DEFAULT: "#141719",
+          elevated: "#1D2023",
+        },
         canvas: {
-          DEFAULT: "#F7F6F3", // 暖白页面底
-          warm: "#FAF8F4", // 卡片暖底
-          cool: "#F2F4F7", // 浅灰冷底
+          DEFAULT: "#F4F1EA",
+          warm: "#FAF8F3",
+          cool: "#EFECE5",
         },
         ink: {
-          DEFAULT: "#1A1D21", // 主文字深墨
-          soft: "#4A5158",   // 次级文字
-          mute: "#8A8F96",   // 辅助文字
-          line: "#E8E6E1",   // 浅暖分隔线
+          DEFAULT: "#25282B",
+          soft: "#5B5F62",
+          mute: "#8D9093",
+          line: "rgba(20,23,25,0.10)",
         },
-        // 工业蓝点缀（CTA / 强调）
+        // Legacy semantic palette retained for existing public/admin screens.
         industrial: {
-          DEFAULT: "#1E3A5F", // 深工业蓝
-          50: "#EAF0F7",
-          100: "#D5E2EF",
-          400: "#4A7BA8",
-          500: "#2E5E8A",
-          600: "#1E3A5F",
-          700: "#16293F",
+          DEFAULT: "#25282B",
+          50: "#EEE9DE",
+          100: "#E3D9C5",
+          400: "#C5A15A",
+          500: "#A98643",
+          600: "#25282B",
+          700: "#141719",
         },
-        // 金色点缀（品牌 / 主推）
         brass: {
-          DEFAULT: "#B08542",
-          light: "#D4B373",
-          dark: "#8A6630",
+          DEFAULT: "#C5A15A",
+          light: "#D9BD82",
+          dark: "#8C6B30",
         },
         // —— 向后兼容旧配色（后台仍在使用，勿删） ——
         graphite: {
-          DEFAULT: "#1A1D21",
-          50: "#2A2E33",
-          100: "#222831",
-          200: "#2D3540",
-          300: "#3A4452",
+          DEFAULT: "#141719",
+          50: "#1D2023",
+          100: "#25282B",
+          200: "#34383B",
+          300: "#4A4F52",
         },
         steel: {
           DEFAULT: "#1E3A5F",
@@ -51,9 +55,9 @@ const config: Config = {
           dark: "#16293F",
         },
         gold: {
-          DEFAULT: "#B08542",
-          light: "#D4B373",
-          dark: "#8A6630",
+          DEFAULT: "#C5A15A",
+          light: "#D9BD82",
+          dark: "#8C6B30",
         },
       },
       fontFamily: {
@@ -71,17 +75,17 @@ const config: Config = {
       maxWidth: {
         h5: "440px",
         // 响应式内容容器宽度
-        content: "1200px", // desktop 最大内容宽度
+        content: "1360px", // desktop B2B catalog content width
         "content-narrow": "1024px", // 窄内容（如关于页正文）
       },
       screens: {
         xs: "375px",
       },
       boxShadow: {
-        card: "0 1px 3px rgba(26,29,33,0.04), 0 1px 2px rgba(26,29,33,0.06)",
-        "card-hover": "0 8px 24px rgba(26,29,33,0.08), 0 2px 6px rgba(26,29,33,0.04)",
-        soft: "0 4px 16px rgba(26,29,33,0.05)",
-        ring: "0 0 0 1px rgba(26,29,33,0.05)",
+        card: "0 1px 2px rgba(13,15,16,0.06)",
+        "card-hover": "0 12px 30px rgba(13,15,16,0.10)",
+        soft: "0 8px 24px rgba(13,15,16,0.08)",
+        ring: "0 0 0 1px rgba(20,23,25,0.08)",
       },
       borderRadius: {
         '4xl': '2rem',

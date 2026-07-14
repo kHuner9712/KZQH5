@@ -383,3 +383,83 @@ create index if not exists idx_products_search_aliases_gin on public.products us
 -- homepage_content / page_content 索引
 create index if not exists idx_homepage_content_active on public.homepage_content(is_active);
 create index if not exists idx_page_content_key on public.page_content(page_key);
+
+-- ============================================================
+-- 采购资料与应用案例（全新项目 schema 快照）
+-- 已部署项目请执行 20260714084116_procurement_assets_and_projects.sql
+-- ============================================================
+create table if not exists public.product_assets (
+  id uuid primary key default gen_random_uuid(),
+  product_id uuid references public.products(id) on delete cascade,
+  asset_type text not null check (asset_type in ('catalog', 'datasheet', 'installation', 'certificate', 'packaging', 'other')),
+  title_cn text not null,
+  title_en text,
+  description_cn text,
+  description_en text,
+  file_url text not null check (length(btrim(file_url)) > 0),
+  file_size bigint check (file_size is null or file_size >= 0),
+  mime_type text,
+  is_published boolean not null default false,
+  sort_order integer not null default 0,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.projects (
+  id uuid primary key default gen_random_uuid(),
+  slug text not null unique check (slug ~ '^[a-z0-9]+(?:-[a-z0-9]+)*$'),
+  title_cn text not null,
+  title_en text,
+  summary_cn text,
+  summary_en text,
+  description_cn text,
+  description_en text,
+  country_cn text,
+  country_en text,
+  project_type_cn text,
+  project_type_en text,
+  cover_image_url text,
+  is_published boolean not null default false,
+  is_featured boolean not null default false,
+  sort_order integer not null default 0,
+  seo_title_cn text,
+  seo_title_en text,
+  seo_description_cn text,
+  seo_description_en text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.project_images (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references public.projects(id) on delete cascade,
+  image_url text not null check (length(btrim(image_url)) > 0),
+  alt_cn text,
+  alt_en text,
+  sort_order integer not null default 0,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.project_products (
+  project_id uuid not null references public.projects(id) on delete cascade,
+  product_id uuid not null references public.products(id) on delete cascade,
+  sort_order integer not null default 0,
+  created_at timestamptz not null default now(),
+  primary key (project_id, product_id)
+);
+
+create index if not exists product_assets_product_id_idx on public.product_assets(product_id, sort_order);
+create index if not exists product_assets_public_site_idx on public.product_assets(sort_order, created_at) where product_id is null and is_published = true;
+create index if not exists product_assets_public_product_idx on public.product_assets(product_id, sort_order) where product_id is not null and is_published = true;
+create index if not exists projects_public_list_idx on public.projects(is_featured desc, sort_order, created_at desc) where is_published = true;
+create index if not exists projects_updated_at_idx on public.projects(updated_at desc);
+create index if not exists project_images_project_id_idx on public.project_images(project_id, sort_order);
+create index if not exists project_products_product_id_idx on public.project_products(product_id);
+create index if not exists project_products_project_id_idx on public.project_products(project_id, sort_order);
+
+drop trigger if exists trg_product_assets_updated_at on public.product_assets;
+create trigger trg_product_assets_updated_at before update on public.product_assets
+  for each row execute function public.handle_updated_at();
+drop trigger if exists trg_projects_updated_at on public.projects;
+create trigger trg_projects_updated_at before update on public.projects
+  for each row execute function public.handle_updated_at();

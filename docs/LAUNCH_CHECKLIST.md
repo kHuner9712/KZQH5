@@ -19,6 +19,8 @@
 - [ ] `supabase/policies.sql` 已执行（RLS 权限策略 + Storage buckets）
 - [ ] `supabase/seed.sql` 已执行（基础种子数据）
 - [ ] `supabase/cms_seed.sql` 已执行（CMS 内容 + 产品 GEO 字段）
+- [ ] `20260714032351_b2b_product_search_and_inquiry_items.sql` 已执行（搜索索引/RPC + inquiry_items + 原子写入函数）
+- [ ] `20260714084116_procurement_assets_and_projects.sql` 已执行（采购资料 + 案例 + 多图 + 产品关联 + RLS）
 - [ ] `public-assets` bucket 可公开读取
 - [ ] `private-assets` bucket 不可公开读取
 - [ ] `admin_profiles` 已添加管理员账号
@@ -33,14 +35,27 @@
 
 - [ ] `/` 首页正常加载，Hero / 类目 / 主推产品 / CTA 正常
 - [ ] `/products` 产品中心可筛选一级/二级类目，搜索正常
+- [ ] 中文、英文、slug/型号、材质、尺寸、应用、别名和关键词搜索正常；大小写、空格、常见标点不影响结果
+- [ ] 搜索 query string 可分享，分类、分页和中英文切换后仍保留 `q`
 - [ ] `/products?page=999` 越界页码重定向到合法页
 - [ ] `/products/[slug]` 产品详情正常（轮播图、规格表、FAQ、CTA）
 - [ ] `/certificates` 资质证书列表展示正常
+- [ ] 证书可全屏查看，支持上一张/下一张、ESC、键盘切换、拖动和双指缩放
+- [ ] 产品资料只显示已发布内容；PDF/文件有在线预览、复制链接和微信内提示
+- [ ] `/projects`、`/projects/[slug]`、`/en/projects` 与英文详情正常；无案例时显示空状态
 - [ ] `/about` 公司介绍内容完整
 - [ ] `/contact` 联系询盘表单可提交
+- [ ] 产品卡与详情页可加入询盘清单；重复加入不产生重复项，数量角标正确
+- [ ] 清单支持多个产品、修改需求数量、删除、清空；刷新和中英文切换后仍保留
+- [ ] 提交成功后清空已提交清单并显示产品数量；提交失败时清单保持不变
 - [ ] 移动端 BottomNav 正常切换，固定显示"首页 / 产品 / 资质 / 询盘"（不出现"关于"）
 - [ ] 产品详情页移动端 BottomNav 隐藏，底部询盘 CTA 正常
 - [ ] 产品详情页点击"立即询盘"后，联系页表单"感兴趣产品"字段自动带入当前产品名
+- [ ] 产品详情进入询盘后同时写入 product_id / product_slug / 产品显示名称 / 当前语言 / 来源页面
+- [ ] 中文：姓名 + 手机可提交；姓名 + 微信可提交；手机和微信都空时拒绝
+- [ ] 英文：Email 可作为唯一联系方式提交；WhatsApp 可作为唯一联系方式提交；两者都空时拒绝
+- [ ] 首页来源参数进入详情再进入询盘后仍保留，source/channel/UTM/referrer/page_url 正确写入
+- [ ] `/privacy` 和 `/en/privacy` 内容完整；表单隐私同意项默认未选中且未同意时拒绝
 - [ ] PC 端 DesktopHeader 正常显示
 - [ ] 响应式布局正常（375px / 390px / 414px / 768px / 1024px / 1440px）
 - [ ] 图片加载失败有 onError fallback（渐变占位 / KZQ 占位）
@@ -60,8 +75,14 @@
 - [ ] `/admin/products/new` 新增产品
 - [ ] `/admin/products/[id]/edit` 编辑产品
 - [ ] `/admin/certificates` 证书管理
+- [ ] `/admin/product-assets` 可新增、编辑、删除、发布、排序站点级和产品级资料
+- [ ] `/admin/projects` 可新建、编辑、发布/下架、主推、排序、多图上传、关联产品和维护 SEO
 - [ ] `/admin/company` 公司信息可保存
-- [ ] `/admin/inquiries` 询盘管理（查看详情/切换状态）
+- [ ] `/admin/inquiries` 未读数/新询盘角标/打开自动已读/手动未读正常
+- [ ] 状态、语言、来源、日期筛选与分页正常
+- [ ] 备注和负责人可保存；电话、mailto、WhatsApp、复制微信号可用
+- [ ] CSV 导出当前筛选结果，中文 Excel 可打开且公式注入被防护
+- [ ] 询盘详情与 CSV 均显示多产品清单、各产品数量和名称快照；产品删除后历史询盘仍可理解
 - [ ] 图片上传到 Supabase Storage 正常
 - [ ] 批量操作正常（批量上架/下架/设主推/改类目/删除）
 - [ ] 产品复制功能正常
@@ -93,6 +114,8 @@
 - [ ] 微信内置浏览器可访问
 - [ ] 询盘提交后 Supabase `inquiries` 表有新记录
 - [ ] 询盘接口限流生效（频繁提交返回 429）
+- [ ] 未配置通知变量时正常提交；通知接口失败时询盘仍成功
+- [ ] Demo 模式不写数据库、不发送真实通知
 
 ---
 
@@ -107,6 +130,8 @@
 - [ ] 询盘接口 honeypot 触发后返回 success 但不写入数据库
 - [ ] 询盘接口 message 含过多 URL 时被拒绝
 - [ ] 搜索关键词清洗生效（特殊字符不破坏 Supabase `.or()` 表达式）
+- [ ] 搜索通过参数化 RPC 执行，不把用户输入拼接到 PostgREST 表达式
+- [ ] `create_inquiry_with_items` 仅 `service_role` 可执行，明细写入失败时主询盘同时回滚
 
 ---
 
@@ -122,3 +147,23 @@
 - [ ] 不出现 A1、B1、ISO9001、CARB P2、CARB Phase 2 等未确认口径
 - [ ] 不出现成本价、底价、内部价、最低成交价等敏感信息
 - [ ] 不使用旧 Unsplash 图片作为真实数据图源
+# 中英文前台发布检查
+
+- [ ] 中文 `/`、`/products`、产品详情、`/certificates`、`/about`、`/contact`、`/privacy` 可访问
+- [ ] 英文 `/en`、`/en/products`、英文产品详情、`/en/certificates`、`/en/about`、`/en/contact`、`/en/privacy` 可访问
+- [ ] Header 与“更多”中的语言切换保留当前 slug、产品筛选和 query string
+- [ ] 页面 HTML lang、canonical、Open Graph locale 和 `hreflang` 与当前语言一致
+- [ ] 产品与 FAQ JSON-LD 使用当前语言，sitemap 同时包含中英文 URL
+- [ ] Demo 模式的英文产品、类目、证书、首页与联系页无空白关键文案
+## 生产稳定性、统计与微信分享补充检查
+
+- [ ] 已执行 `20260714125149_production_stability_analytics_wechat.sql`
+- [ ] `anon` 直接 insert/select `analytics_events` 被拒绝
+- [ ] 非法 `event_name` 返回 400，高频事件返回 429，统计失败不影响页面操作
+- [ ] `/admin/analytics` 的时间范围、热门产品、热门搜索、来源和 UTM 正常
+- [ ] 360/390/430/768/1024/1440 宽度无横向滚动和固定导航遮挡
+- [ ] 手机可双指缩放，键盘焦点可见，Dialog 焦点不会逃逸，关闭后焦点返回触发元素
+- [ ] 表单错误可被读屏朗读；断网、超时、重复点击、非 JSON 响应和数据库不可用都有双语降级
+- [ ] 未配置微信变量时无报错且普通分享 metadata 正常
+- [ ] 配置微信变量但微信接口失败时页面仍可浏览和提交询盘
+- [ ] 公众号 JS 接口安全域名、HTTPS、正式凭据与微信内分享均已人工验证（如启用）

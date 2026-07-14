@@ -21,6 +21,7 @@ export default async function AdminDashboard() {
     { count: publishedCount },
     { count: certCount },
     { count: inquiryCount },
+    { count: unreadCount },
     { data: recentInquiries },
   ] = await Promise.all([
     supabase.from("products").select("*", { count: "exact", head: true }),
@@ -30,6 +31,7 @@ export default async function AdminDashboard() {
       .eq("is_published", true),
     supabase.from("certificates").select("*", { count: "exact", head: true }),
     supabase.from("inquiries").select("*", { count: "exact", head: true }),
+    supabase.from("inquiries").select("*", { count: "exact", head: true }).eq("is_read", false),
     supabase
       .from("inquiries")
       .select("*")
@@ -60,7 +62,7 @@ export default async function AdminDashboard() {
       bg: "bg-gold/15",
     },
     {
-      label: "询盘数量",
+      label: `询盘数量 · 未读 ${unreadCount || 0}`,
       value: inquiryCount || 0,
       icon: Inbox,
       color: "text-purple-600",
@@ -131,6 +133,9 @@ export default async function AdminDashboard() {
                       <span className={`rounded px-1.5 py-0.5 text-[10px] ${st.className}`}>
                         {st.label}
                       </span>
+                      {!inq.is_read && (
+                        <span className="rounded bg-red-50 px-1.5 py-0.5 text-[10px] text-red-700">未读</span>
+                      )}
                     </div>
                     <p className="mt-0.5 line-clamp-1 text-xs text-gray-500">
                       {inq.interested_product || inq.message || "—"}

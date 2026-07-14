@@ -85,6 +85,7 @@ export interface Product {
   faq_en: ProductFaqItem[] | null;
   search_aliases: string[] | null;
   schema_extra: Record<string, unknown> | null;
+  search_document: string;
   // ------------------------------
   created_at: string;
   updated_at: string;
@@ -121,19 +122,129 @@ export interface Certificate {
 
 export type InquiryStatus = "new" | "contacted" | "closed";
 
+export interface InquiryItem {
+  id: string;
+  inquiry_id: string;
+  product_id: string | null;
+  product_slug: string | null;
+  product_name_cn: string | null;
+  product_name_en: string | null;
+  quantity: string | null;
+  sort_order: number;
+  created_at: string;
+}
+
+export type ProductAssetType =
+  | "catalog"
+  | "datasheet"
+  | "installation"
+  | "certificate"
+  | "packaging"
+  | "other";
+
+export interface ProductAsset {
+  id: string;
+  product_id: string | null;
+  asset_type: ProductAssetType;
+  title_cn: string;
+  title_en: string | null;
+  description_cn: string | null;
+  description_en: string | null;
+  file_url: string;
+  file_size: number | null;
+  mime_type: string | null;
+  is_published: boolean;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+  product?: Pick<Product, "id" | "slug" | "name_cn" | "name_en"> | null;
+}
+
+export interface Project {
+  id: string;
+  slug: string;
+  title_cn: string;
+  title_en: string | null;
+  summary_cn: string | null;
+  summary_en: string | null;
+  description_cn: string | null;
+  description_en: string | null;
+  country_cn: string | null;
+  country_en: string | null;
+  project_type_cn: string | null;
+  project_type_en: string | null;
+  cover_image_url: string | null;
+  is_published: boolean;
+  is_featured: boolean;
+  sort_order: number;
+  seo_title_cn: string | null;
+  seo_title_en: string | null;
+  seo_description_cn: string | null;
+  seo_description_en: string | null;
+  created_at: string;
+  updated_at: string;
+  project_images?: ProjectImage[];
+  products?: Product[];
+}
+
+export interface ProjectImage {
+  id: string;
+  project_id: string;
+  image_url: string;
+  alt_cn: string | null;
+  alt_en: string | null;
+  sort_order: number;
+  created_at: string;
+}
+
+export interface ProjectProduct {
+  project_id: string;
+  product_id: string;
+  sort_order: number;
+  created_at: string;
+}
+
+export interface InquiryListItemInput {
+  product_id: string;
+  slug: string;
+  name_cn: string;
+  name_en: string | null;
+  cover_image_url: string | null;
+  quantity: string;
+}
+
 export interface Inquiry {
   id: string;
   name: string;
   company: string | null;
   country: string | null;
+  phone: string | null;
+  wechat: string | null;
   email: string | null;
   whatsapp: string | null;
   interested_product: string | null;
   quantity: string | null;
   message: string | null;
   status: InquiryStatus;
+  language: "zh" | "en";
   source: string | null;
+  channel: string | null;
+  page_url: string | null;
+  referrer: string | null;
+  product_id: string | null;
+  product_slug: string | null;
+  utm_source: string | null;
+  utm_medium: string | null;
+  utm_campaign: string | null;
+  utm_content: string | null;
+  utm_term: string | null;
+  is_read: boolean;
+  read_at: string | null;
+  notes: string | null;
+  assignee: string | null;
   created_at: string;
+  updated_at: string;
+  inquiry_items?: InquiryItem[];
 }
 
 export interface Advantage {
@@ -153,6 +264,7 @@ export interface CompanyProfile {
   advantages_cn: Advantage[] | null;
   advantages_en: Advantage[] | null;
   phone: string | null;
+  wechat: string | null;
   email: string | null;
   whatsapp: string | null;
   address_cn: string | null;
@@ -263,80 +375,216 @@ export interface PageContent {
 
 // 询盘表单输入
 export interface InquiryInput {
+  locale?: "zh" | "en";
   name: string;
   company?: string;
   country?: string;
+  phone?: string;
+  wechat?: string;
   email?: string;
   whatsapp?: string;
   interested_product?: string;
   quantity?: string;
   message?: string;
+  destination_port?: string;
+  trade_term?: string;
+  product_id?: string;
+  product_slug?: string;
+  source?: string;
+  channel?: string;
+  page_url?: string;
+  referrer?: string;
+  utm_source?: string;
+  utm_medium?: string;
+  utm_campaign?: string;
+  utm_content?: string;
+  utm_term?: string;
+  privacy_accepted?: boolean;
+  items?: InquiryListItemInput[];
+}
+
+export const analyticsEventNames = [
+  "page_view",
+  "product_view",
+  "product_search",
+  "category_click",
+  "phone_click",
+  "wechat_copy",
+  "whatsapp_click",
+  "email_click",
+  "add_to_inquiry",
+  "inquiry_start",
+  "inquiry_success",
+  "catalog_download",
+  "certificate_view",
+  "project_view",
+] as const;
+
+export type AnalyticsEventName = (typeof analyticsEventNames)[number];
+
+export interface AnalyticsEvent {
+  id: string;
+  event_name: AnalyticsEventName;
+  locale: "zh" | "en";
+  page_path: string;
+  product_id: string | null;
+  project_id: string | null;
+  source: string | null;
+  channel: string | null;
+  utm_source: string | null;
+  utm_medium: string | null;
+  utm_campaign: string | null;
+  referrer: string | null;
+  created_at: string;
+}
+
+export type AnalyticsEventInput = Omit<AnalyticsEvent, "id" | "created_at">;
+
+export interface AnalyticsSummary {
+  page_views: number;
+  product_views: number;
+  contact_clicks: number;
+  inquiry_successes: number;
+  popular_products: Array<{ product_id: string; name: string; count: number }>;
+  popular_searches: Array<{ term: string; count: number }>;
+  sources: Array<{ source: string; count: number }>;
+  utm: Array<{ source: string; medium: string; campaign: string; count: number }>;
 }
 
 // ============================================================
 // Supabase Database 类型（供 @supabase/ssr / @supabase/supabase-js 泛型使用）
 // ============================================================
+type SupabaseRow<T> = T & Record<string, unknown>;
+type SupabaseInsert<T> = Partial<T> & Record<string, unknown>;
+type SupabaseUpdate<T> = Partial<T> & Record<string, unknown>;
+
 export type Database = {
   public: {
     Tables: {
       admin_profiles: {
-        Row: AdminProfile;
-        Insert: Partial<AdminProfile>;
-        Update: Partial<AdminProfile>;
+        Row: SupabaseRow<AdminProfile>;
+        Insert: SupabaseInsert<AdminProfile>;
+        Update: SupabaseUpdate<AdminProfile>;
+        Relationships: [];
       };
       categories: {
-        Row: Category;
-        Insert: Partial<Category>;
-        Update: Partial<Category>;
+        Row: SupabaseRow<Category>;
+        Insert: SupabaseInsert<Category>;
+        Update: SupabaseUpdate<Category>;
+        Relationships: [];
       };
       subcategories: {
-        Row: Subcategory;
-        Insert: Partial<Subcategory>;
-        Update: Partial<Subcategory>;
+        Row: SupabaseRow<Subcategory>;
+        Insert: SupabaseInsert<Subcategory>;
+        Update: SupabaseUpdate<Subcategory>;
+        Relationships: [];
       };
       products: {
-        Row: Product;
-        Insert: Partial<Product>;
-        Update: Partial<Product>;
+        Row: SupabaseRow<Product>;
+        Insert: SupabaseInsert<Product>;
+        Update: SupabaseUpdate<Product>;
+        Relationships: [];
       };
       product_images: {
-        Row: ProductImage;
-        Insert: Partial<ProductImage>;
-        Update: Partial<ProductImage>;
+        Row: SupabaseRow<ProductImage>;
+        Insert: SupabaseInsert<ProductImage>;
+        Update: SupabaseUpdate<ProductImage>;
+        Relationships: [];
       };
       certificates: {
-        Row: Certificate;
-        Insert: Partial<Certificate>;
-        Update: Partial<Certificate>;
+        Row: SupabaseRow<Certificate>;
+        Insert: SupabaseInsert<Certificate>;
+        Update: SupabaseUpdate<Certificate>;
+        Relationships: [];
       };
       inquiries: {
-        Row: Inquiry;
-        Insert: Partial<Inquiry>;
-        Update: Partial<Inquiry>;
+        Row: SupabaseRow<Inquiry>;
+        Insert: SupabaseInsert<Inquiry>;
+        Update: SupabaseUpdate<Inquiry>;
+        Relationships: [];
+      };
+      analytics_events: {
+        Row: SupabaseRow<AnalyticsEvent>;
+        Insert: SupabaseInsert<AnalyticsEvent>;
+        Update: SupabaseUpdate<AnalyticsEvent>;
+        Relationships: [];
+      };
+      product_assets: {
+        Row: SupabaseRow<ProductAsset>;
+        Insert: SupabaseInsert<ProductAsset>;
+        Update: SupabaseUpdate<ProductAsset>;
+        Relationships: [];
+      };
+      projects: {
+        Row: SupabaseRow<Project>;
+        Insert: SupabaseInsert<Project>;
+        Update: SupabaseUpdate<Project>;
+        Relationships: [];
+      };
+      project_images: {
+        Row: SupabaseRow<ProjectImage>;
+        Insert: SupabaseInsert<ProjectImage>;
+        Update: SupabaseUpdate<ProjectImage>;
+        Relationships: [];
+      };
+      project_products: {
+        Row: SupabaseRow<ProjectProduct>;
+        Insert: SupabaseInsert<ProjectProduct>;
+        Update: SupabaseUpdate<ProjectProduct>;
+        Relationships: [];
+      };
+      inquiry_items: {
+        Row: SupabaseRow<InquiryItem>;
+        Insert: SupabaseInsert<InquiryItem>;
+        Update: SupabaseUpdate<InquiryItem>;
+        Relationships: [];
       };
       company_profile: {
-        Row: CompanyProfile;
-        Insert: Partial<CompanyProfile>;
-        Update: Partial<CompanyProfile>;
+        Row: SupabaseRow<CompanyProfile>;
+        Insert: SupabaseInsert<CompanyProfile>;
+        Update: SupabaseUpdate<CompanyProfile>;
+        Relationships: [];
       };
       site_settings: {
-        Row: SiteSettings;
-        Insert: Partial<SiteSettings>;
-        Update: Partial<SiteSettings>;
+        Row: SupabaseRow<SiteSettings>;
+        Insert: SupabaseInsert<SiteSettings>;
+        Update: SupabaseUpdate<SiteSettings>;
+        Relationships: [];
       };
       homepage_content: {
-        Row: HomepageContent;
-        Insert: Partial<HomepageContent>;
-        Update: Partial<HomepageContent>;
+        Row: SupabaseRow<HomepageContent>;
+        Insert: SupabaseInsert<HomepageContent>;
+        Update: SupabaseUpdate<HomepageContent>;
+        Relationships: [];
       };
       page_content: {
-        Row: PageContent;
-        Insert: Partial<PageContent>;
-        Update: Partial<PageContent>;
+        Row: SupabaseRow<PageContent>;
+        Insert: SupabaseInsert<PageContent>;
+        Update: SupabaseUpdate<PageContent>;
+        Relationships: [];
       };
     };
     Views: Record<string, never>;
-    Functions: Record<string, never>;
+    Functions: {
+      search_published_products: {
+        Args: {
+          p_query?: string | null;
+          p_category_id?: string | null;
+          p_subcategory_id?: string | null;
+          p_offset?: number;
+          p_limit?: number;
+        };
+        Returns: unknown;
+      };
+      create_inquiry_with_items: {
+        Args: { p_inquiry: Record<string, unknown>; p_items?: Record<string, unknown>[] };
+        Returns: unknown;
+      };
+      get_analytics_summary: {
+        Args: { p_start: string; p_end: string };
+        Returns: unknown;
+      };
+    };
     Enums: Record<string, never>;
   };
 };

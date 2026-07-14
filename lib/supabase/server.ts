@@ -1,5 +1,6 @@
 import { cookies } from "next/headers";
 import { createServerClient } from "@supabase/ssr";
+import type { Database } from "@/types/database";
 
 // 服务端 Supabase 客户端（携带用户会话，受 RLS 约束）
 // 用于 Server Components / Route Handlers / Server Actions
@@ -7,7 +8,7 @@ import { createServerClient } from "@supabase/ssr";
 export function createServerSupabaseClient() {
   const cookieStore = cookies();
 
-  return createServerClient(
+  return createServerClient<Database>(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {

@@ -9,13 +9,17 @@
 create or replace function public.is_admin()
 returns boolean
 language sql
-security definer set search_path = public
+security definer set search_path = ''
 as $$
   select exists (
     select 1 from public.admin_profiles
-    where id = auth.uid()
+    where id = (select auth.uid())
   );
 $$;
+
+-- SECURITY DEFINER 函数默认向 PUBLIC 开放执行；管理员判断仅允许已认证用户调用。
+revoke all on function public.is_admin() from public, anon, authenticated;
+grant execute on function public.is_admin() to authenticated, service_role;
 
 -- ============================================================
 -- 1. admin_profiles - 完全不开放给前端，仅服务端 service_role 可访问
@@ -278,3 +282,122 @@ create policy "page_content_admin_all"
   to authenticated
   using (public.is_admin())
   with check (public.is_admin());
+
+-- ============================================================
+-- Data API 显式授权
+-- 2026-05-30 起新 Supabase 项目默认不再自动向 anon/authenticated 授权 public 表。
+-- GRANT 只开放表级能力，实际行仍由上方 RLS policy 限制。
+-- ============================================================
+revoke all on table
+  public.admin_profiles,
+  public.categories,
+  public.subcategories,
+  public.products,
+  public.product_images,
+  public.certificates,
+  public.company_profile,
+  public.site_settings,
+  public.homepage_content,
+  public.page_content,
+  public.product_assets,
+  public.projects,
+  public.project_images,
+  public.project_products,
+  public.inquiries
+from public, anon, authenticated;
+
+grant select on table
+  public.categories,
+  public.subcategories,
+  public.products,
+  public.product_images,
+  public.certificates,
+  public.company_profile,
+  public.site_settings,
+  public.homepage_content,
+  public.page_content,
+  public.product_assets,
+  public.projects,
+  public.project_images,
+  public.project_products
+to anon, authenticated;
+
+grant insert, update, delete on table
+  public.categories,
+  public.subcategories,
+  public.products,
+  public.product_images,
+  public.certificates,
+  public.company_profile,
+  public.site_settings,
+  public.homepage_content,
+  public.page_content,
+  public.product_assets,
+  public.projects,
+  public.project_images,
+  public.project_products,
+  public.inquiries
+to authenticated;
+
+grant select on table public.inquiries to authenticated;
+grant all on table
+  public.admin_profiles,
+  public.categories,
+  public.subcategories,
+  public.products,
+  public.product_images,
+  public.certificates,
+  public.company_profile,
+  public.site_settings,
+  public.homepage_content,
+  public.page_content,
+  public.product_assets,
+  public.projects,
+  public.project_images,
+  public.project_products,
+  public.inquiries
+to service_role;
+
+-- ============================================================
+-- 12. product_assets / projects / project_images / project_products
+-- ============================================================
+alter table public.product_assets enable row level security;
+alter table public.projects enable row level security;
+alter table public.project_images enable row level security;
+alter table public.project_products enable row level security;
+
+drop policy if exists "product_assets_public_read" on public.product_assets;
+create policy "product_assets_public_read" on public.product_assets for select
+  to anon, authenticated
+  using (is_published = true and (product_id is null or exists (
+    select 1 from public.products p where p.id = product_assets.product_id and p.is_published = true
+  )));
+drop policy if exists "product_assets_admin_all" on public.product_assets;
+create policy "product_assets_admin_all" on public.product_assets for all
+  to authenticated using ((select public.is_admin())) with check ((select public.is_admin()));
+
+drop policy if exists "projects_public_read" on public.projects;
+create policy "projects_public_read" on public.projects for select
+  to anon, authenticated using (is_published = true);
+drop policy if exists "projects_admin_all" on public.projects;
+create policy "projects_admin_all" on public.projects for all
+  to authenticated using ((select public.is_admin())) with check ((select public.is_admin()));
+
+drop policy if exists "project_images_public_read" on public.project_images;
+create policy "project_images_public_read" on public.project_images for select
+  to anon, authenticated using (exists (
+    select 1 from public.projects p where p.id = project_images.project_id and p.is_published = true
+  ));
+drop policy if exists "project_images_admin_all" on public.project_images;
+create policy "project_images_admin_all" on public.project_images for all
+  to authenticated using ((select public.is_admin())) with check ((select public.is_admin()));
+
+drop policy if exists "project_products_public_read" on public.project_products;
+create policy "project_products_public_read" on public.project_products for select
+  to anon, authenticated using (
+    exists (select 1 from public.projects pr where pr.id = project_products.project_id and pr.is_published = true)
+    and exists (select 1 from public.products p where p.id = project_products.product_id and p.is_published = true)
+  );
+drop policy if exists "project_products_admin_all" on public.project_products;
+create policy "project_products_admin_all" on public.project_products for all
+  to authenticated using ((select public.is_admin())) with check ((select public.is_admin()));

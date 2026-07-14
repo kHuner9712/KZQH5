@@ -1,51 +1,31 @@
 import { redirect } from "next/navigation";
-import { createServerSupabaseClient } from "@/lib/supabase/server";
-import { createAdminSupabaseClient } from "@/lib/supabase/admin";
 import { AdminShell } from "@/components/admin/AdminLayout";
 import { ToastProvider } from "@/components/admin/Toast";
+import { countUnreadInquiries } from "@/lib/repositories/inquiries";
+import { getVerifiedAdmin } from "@/lib/services/admin-auth";
 
 export default async function ProtectedLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const supabase = createServerSupabaseClient();
+  // 必须先通过 Supabase Auth 服务验证 JWT，再检查 admin_profiles。
+  // 不信任 getSession() 从 cookie 直接读取的未验证会话内容。
+  const admin = await getVerifiedAdmin();
+  if (!admin) redirect("/admin/login?error=no_permission");
 
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
-
-  if (!session) {
-    redirect("/admin/login");
-  }
-
-  // 校验是否为管理员（admin_profiles 不开放 RLS，必须用 service_role 读取）
-  // service_role 缺失或读取异常时，必须拒绝访问，绝不降级放行
-  let isAdmin = false;
-  let email = session.user.email || undefined;
+  let unreadCount = 0;
+  const email = admin.profile.email || admin.user.email || undefined;
   try {
-    const admin = createAdminSupabaseClient();
-    const { data: profile } = await admin
-      .from("admin_profiles")
-      .select("id, email")
-      .eq("id", session.user.id)
-      .maybeSingle();
-    if (profile) {
-      isAdmin = true;
-      email = profile.email || email;
-    }
+    unreadCount = await countUnreadInquiries(admin.client);
   } catch {
-    // service_role 未配置或读取失败：拒绝访问，跳转登录页并提示
-    redirect("/admin/login?error=no_permission");
-  }
-
-  if (!isAdmin) {
+    // 特权客户端或数据读取异常时拒绝访问，绝不降级放行。
     redirect("/admin/login?error=no_permission");
   }
 
   return (
     <ToastProvider>
-      <AdminShell email={email}>{children}</AdminShell>
+      <AdminShell email={email} unreadCount={unreadCount}>{children}</AdminShell>
     </ToastProvider>
   );
 }

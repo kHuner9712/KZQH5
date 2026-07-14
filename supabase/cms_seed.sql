@@ -24,9 +24,10 @@ update public.site_settings set
   navigation_json = '[
     {"label_cn":"首页","label_en":"Home","href":"/","sort_order":1},
     {"label_cn":"产品中心","label_en":"Products","href":"/products","sort_order":2},
-    {"label_cn":"资质证书","label_en":"Certificates","href":"/certificates","sort_order":3},
-    {"label_cn":"关于我们","label_en":"About","href":"/about","sort_order":4},
-    {"label_cn":"联系询盘","label_en":"Contact","href":"/contact","sort_order":5}
+    {"label_cn":"应用案例","label_en":"Projects","href":"/projects","sort_order":3},
+    {"label_cn":"资质证书","label_en":"Certificates","href":"/certificates","sort_order":4},
+    {"label_cn":"关于我们","label_en":"About","href":"/about","sort_order":5},
+    {"label_cn":"联系询盘","label_en":"Contact","href":"/contact","sort_order":6}
   ]'::jsonb,
   updated_at = now();
 
@@ -177,6 +178,7 @@ update public.products set
   geo_summary_cn = 'KZQ 工程级多层板面向国内工程精装与海外采购，B 级防火、E0 环保，规格可定制，FOB/CIF 出口。',
   keywords_cn = ARRAY['工程多层板','B级防火板','E0环保板','工程基材','海外出口板材'],
   keywords_en = ARRAY['engineering board','B-rated fire board','E0 eco board','engineering substrate','export board'],
+  search_aliases = ARRAY['工程多层板18mm','engineering multi layer board 18mm'],
   faq_cn = '[
     {"question":"KZQ 工程级多层板适合哪些应用？","answer":"适用于高端定制家具、酒店精装、展柜等工程应用。"},
     {"question":"防火与环保等级是什么？","answer":"B 级防火，E0 级环保，具体以产品详情与资质证书为准。"}
@@ -189,6 +191,7 @@ update public.products set
   geo_summary_cn = 'KZQ 高密度 MDF 面向定制家具与门板应用，B 级防火、E0 环保，规格齐全可定制。',
   keywords_cn = ARRAY['高密度MDF','中密度板','B级防火板','E0环保板','工程基材'],
   keywords_en = ARRAY['high-density MDF','MDF board','B-rated fire board','E0 eco board','engineering substrate'],
+  search_aliases = ARRAY['MDF15mm','高密度中密度板15mm'],
   faq_cn = '[
     {"question":"KZQ 高密度 MDF 适合哪些加工？","answer":"适合雕刻、吸塑、烤漆等二次加工，是定制家具与门板的理想基材。"},
     {"question":"是否支持海外出口？","answer":"支持，可按海外客户规格生产，FOB/CIF 条款灵活。"}
@@ -201,6 +204,7 @@ update public.products set
   geo_summary_cn = 'KZQ 三聚氰胺饰面板木纹系列面向全屋定制与办公家具，B 级防火、E0 环保，花色可定制。',
   keywords_cn = ARRAY['三聚氰胺饰面板','木纹饰面板','B级防火饰面板','E0环保饰面板','定制饰面板'],
   keywords_en = ARRAY['melamine faced panel','wood grain panel','B-rated fire panel','E0 eco panel','custom decorative panel'],
+  search_aliases = ARRAY['木纹饰面板','melamine wood grain'],
   faq_cn = '[
     {"question":"KZQ 三聚氰胺饰面板可以定制花色吗？","answer":"可以，支持多种纹理与色彩定制，工程批量供货。"},
     {"question":"防火与环保等级？","answer":"B 级防火，E0 级环保。"}

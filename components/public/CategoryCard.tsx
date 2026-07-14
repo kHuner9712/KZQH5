@@ -1,84 +1,18 @@
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
+import { localePath, type Locale } from "@/lib/i18n/config";
+import { localizeCategory } from "@/lib/i18n/content";
 import { cn } from "@/lib/utils";
 import type { Category } from "@/types/database";
 
-interface CategoryCardProps {
-  category: Category;
-  /** 卡片高度 */
-  className?: string;
-}
-
-/**
- * 类目入口卡
- * - 使用基于 slug 的稳定渐变背景 + 大字标题
- * - 不使用数字水印，更像产品入口
- * - 英文副标题 + "查看产品" 行动入口
- */
-export function CategoryCard({ category, className }: CategoryCardProps) {
-  const gradient = getGradientForSlug(category.slug);
-
+export function CategoryCard({ category, className, locale = "zh" }: { category: Category; className?: string; locale?: Locale }) {
+  const content = localizeCategory(category, locale);
   return (
-    <Link
-      href={`/products?category=${category.slug}`}
-      className={cn(
-        "card-base relative block overflow-hidden p-5",
-        className
-      )}
-    >
-      {/* 渐变背景层 */}
-      <div
-        className="absolute inset-0 opacity-90"
-        style={{ background: gradient }}
-      />
-      {/* 板材纹理细线 */}
-      <div
-        className="absolute inset-0 opacity-[0.08]"
-        style={{
-          backgroundImage:
-            "repeating-linear-gradient(90deg, rgba(255,255,255,0.6) 0, rgba(255,255,255,0.6) 1px, transparent 1px, transparent 28px)",
-        }}
-      />
-      <div className="relative flex h-full flex-col justify-between">
-        <div>
-          <h3 className="text-lg font-semibold text-white">
-            {category.name_cn}
-          </h3>
-          {category.name_en && (
-            <p className="mt-0.5 text-[11px] uppercase tracking-wider text-white/70">
-              {category.name_en}
-            </p>
-          )}
-          {category.description_cn && (
-            <p className="mt-2 line-clamp-2 text-[11px] leading-relaxed text-white/60">
-              {category.description_cn}
-            </p>
-          )}
-        </div>
-        <span className="mt-3 inline-flex items-center gap-1 self-start rounded-full bg-white/15 px-2.5 py-1 text-[11px] font-medium text-white backdrop-blur-sm">
-          查看产品 <ArrowRight className="h-3 w-3" />
-        </span>
-      </div>
+    <Link href={`${localePath(locale, "/products")}?category=${category.slug}`} className={cn("group block overflow-hidden rounded-lg border border-ink-line bg-canvas-warm transition duration-300 hover:-translate-y-0.5 hover:shadow-card-hover", className)}>
+      <div className={cn("relative aspect-[16/9] overflow-hidden md:aspect-[21/8]", patternFor(category.slug))}><div className="absolute inset-0 bg-gradient-to-t from-black/45 via-transparent to-white/5" /><span className="absolute bottom-2.5 left-3 text-[9px] uppercase tracking-[0.18em] text-white/[0.65]">Material collection</span></div>
+      <div className="flex min-h-[82px] items-start justify-between gap-2 p-3 md:min-h-[92px] md:p-3.5"><div className="min-w-0"><h3 className="text-sm font-semibold text-ink md:text-base">{content.name}</h3>{content.secondaryName && <p className="mt-1 truncate text-[9px] uppercase tracking-[0.1em] text-ink-mute md:text-[10px]">{content.secondaryName}</p>}{content.description && <p className="mt-2 hidden text-[10px] leading-4 text-ink-soft md:line-clamp-2 md:text-xs md:leading-5">{content.description}</p>}</div><span className="mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-ink-line text-ink-mute transition group-hover:border-gold/60 group-hover:text-gold-dark"><ArrowRight className="h-3.5 w-3.5" /></span></div>
     </Link>
   );
 }
 
-/** 基于 slug hash 生成稳定的深色渐变（板材质感） */
-function getGradientForSlug(slug: string): string {
-  const palettes: string[] = [
-    // 工业蓝深
-    "linear-gradient(135deg, #1E3A5F 0%, #2E5E8A 100%)",
-    // 暖石墨 + 金
-    "linear-gradient(135deg, #2A2E33 0%, #4A3D28 100%)",
-    // 深工业 + 钢
-    "linear-gradient(135deg, #16293F 0%, #1E3A5F 100%)",
-    // 暖棕（木纹质感）
-    "linear-gradient(135deg, #3D2E1F 0%, #5A4632 100%)",
-  ];
-  let hash = 0;
-  for (let i = 0; i < slug.length; i++) {
-    hash = (hash << 5) - hash + slug.charCodeAt(i);
-    hash |= 0;
-  }
-  return palettes[Math.abs(hash) % palettes.length];
-}
+function patternFor(slug: string) { const patterns = ["material-pattern-0", "material-pattern-1", "material-pattern-2", "material-pattern-3"] as const; let hash = 0; for (let index = 0; index < slug.length; index += 1) { hash = (hash << 5) - hash + slug.charCodeAt(index); hash |= 0; } return patterns[Math.abs(hash) % patterns.length]; }

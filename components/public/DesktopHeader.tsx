@@ -2,95 +2,69 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { cn } from "@/lib/utils";
+import { Globe2 } from "lucide-react";
 import { BrandLogo } from "./BrandLogo";
+import { LanguageSwitcher } from "./LanguageSwitcher";
+import { localePath, pathWithoutLocale, type Locale } from "@/lib/i18n/config";
+import { getDictionary } from "@/lib/i18n/dictionary";
+import { localizeNavItem, localizeSiteSettings, navigationWithProjects } from "@/lib/i18n/content";
+import { cn } from "@/lib/utils";
 import type { CompanyProfile, NavItem, SiteSettings } from "@/types/database";
+import { InquiryCountBadge } from "./inquiry-list/InquiryCountBadge";
 
-// 默认导航（fallback）
 const defaultNavItems: NavItem[] = [
+  { href: "/", label_cn: "首页", label_en: "Home" },
   { href: "/products", label_cn: "产品中心", label_en: "Products" },
+  { href: "/projects", label_cn: "应用案例", label_en: "Projects" },
   { href: "/certificates", label_cn: "资质证书", label_en: "Certificates" },
   { href: "/about", label_cn: "关于我们", label_en: "About" },
   { href: "/contact", label_cn: "联系询盘", label_en: "Inquiry" },
 ];
 
-/**
- * 桌面端顶部导航 Header
- * - 仅在 sm+ 显示（mobile 隐藏，由 MobileBottomNav 接管）
- * - sticky 顶部，简洁专业
- * - 含 Logo + 主导航 + 询盘 CTA
- * - 优先使用 site_settings.navigation_json，无配置时 fallback 到默认导航
- * - Logo 旁品牌名优先使用 site_settings.brand_name / site_name_cn
- */
 export function DesktopHeader({
   company,
   siteSettings,
+  locale,
 }: {
   company?: CompanyProfile | null;
   siteSettings?: SiteSettings | null;
+  locale: Locale;
 }) {
-  const pathname = usePathname();
-
-  // 导航：优先 site_settings.navigation_json（过滤首页项，桌面端首页由 Logo 承载）
-  const navItems: NavItem[] =
-    siteSettings?.navigation_json && siteSettings.navigation_json.length > 0
-      ? siteSettings.navigation_json.filter((n) => n.href !== "/")
-      : defaultNavItems;
-
-  // 品牌名：优先 brand_name，其次 site_name_cn，最后默认 "KZQ"
-  const brandName =
-    siteSettings?.brand_name || siteSettings?.site_name_cn || "KZQ";
-
-  const isActive = (href: string) => {
-    if (href === "/") return pathname === "/";
-    return pathname === href || pathname.startsWith(href);
-  };
+  const pathname = pathWithoutLocale(usePathname());
+  const copy = getDictionary(locale);
+  const settings = localizeSiteSettings(siteSettings, locale);
+  const navItems = navigationWithProjects(siteSettings?.navigation_json?.length
+    ? siteSettings.navigation_json
+    : defaultNavItems);
+  const isActive = (href: string) =>
+    href === "/" ? pathname === "/" : pathname === href || pathname.startsWith(`${href}/`);
 
   return (
-    <header className="sticky top-0 z-40 hidden border-b border-ink-line/80 bg-white/90 backdrop-blur-lg md:block">
-      <div className="container-responsive flex h-16 items-center justify-between">
-        {/* Logo */}
-        <Link href="/" className="flex items-center gap-2.5">
-          <BrandLogo logoUrl={company?.logo_url} size={36} />
+    <header className="sticky top-0 z-40 hidden border-b border-white/10 bg-graphite/95 backdrop-blur-lg md:block">
+      <div className="container-responsive flex h-16 items-center justify-between gap-7">
+        <Link href={localePath(locale)} className="flex shrink-0 items-center gap-3" aria-label={copy.header.homeAria}>
+          <BrandLogo logoUrl={company?.logo_url} size={36} className="rounded-md border border-gold/[0.35] bg-transparent text-gold" />
           <div className="leading-tight">
-            <p className="text-base font-bold tracking-tight text-ink">{brandName}</p>
-            <p className="text-[9px] uppercase tracking-[0.18em] text-ink-mute">
-              Engineering Boards
-            </p>
+            <p className="text-base font-semibold tracking-[0.08em] text-white">{siteSettings?.brand_name || settings.siteName}</p>
+            <p className="mt-1 text-[8px] uppercase tracking-[0.2em] text-white/[0.45]">{copy.header.tagline}</p>
           </div>
         </Link>
-
-        {/* 主导航 */}
-        <nav className="flex items-center gap-1">
+        <nav className="flex min-w-0 flex-1 items-center justify-center gap-0.5" aria-label={copy.header.primaryNavigation}>
           {navItems.map((item) => {
             const active = isActive(item.href);
             return (
-              <Link
-                key={item.href}
-                href={item.href}
-                className={cn(
-                  "relative rounded-lg px-3.5 py-2 text-[13px] font-medium transition-colors",
-                  active
-                    ? "text-industrial"
-                    : "text-ink-soft hover:text-ink"
-                )}
-              >
-                {item.label_cn}
-                {active && (
-                  <span className="absolute bottom-0 left-1/2 h-0.5 w-6 -translate-x-1/2 rounded-full bg-industrial" />
-                )}
+              <Link key={item.href} href={localePath(locale, item.href)} className={cn("relative px-3 py-[18px] text-[13px] font-medium transition-colors xl:px-4", active ? "text-gold-light" : "text-white/[0.65] hover:text-white")} aria-current={active ? "page" : undefined}>
+                {localizeNavItem(item, locale)}
+                {active && <span className="absolute bottom-2.5 left-1/2 h-px w-7 -translate-x-1/2 bg-gold" />}
               </Link>
             );
           })}
         </nav>
-
-        {/* 询盘 CTA */}
-        <Link
-          href="/contact"
-          className="btn-primary h-9 px-4 text-[12px]"
-        >
-          立即询盘
-        </Link>
+        <div className="flex shrink-0 items-center gap-3">
+          <span className="hidden items-center gap-1.5 text-[10px] uppercase tracking-[0.12em] text-white/50 lg:inline-flex"><Globe2 className="h-3.5 w-3.5" /></span>
+          <LanguageSwitcher locale={locale} className="text-white/70 hover:text-gold-light" />
+          <Link href={localePath(locale, "/contact")} className="btn-primary h-9 px-4 text-[12px]">{copy.header.quote}<InquiryCountBadge className="bg-page text-gold-light" /></Link>
+        </div>
       </div>
     </header>
   );

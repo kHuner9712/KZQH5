@@ -18,6 +18,17 @@
 | `NEXT_PUBLIC_SITE_URL` | 站点正式域名 | `https://kzq.example.com` |
 | `NEXT_PUBLIC_DEMO_MODE` | 可选，Demo 模式开关 | `true` / `false` |
 
+### 可选询盘通知变量
+
+| 变量名 | 说明 |
+|-------|------|
+| `INQUIRY_WECOM_WEBHOOK_URL` | 企业微信机器人 webhook，仅服务端 |
+| `RESEND_API_KEY` | Resend HTTP API 密钥，仅服务端 |
+| `INQUIRY_NOTIFICATION_FROM` | 邮件发件人 |
+| `INQUIRY_NOTIFICATION_TO` | 邮件收件人，多个地址用英文逗号分隔 |
+
+通知变量均未配置时询盘仍正常写入；通知失败不会让用户提交失败。Demo 模式不写数据库、不发送真实通知。
+
 ⚠️ `NEXT_PUBLIC_SITE_URL` 必须填写正式域名，影响 sitemap.xml、JSON-LD、SEO 分享卡片。
 
 ⚠️ `SUPABASE_SERVICE_ROLE_KEY` 只能在服务端环境变量中配置，不可出现在客户端代码或 `NEXT_PUBLIC_*` 变量中。
@@ -47,6 +58,8 @@ Vercel 是 Next.js 官方部署平台，零配置支持 App Router、ISR、Edge 
      NEXT_PUBLIC_SUPABASE_ANON_KEY
      SUPABASE_SERVICE_ROLE_KEY
      NEXT_PUBLIC_SITE_URL
+     # 可选：INQUIRY_WECOM_WEBHOOK_URL / RESEND_API_KEY /
+     # INQUIRY_NOTIFICATION_FROM / INQUIRY_NOTIFICATION_TO
      ```
    - 勾选 Production / Preview / Development 三个环境
 
@@ -126,8 +139,13 @@ Vercel 是 Next.js 官方部署平台，零配置支持 App Router、ISR、Edge 
 2. `supabase/policies.sql` — RLS 权限策略 + Storage buckets
 3. `supabase/seed.sql` — 基础种子数据（类目/产品/证书/公司/站点设置）
 4. `supabase/cms_seed.sql` — CMS 内容 + 产品 GEO 字段
+5. 按文件名时间顺序执行 `supabase/migrations` 中尚未执行的迁移；本阶段依次为 `20260713181111_upgrade_inquiries.sql`、`20260714032351_b2b_product_search_and_inquiry_items.sql`、`20260714084116_procurement_assets_and_projects.sql`
 
-> 如已执行过 `schema.sql` 但需升级到 CMS 版本，可单独执行 `supabase/migrations/cms_upgrade.sql` 再执行 `cms_seed.sql`。
+> 如已执行过 `schema.sql` 但需升级到 CMS 版本，可单独执行 `supabase/migrations/cms_upgrade.sql` 再执行 `cms_seed.sql`。已经执行过的历史 migration 不要修改；只执行尚未应用的新 migration。
+
+最新 migration 会启用 `pg_trgm`、创建参数化产品搜索 RPC、`inquiry_items` 表及原子询盘写入函数。无需新增环境变量；请在执行后确认 `anon/authenticated` 可调用公开搜索 RPC，而原子写入 RPC 仅 `service_role` 可执行。
+
+采购资料与案例 migration 新增 `product_assets`、`projects`、`project_images`、`project_products` 及对应 RLS。无需新增环境变量；公开展示文件继续使用 `public-assets`。上线前确认匿名请求只能读取已发布资料/案例，后台管理员可维护草稿。
 
 ---
 
@@ -143,6 +161,10 @@ Vercel 是 Next.js 官方部署平台，零配置支持 App Router、ISR、Edge 
 - [ ] 资质证书 `/certificates` 列表展示
 - [ ] 公司介绍 `/about` 内容完整
 - [ ] 联系询盘 `/contact` 表单可提交，提交后 Supabase `inquiries` 表有新记录
+- [ ] 中文仅姓名 + 手机、仅姓名 + 微信均可提交；两者都空时拒绝
+- [ ] 英文仅 Email、仅 WhatsApp 均可提交；两者都空时拒绝
+- [ ] 产品 ID/slug、页面 URL、来源和 UTM 正确写入
+- [ ] `/privacy` 与 `/en/privacy` 可访问，隐私同意框默认未选中
 - [ ] 移动端 BottomNav 正常切换
 - [ ] 产品详情页移动端 BottomNav 隐藏，底部询盘 CTA 正常
 - [ ] PC 端 DesktopHeader 正常
@@ -158,7 +180,7 @@ Vercel 是 Next.js 官方部署平台，零配置支持 App Router、ISR、Edge 
 - [ ] 产品图片可上传到 Supabase Storage
 - [ ] 证书管理可新增/编辑/删除
 - [ ] 公司信息可保存
-- [ ] 询盘管理可查看详情、切换状态
+- [ ] 询盘管理可查看未读、筛选、分页、备注、负责人、切换状态并导出当前筛选结果 CSV
 
 ### SEO / GEO 验证
 
@@ -235,3 +257,11 @@ Vercel 是 Next.js 官方部署平台，零配置支持 App Router、ISR、Edge 
 如需进一步优化：
 - 在 Vercel 中开启 Edge Functions
 - 图片使用 Supabase Image Transformations
+## 第一方统计与微信分享部署
+
+1. 按时间顺序执行 `supabase/migrations/20260714125149_production_stability_analytics_wechat.sql`。
+2. 验证 `analytics_events` 已启用 RLS，`anon` 无法直接 insert/select，`service_role` 可通过服务端 API 写入并执行 `get_analytics_summary`。
+3. 不配置微信变量时部署应正常完成，`/api/wechat/jssdk` 返回空响应，普通 OG 分享不受影响。
+4. 如需启用微信公众号 JS-SDK，在部署平台添加仅服务端变量 `WECHAT_APP_ID` 与 `WECHAT_APP_SECRET`。不要添加 `NEXT_PUBLIC_` 前缀。
+5. 在公众号后台验证 JS 接口安全域名，确认 `NEXT_PUBLIC_SITE_URL` 为同一 HTTPS 正式域名，再在微信内测试首页、产品详情和案例详情分享。
+6. 默认 token/ticket 缓存为单实例内存缓存；多实例高流量部署可实现 `WechatCache` 接口迁移到 KV/Redis，无需改动签名服务。

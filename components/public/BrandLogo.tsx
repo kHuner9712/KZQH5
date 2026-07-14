@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Image from "next/image";
 import { cn } from "@/lib/utils";
 
 interface BrandLogoProps {
@@ -28,17 +29,18 @@ export function BrandLogo({
   return (
     <div
       className={cn(
-        "brand-monogram shrink-0 overflow-hidden rounded-xl bg-industrial text-white",
+        "brand-monogram relative shrink-0 overflow-hidden rounded-xl bg-industrial text-white",
         className
       )}
       style={{ width: size, height: size, fontSize: size * 0.38 }}
     >
       {showImage ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
+        <Image
           src={logoUrl as string}
           alt={alt}
-          className="h-full w-full object-cover"
+          fill
+          sizes={`${size}px`}
+          className="object-cover"
           onError={() => setFailed(true)}
         />
       ) : (

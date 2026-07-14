@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useMemo } from "react";
+import Image from "next/image";
 import { cn } from "@/lib/utils";
 
 interface ProductImageProps {
@@ -12,6 +13,7 @@ interface ProductImageProps {
   /** 占位时显示的内容（文字或节点） */
   fallbackText?: React.ReactNode;
   loading?: "eager" | "lazy";
+  sizes?: string;
 }
 
 /**
@@ -73,6 +75,7 @@ export function ProductImage({
   placeholder = "product",
   fallbackText,
   loading = "lazy",
+  sizes = "(max-width: 640px) 50vw, (max-width: 1024px) 33vw, 25vw",
 }: ProductImageProps) {
   const [error, setError] = useState(false);
   const showImage = src && !error;
@@ -115,12 +118,14 @@ export function ProductImage({
           className
         )}
       >
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src={src}
+        <Image
+          src={src as string}
           alt={alt}
-          className="h-full w-full object-cover"
-          loading={loading}
+          fill
+          sizes={sizes}
+          priority={loading === "eager"}
+          loading={loading === "lazy" ? "lazy" : undefined}
+          className="object-cover"
           onError={() => setError(true)}
         />
       </div>
@@ -130,6 +135,8 @@ export function ProductImage({
   // 占位：板材纹理渐变 + KZQ 水印
   return (
     <div
+      role="img"
+      aria-label={alt}
       className={cn(
         "relative h-full w-full overflow-hidden",
         placeholder === "cert" && "cert-placeholder",

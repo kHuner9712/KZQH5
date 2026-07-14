@@ -31,6 +31,7 @@ export default function CompanyPage() {
     description_cn: "",
     description_en: "",
     phone: "",
+    wechat: "",
     email: "",
     whatsapp: "",
     address_cn: "",
@@ -59,6 +60,7 @@ export default function CompanyPage() {
           description_cn: p.description_cn || "",
           description_en: p.description_en || "",
           phone: p.phone || "",
+          wechat: p.wechat || "",
           email: p.email || "",
           whatsapp: p.whatsapp || "",
           address_cn: p.address_cn || "",
@@ -111,6 +113,7 @@ export default function CompanyPage() {
       advantages_cn: advantagesCn,
       advantages_en: advantagesEn,
       phone: form.phone.trim() || null,
+      wechat: form.wechat.trim() || null,
       email: form.email.trim() || null,
       whatsapp: form.whatsapp.trim() || null,
       address_cn: form.address_cn.trim() || null,
@@ -258,7 +261,7 @@ export default function CompanyPage() {
         </Section>
 
         {/* 联系方式 */}
-        <Section title="联系方式" subtitle="电话 / 邮箱 / WhatsApp / 地址">
+        <Section title="联系方式" subtitle="电话 / 微信 / 邮箱 / WhatsApp / 地址">
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <Input
               label="联系电话"
@@ -271,6 +274,12 @@ export default function CompanyPage() {
               type="email"
               value={form.email}
               onChange={(e) => update("email", e.target.value)}
+            />
+            <Input
+              label="微信号"
+              value={form.wechat}
+              onChange={(e) => update("wechat", e.target.value)}
+              placeholder="用于前台复制微信号"
             />
             <Input
               label="WhatsApp"

@@ -1,5 +1,5 @@
 import { cn } from "@/lib/utils";
-import { InputHTMLAttributes, TextareaHTMLAttributes, forwardRef } from "react";
+import { InputHTMLAttributes, TextareaHTMLAttributes, forwardRef, useId } from "react";
 
 interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
   label?: string;
@@ -9,8 +9,12 @@ interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
 }
 
 export const Input = forwardRef<HTMLInputElement, InputProps>(
-  ({ className, label, error, required, hint, id, ...props }, ref) => {
-    const inputId = id || props.name;
+  ({ className, label, error, required, hint, id, "aria-describedby": ariaDescribedBy, ...props }, ref) => {
+    const generatedId = useId();
+    const inputId = id || props.name || generatedId;
+    const errorId = `${inputId}-error`;
+    const hintId = `${inputId}-hint`;
+    const describedBy = [ariaDescribedBy, error ? errorId : hint ? hintId : null].filter(Boolean).join(" ") || undefined;
     return (
       <div className="space-y-1.5">
         {label && (
@@ -25,6 +29,8 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
         <input
           ref={ref}
           id={inputId}
+          aria-invalid={error ? true : undefined}
+          aria-describedby={describedBy}
           className={cn(
             "h-11 w-full rounded-xl border bg-white px-3.5 text-sm text-ink outline-none transition placeholder:text-ink-mute focus:border-industrial focus:ring-2 focus:ring-industrial/15",
             error ? "border-red-400" : "border-ink-line",
@@ -32,8 +38,8 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
           )}
           {...props}
         />
-        {hint && !error && <p className="text-[11px] text-ink-mute">{hint}</p>}
-        {error && <p className="text-[11px] text-red-500">{error}</p>}
+        {hint && !error && <p id={hintId} className="text-[11px] text-ink-mute">{hint}</p>}
+        {error && <p id={errorId} className="text-[11px] text-red-500" role="alert">{error}</p>}
       </div>
     );
   }
@@ -48,8 +54,12 @@ interface TextareaProps extends TextareaHTMLAttributes<HTMLTextAreaElement> {
 }
 
 export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(
-  ({ className, label, error, required, hint, id, ...props }, ref) => {
-    const inputId = id || props.name;
+  ({ className, label, error, required, hint, id, "aria-describedby": ariaDescribedBy, ...props }, ref) => {
+    const generatedId = useId();
+    const inputId = id || props.name || generatedId;
+    const errorId = `${inputId}-error`;
+    const hintId = `${inputId}-hint`;
+    const describedBy = [ariaDescribedBy, error ? errorId : hint ? hintId : null].filter(Boolean).join(" ") || undefined;
     return (
       <div className="space-y-1.5">
         {label && (
@@ -64,6 +74,8 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(
         <textarea
           ref={ref}
           id={inputId}
+          aria-invalid={error ? true : undefined}
+          aria-describedby={describedBy}
           className={cn(
             "w-full rounded-xl border bg-white px-3.5 py-2.5 text-sm text-ink outline-none transition placeholder:text-ink-mute focus:border-industrial focus:ring-2 focus:ring-industrial/15",
             error ? "border-red-400" : "border-ink-line",
@@ -71,8 +83,8 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(
           )}
           {...props}
         />
-        {hint && !error && <p className="text-[11px] text-ink-mute">{hint}</p>}
-        {error && <p className="text-[11px] text-red-500">{error}</p>}
+        {hint && !error && <p id={hintId} className="text-[11px] text-ink-mute">{hint}</p>}
+        {error && <p id={errorId} className="text-[11px] text-red-500" role="alert">{error}</p>}
       </div>
     );
   }

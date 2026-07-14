@@ -6,6 +6,14 @@
 -- ============================================================
 
 -- 先清空（注意顺序，避免外键冲突）
+do $$
+begin
+  if to_regclass('public.project_products') is not null then execute 'delete from public.project_products'; end if;
+  if to_regclass('public.project_images') is not null then execute 'delete from public.project_images'; end if;
+  if to_regclass('public.projects') is not null then execute 'delete from public.projects'; end if;
+  if to_regclass('public.product_assets') is not null then execute 'delete from public.product_assets'; end if;
+end
+$$;
 delete from public.product_images;
 delete from public.products;
 delete from public.subcategories;
@@ -14,6 +22,9 @@ delete from public.certificates;
 delete from public.inquiries;
 delete from public.company_profile;
 delete from public.site_settings;
+
+-- product_assets / projects 不插入示例行：资料和案例必须来自已确认的公开内容，
+-- 没有真实数据时前台展示正常空状态。
 
 -- ============================================================
 -- 一级类目（3 个）
@@ -229,7 +240,7 @@ insert into public.certificates (id, name_cn, name_en, description_cn, descripti
 insert into public.company_profile (
   id, title_cn, title_en, description_cn, description_en,
   advantages_cn, advantages_en,
-  phone, email, whatsapp, address_cn, address_en,
+  phone, wechat, email, whatsapp, address_cn, address_en,
   wechat_qr_url, logo_url
 ) values (
   '55555555-5555-5555-5555-555555555501',
@@ -249,6 +260,7 @@ insert into public.company_profile (
     {"icon":"globe","title_cn":"Overseas Export","title_en":"Overseas Export","desc_cn":"Container FOB / CIF export.","desc_en":"Container FOB / CIF export, multilingual inquiry."}
   ]'::jsonb,
   '+86 138-0000-0000',
+  null,
   'sales@kzq-example.com',
   '+86 138 0000 0000',
   '中国浙江省杭州市 XX 区 XX 路 XX 号',
@@ -278,6 +290,21 @@ insert into public.site_settings (
 -- 示例询盘（2 条，方便后台演示）
 -- 口径：不出现实木 / 未确认认证 / 内部价格
 -- ============================================================
-insert into public.inquiries (name, company, country, email, whatsapp, interested_product, quantity, message, status, source) values
-('John Smith', 'Smith Furniture LLC', 'United States', 'john@smithfurniture.com', '+1 555 123 4567', 'KZQ Export-Grade Multi-Layer Board 17mm', '1×20GP container', 'We are looking for a stable supplier of multi-layer boards for our furniture factory. Please send catalog and FOB Ningbo quotation.', 'new', 'h5'),
-('Ahmed Hassan', 'Gulf Interiors', 'UAE', 'ahmed@gulfinteriors.ae', '+971 50 123 4567', 'KZQ Fire-Rated Decorative Panel Custom', '5000 sqm', 'Need fire-rated decorative panels for a hotel project in Dubai. B-rated fire certification required. Please contact us for quotation.', 'new', 'h5');
+insert into public.inquiries (id, name, company, country, email, whatsapp, interested_product, quantity, message, status, language, source, channel, product_id, product_slug, is_read) values
+('77777777-7777-7777-7777-777777777701', 'John Smith', 'Smith Furniture LLC', 'United States', 'john@smithfurniture.com', '+1 555 123 4567', 'KZQ Export-Grade Multi-Layer Board 17mm', '1×20GP container', 'We are looking for a stable supplier of multi-layer boards for our furniture factory. Please send catalog and FOB Ningbo quotation.', 'new', 'en', 'direct', 'website', '33333333-3333-3333-3333-333333333307', 'kzq-export-grade-multi-layer-board-17mm', false),
+('77777777-7777-7777-7777-777777777702', 'Ahmed Hassan', 'Gulf Interiors', 'UAE', 'ahmed@gulfinteriors.ae', '+971 50 123 4567', 'KZQ Fire-Rated Decorative Panel Custom', '5000 sqm', 'Need fire-rated decorative panels for a hotel project in Dubai. B-rated fire certification required. Please contact us for quotation.', 'contacted', 'en', 'email', 'website', '33333333-3333-3333-3333-333333333306', 'kzq-fire-rated-decorative-panel-custom', true);
+
+-- inquiry_items 在新 migration 执行后写入；旧库尚未升级时跳过，保持 seed 向后兼容。
+do $$
+begin
+  if to_regclass('public.inquiry_items') is not null then
+    execute $seed$
+      insert into public.inquiry_items (
+        inquiry_id, product_id, product_slug, product_name_cn, product_name_en, quantity, sort_order
+      ) values
+      ('77777777-7777-7777-7777-777777777701', '33333333-3333-3333-3333-333333333307', 'kzq-export-grade-multi-layer-board-17mm', 'KZQ 海外出口级多层板 17mm', 'KZQ Export-Grade Multi-Layer Board 17mm', '1×20GP container', 0),
+      ('77777777-7777-7777-7777-777777777702', '33333333-3333-3333-3333-333333333306', 'kzq-fire-rated-decorative-panel-custom', 'KZQ 防火饰面板 工程定制', 'KZQ Fire-Rated Decorative Panel Custom', '5000 sqm', 0)
+    $seed$;
+  end if;
+end
+$$;

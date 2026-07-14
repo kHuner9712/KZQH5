@@ -1,9 +1,11 @@
+"use client";
+
 import { cn } from "@/lib/utils";
-import type { LucideIcon } from "lucide-react";
-import { ArrowRight } from "lucide-react";
+import { ArrowRight, Mail, MapPin, MessageCircle, Phone } from "lucide-react";
+import { trackAnalyticsEvent } from "@/lib/client/analytics";
 
 interface ContactCardProps {
-  icon: LucideIcon;
+  icon: "phone" | "email" | "whatsapp" | "address";
   label: string;
   value: string;
   href?: string;
@@ -17,13 +19,14 @@ interface ContactCardProps {
  * - 有 href 时整卡可点击
  */
 export function ContactCard({
-  icon: Icon,
+  icon,
   label,
   value,
   href,
   external,
   className,
 }: ContactCardProps) {
+  const Icon = { phone: Phone, email: Mail, whatsapp: MessageCircle, address: MapPin }[icon];
   const content = (
     <div
       className={cn(
@@ -52,6 +55,16 @@ export function ContactCard({
   return (
     <a
       href={href}
+      onClick={() => {
+        const eventName = href.startsWith("tel:")
+          ? "phone_click"
+          : href.startsWith("mailto:")
+            ? "email_click"
+            : href.includes("wa.me")
+              ? "whatsapp_click"
+              : null;
+        if (eventName) trackAnalyticsEvent({ event_name: eventName });
+      }}
       target={external ? "_blank" : undefined}
       rel={external ? "noreferrer" : undefined}
     >
