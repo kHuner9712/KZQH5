@@ -1,5 +1,8 @@
 import Link from "next/link";
+import { unstable_noStore as noStore } from "next/cache";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
+import { createAdminDashboardQueries } from "@/lib/repositories/admin-dashboard";
+import { loadAdminDashboard } from "@/lib/services/admin-dashboard";
 import { formatDate } from "@/lib/utils";
 import {
   Package,
@@ -14,63 +17,73 @@ import type { Inquiry } from "@/types/database";
 export const dynamic = "force-dynamic";
 
 export default async function AdminDashboard() {
+  noStore();
   const supabase = createServerSupabaseClient();
+  const result = await loadAdminDashboard(
+    createAdminDashboardQueries(supabase),
+  );
 
-  const [
-    { count: productCount },
-    { count: publishedCount },
-    { count: certCount },
-    { count: inquiryCount },
-    { count: unreadCount },
-    { data: recentInquiries },
-  ] = await Promise.all([
-    supabase.from("products").select("*", { count: "exact", head: true }),
-    supabase
-      .from("products")
-      .select("*", { count: "exact", head: true })
-      .eq("is_published", true),
-    supabase.from("certificates").select("*", { count: "exact", head: true }),
-    supabase.from("inquiries").select("*", { count: "exact", head: true }),
-    supabase.from("inquiries").select("*", { count: "exact", head: true }).eq("is_read", false),
-    supabase
-      .from("inquiries")
-      .select("*")
-      .order("created_at", { ascending: false })
-      .limit(5),
-  ]);
+  if (!result.ok) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-xl font-bold text-graphite">Dashboard</h1>
+          <p className="mt-1 text-sm text-gray-500">KZQ 产品展示站数据概览</p>
+        </div>
+        <div
+          role="alert"
+          className="rounded-xl border border-red-200 bg-red-50 px-5 py-8 text-center"
+        >
+          <p className="font-medium text-red-800">数据读取失败</p>
+          <p className="mt-1 text-sm text-red-700">
+            请稍后刷新页面；如问题持续，请联系管理员检查服务端日志。
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  const {
+    productCount,
+    publishedCount,
+    certificateCount: certCount,
+    inquiryCount,
+    unreadCount,
+    recentInquiries,
+  } = result.data;
 
   const stats = [
     {
       label: "产品总数",
-      value: productCount || 0,
+      value: productCount,
       icon: Package,
       color: "text-steel",
       bg: "bg-steel/10",
     },
     {
       label: "已发布产品",
-      value: publishedCount || 0,
+      value: publishedCount,
       icon: CheckCircle2,
       color: "text-emerald-600",
       bg: "bg-emerald-50",
     },
     {
       label: "证书数量",
-      value: certCount || 0,
+      value: certCount,
       icon: Award,
       color: "text-gold-dark",
       bg: "bg-gold/15",
     },
     {
-      label: `询盘数量 · 未读 ${unreadCount || 0}`,
-      value: inquiryCount || 0,
+      label: `询盘数量 · 未读 ${unreadCount}`,
+      value: inquiryCount,
       icon: Inbox,
       color: "text-purple-600",
       bg: "bg-purple-50",
     },
   ];
 
-  const inquiries = (recentInquiries as Inquiry[] | null) || [];
+  const inquiries = recentInquiries;
 
   const statusMap: Record<string, { label: string; className: string }> = {
     new: { label: "新询盘", className: "bg-blue-50 text-blue-700" },

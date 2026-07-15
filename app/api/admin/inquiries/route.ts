@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { revalidatePath } from "next/cache";
 import { isDemoMode } from "@/lib/demo";
 import { listInquiries, updateInquiry } from "@/lib/repositories/inquiries";
 import { getVerifiedAdmin } from "@/lib/services/admin-auth";
@@ -96,6 +97,8 @@ export async function PATCH(request: NextRequest) {
 
   try {
     const inquiry = await updateInquiry(admin.client, body.id, patch);
+    revalidatePath("/admin");
+    revalidatePath("/admin/inquiries");
     return NextResponse.json({ success: true, inquiry });
   } catch (error) {
     console.error(

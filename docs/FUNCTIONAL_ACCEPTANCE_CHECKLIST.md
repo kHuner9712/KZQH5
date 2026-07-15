@@ -56,3 +56,22 @@
 3. 配置 staging WeCom、Resend、微信凭据，分别验证成功、4xx、5xx、超时和日志脱敏。
 4. 在微信、iOS Safari、Android Chrome 做真机分享、证书缩放、资料下载和电话/WhatsApp 跳转。
 5. 为 Next 15/16 单独建立升级任务，解决 npm audit 中无法在 14.2.x 回补的公告。
+# 2026-07-16 Real Staging closure delta
+
+| Area | Result | Evidence / next action |
+| --- | --- | --- |
+| Local check | Automated pass | 73 unit tests, lint, typecheck, Demo build |
+| Dashboard failure handling | Fixed locally | explicit error state; no failure-to-zero fallback |
+| Dashboard counts/list source | Fixed locally | one verified admin Supabase client; no mock import |
+| Dashboard freshness | Fixed locally | dynamic + no-store; inquiry mutation revalidation |
+| Clean public Staging URL | Blocked | EdgeOne platform returned 401 before project HTML |
+| Real database counts | Not executed | local Staging secrets missing |
+| Inquiry write smoke | Not executed | three explicit write gates not satisfied |
+| Protected admin E2E | Not executed | administrator credentials missing |
+| CRUD and Storage | Not executed | administrator/service credentials missing |
+| Test-residual deletion | Not executed | source and exact UUIDs could not be verified |
+| GitHub Staging workflow | Blocked | local `gh` authentication invalid |
+| China/WeChat network | Not executed | real-device and carrier evidence still required |
+
+Acceptance must be rerun after this branch is deployed to an un-tokenized,
+stable Staging domain. A Staging pass must not be described as Production.

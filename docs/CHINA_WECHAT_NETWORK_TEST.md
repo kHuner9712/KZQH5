@@ -35,3 +35,14 @@
 | 所有网络 EdgeOne 错误页 | 部署日志、`check:deployed`、对应 request id | Next.js runtime/函数部署 |
 
 每个失败至少保存：设备/系统/浏览器版本、运营商、时间、URL、录屏或截图、Network 状态、`/api/health` 响应和诊断耗时。不得记录密钥、客户表单或完整内部错误。
+# 2026-07-16 Staging preparation note
+
+Automated requests from the current non-China execution environment to the clean
+Staging URL received EdgeOne's platform 401 page. This is preview-access evidence,
+not carrier performance evidence, and no tokenized preview URL was recorded.
+
+No row in the carrier/device matrix is changed to passed. WeChat embedded
+browser, China Mobile, China Unicom, China Telecom, home broadband, iOS Safari,
+Android browser, and an overseas comparison still require real devices and
+networks. Use only `[REGRESSION TEST]` inquiry data and `regression-test-` files
+when those tests are authorized.

@@ -76,20 +76,24 @@ export async function listInquiries(
     .order("created_at", { ascending: false })
     .range((page - 1) * pageSize, page * pageSize - 1);
   if (error) throw error;
+  if (count === null) throw new Error("Inquiry count unavailable");
   const items = ((data as Inquiry[] | null) || []).map((inquiry) => ({
     ...inquiry,
     inquiry_items: [...(inquiry.inquiry_items || [])].sort((a, b) => a.sort_order - b.sort_order),
   }));
-  return { items, total: count || 0, page, pageSize };
+  return { items, total: count, page, pageSize };
 }
 
 export async function countUnreadInquiries(client: InquiryClient): Promise<number> {
   const { count, error } = await client
     .from("inquiries")
-    .select("id", { count: "exact", head: true })
-    .eq("is_read", false);
-  if (error) throw error;
-  return count || 0;
+    .select("id", { count: "exact" })
+    .eq("is_read", false)
+    .limit(1);
+  if (error || count === null) {
+    throw error || new Error("Unread inquiry count unavailable");
+  }
+  return count;
 }
 
 export async function updateInquiry(

@@ -25,16 +25,20 @@ async function expectHtmlLanguage(
   await page.goto(path);
   await expect(page.locator("html")).toHaveAttribute("lang", language);
   await expect(page.locator("main")).toBeVisible();
-  await expect(page.locator('link[rel="canonical"]')).toHaveAttribute(
-    "href",
-    /^https?:\/\//,
-  );
+  const canonical = page.locator('link[rel="canonical"]');
+  await expect(canonical).toHaveAttribute("href", /^https?:\/\//);
+  expect(await canonical.getAttribute("href")).not.toMatch(/eo_(?:token|time)=/i);
   await expect(
     page.locator('link[rel="alternate"][hreflang="zh-CN"]'),
   ).toHaveCount(1);
   await expect(
     page.locator('link[rel="alternate"][hreflang="en"]'),
   ).toHaveCount(1);
+  const openGraphUrl = page.locator('meta[property="og:url"]');
+  await expect(openGraphUrl).toHaveAttribute("content", /^https?:\/\//);
+  expect(await openGraphUrl.getAttribute("content")).not.toMatch(
+    /eo_(?:token|time)=/i,
+  );
 }
 
 test.describe("deployed Staging read-only acceptance", () => {
@@ -43,6 +47,7 @@ test.describe("deployed Staging read-only acceptance", () => {
   }) => {
     await expectHtmlLanguage(page, "/", "zh-CN");
     await expectHtmlLanguage(page, "/en", "en");
+    await expect(page.locator('script[type="application/ld+json"]')).not.toHaveCount(0);
 
     const chineseSwitch = page.locator('a[href="/"]').first();
     await expect(chineseSwitch).toBeVisible();
@@ -51,11 +56,13 @@ test.describe("deployed Staging read-only acceptance", () => {
       "/products",
       "/certificates",
       "/projects",
+      "/contact",
       "/more",
       "/privacy",
       "/en/products",
       "/en/certificates",
       "/en/projects",
+      "/en/contact",
       "/en/more",
       "/en/privacy",
     ]) {
@@ -70,12 +77,17 @@ test.describe("deployed Staging read-only acceptance", () => {
   }) => {
     await page.goto("/products?q=a");
     await expect(page.locator("main")).toBeVisible();
+    await expect(page).toHaveURL(/\?q=a/);
 
     const categoryLink = page.locator('a[href*="category="]').first();
-    if (await categoryLink.count()) {
-      await categoryLink.click();
-      await expect(page).toHaveURL(/category=/);
-    }
+    await expect(categoryLink).toBeVisible();
+    await categoryLink.click();
+    await expect(page).toHaveURL(/category=/);
+
+    const subcategoryLink = page.locator('a[href*="subcategory="]').first();
+    await expect(subcategoryLink).toBeVisible();
+    await subcategoryLink.click();
+    await expect(page).toHaveURL(/subcategory=/);
 
     await page.goto("/products");
     const productLink = page.locator('article a[href^="/products/"]').first();
@@ -84,6 +96,14 @@ test.describe("deployed Staging read-only acceptance", () => {
     await expect(page).toHaveURL(/\/products\/[^/?]+/);
     await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
     await expect(page.locator("main")).toBeVisible();
+
+    await page.goto("/en/products");
+    const englishProductLink = page
+      .locator('article a[href^="/en/products/"]')
+      .first();
+    await expect(englishProductLink).toBeVisible();
+    await englishProductLink.click();
+    await expect(page).toHaveURL(/\/en\/products\/[^/?]+/);
   });
 
   test("sitemap, 404, and health endpoint are deployment-safe", async ({
@@ -93,7 +113,9 @@ test.describe("deployed Staging read-only acceptance", () => {
     const sitemap = await request.get("/sitemap.xml");
     expect(sitemap.ok()).toBe(true);
     expect(sitemap.headers()["content-type"]).toContain("xml");
-    expect(await sitemap.text()).toContain("<urlset");
+    const sitemapBody = await sitemap.text();
+    expect(sitemapBody).toContain("<urlset");
+    expect(sitemapBody).not.toMatch(/eo_(?:token|time)=/i);
 
     const robots = await request.get("/robots.txt");
     expect(robots.ok()).toBe(true);

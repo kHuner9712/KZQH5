@@ -38,3 +38,17 @@
 ## 当前结论
 
 **Pending real network validation**。本阶段不选择最终架构、不变更生产 DNS、不迁移 CloudBase。下一决策点必须附上部署 URL、日志、自动化退出码和 `docs/CHINA_WECHAT_NETWORK_TEST.md` 的真实记录。
+# 2026-07-16 evidence addendum
+
+The real EdgeOne/Supabase Staging has operator-confirmed Node Route Handler,
+Supabase provider, non-Demo health, and administrator login. Local automation
+found a Dashboard count error-handling defect and fixed it, but could not rerun
+the deployed branch because the clean EdgeOne project domain returned the
+platform 401 preview-authentication page. Credentials for direct Staging,
+administrator E2E, CRUD, Storage, and write smoke were not present locally.
+
+This is technical Staging progress only. It does not establish China mainland
+reachability or production readiness. No CloudBase migration, production DNS
+change, production Supabase use, or final architecture decision was made.
+
+**Status remains: Pending real network validation.**

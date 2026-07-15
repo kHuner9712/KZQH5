@@ -13,8 +13,16 @@ const paths = [
   "/products",
   "/en/products",
   "/certificates",
+  "/en/certificates",
   "/projects",
+  "/en/projects",
+  "/contact",
+  "/en/contact",
+  "/more",
+  "/en/more",
   "/privacy",
+  "/en/privacy",
+  "/products?q=a",
   "/sitemap.xml",
   "/robots.txt",
   "/api/health",
@@ -65,6 +73,13 @@ for (const path of paths) {
         body,
       );
     const demoContent = /kzq-demo\.com|\bmock-[a-z0-9-]+\b/i.test(body);
+    const previewParameterPattern = new RegExp(
+      `(?:eo_${"token"}|eo_${"time"})(?:=|%3D)`,
+      "i",
+    );
+    const previewToken = previewParameterPattern.test(
+      `${body}\n${finalUrl}`,
+    );
 
     console.log(
       `${path} status=${response.status} time=${elapsedMs}ms type=${contentType} lang=${htmlLang} title=${JSON.stringify(title)} redirects=${redirects} final=${finalUrl}`,
@@ -76,6 +91,23 @@ for (const path of paths) {
     if (platformError) failures.push(`${path}: platform error page detected`);
     if (!expectDemo && demoContent)
       failures.push(`${path}: Demo content detected`);
+    if (previewToken)
+      failures.push(`${path}: EdgeOne preview token leaked into content or URL`);
+
+    if (isHtml && response.ok) {
+      const canonical = body.match(
+        /<link[^>]+rel=["']canonical["'][^>]+href=["']([^"']+)["']/i,
+      )?.[1];
+      const openGraphUrl = body.match(
+        /<meta[^>]+property=["']og:url["'][^>]+content=["']([^"']+)["']/i,
+      )?.[1];
+      if (!canonical) failures.push(`${path}: missing canonical`);
+      if (!openGraphUrl) failures.push(`${path}: missing Open Graph URL`);
+      if (canonical && previewParameterPattern.test(canonical))
+        failures.push(`${path}: preview token in canonical`);
+      if (openGraphUrl && previewParameterPattern.test(openGraphUrl))
+        failures.push(`${path}: preview token in Open Graph URL`);
+    }
 
     if (path === "/api/health" && response.ok) {
       try {

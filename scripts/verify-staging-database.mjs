@@ -2,6 +2,7 @@ import { createClient } from "@supabase/supabase-js";
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 if (process.env.KZQ_STAGING_CONFIRMATION !== "KZQ-STAGING-ONLY") {
   throw new Error(
@@ -19,6 +20,15 @@ const client = createClient(url, anonKey, {
     detectSessionInUrl: false,
   },
 });
+const service = serviceKey
+  ? createClient(url, serviceKey, {
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false,
+        detectSessionInUrl: false,
+      },
+    })
+  : null;
 const marker = `[REGRESSION TEST] ${crypto.randomUUID()}`;
 const checks = [];
 
@@ -89,4 +99,43 @@ for (const result of checks) {
   console.log(`${result.ok ? "PASS" : "FAIL"} ${result.name}`);
 }
 if (checks.some((result) => !result.ok)) process.exit(1);
+
+if (service) {
+  const countChecks = [
+    ["products", "products", null],
+    ["products.published", "products", ["is_published", true]],
+    ["categories", "categories", null],
+    ["subcategories", "subcategories", null],
+    ["certificates", "certificates", null],
+    ["inquiries", "inquiries", null],
+    ["inquiries.unread", "inquiries", ["is_read", false]],
+    ["projects", "projects", null],
+    ["product_assets", "product_assets", null],
+    ["admin_profiles", "admin_profiles", null],
+  ];
+
+  for (const [label, table, filter] of countChecks) {
+    let query = service.from(table).select("id", { count: "exact" }).limit(1);
+    if (filter) query = query.eq(filter[0], filter[1]);
+    const { count, error } = await query;
+    if (error || count === null) {
+      console.log(`FAIL count ${label}`);
+      process.exit(1);
+    }
+    console.log(`COUNT ${label}=${count}`);
+  }
+
+  const regression = await service
+    .from("inquiries")
+    .select("id", { count: "exact" })
+    .or("name.ilike.%[REGRESSION TEST]%,message.ilike.%[REGRESSION TEST]%")
+    .limit(1);
+  if (regression.error || regression.count === null) {
+    console.log("FAIL count inquiries.regression_test");
+    process.exit(1);
+  }
+  console.log(`COUNT inquiries.regression_test=${regression.count}`);
+} else {
+  console.log("SKIP privileged count summary (service role missing)");
+}
 console.log("Non-destructive Staging database verification completed.");

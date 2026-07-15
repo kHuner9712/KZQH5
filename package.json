@@ -13,7 +13,7 @@
     "test:unit": "vitest run",
     "test:e2e": "playwright test",
     "test:e2e:demo": "cross-env NEXT_PUBLIC_DEMO_MODE=true playwright test tests/e2e/demo-public.spec.ts",
-    "test:e2e:staging": "playwright test tests/e2e/staging-public.spec.ts",
+    "test:e2e:staging": "playwright test tests/e2e/staging-public.spec.ts tests/e2e/staging-admin.spec.ts",
     "test:smoke": "vitest run --config vitest.smoke.config.ts",
     "test:database": "node scripts/verify-database.mjs",
     "test:database:staging": "node scripts/verify-staging-database.mjs",

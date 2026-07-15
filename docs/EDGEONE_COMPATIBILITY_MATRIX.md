@@ -53,3 +53,17 @@
 ## 部署门槛
 
 先部署无 Supabase 依赖的 Demo Preview，再部署独立 Supabase Staging。兼容性矩阵中的“需要实际部署验证”只有在部署日志、`check:deployed`、Staging E2E 或人工记录提供证据后才能更新。
+# 2026-07-16 deployment evidence update
+
+| Capability | Evidence | Current conclusion |
+| --- | --- | --- |
+| Clean project domain access | `https://kzqh5.edgeone.dev` returned platform 401 on every route | Blocked by EdgeOne preview authentication |
+| Preview notice source | 401 HTML title is `Tencent Edgeone`; project `<main>` is absent | Platform layer, not KZQ Demo mode |
+| Stable Staging entry | Official Makers docs recommend a custom domain associated with Preview | Console/DNS action pending; no DNS changed here |
+| Dashboard counts | Existing `HEAD` counts could fail while recent `GET` succeeds | Replaced locally with exact limited GET + explicit errors |
+| Health commit | Official environment-variable docs list no injected commit SHA | `unknown` remains supported fallback |
+| Canonical / OG / sitemap tokens | Automated assertions reject EdgeOne preview query parameters | Added; remote run blocked by 401 |
+
+The EdgeOne console path for a stable test entry is **Domain Management → Add
+custom domain → Associate with Preview environment**. Temporary three-hour
+preview URLs must not be persisted in repository configuration or SEO output.
