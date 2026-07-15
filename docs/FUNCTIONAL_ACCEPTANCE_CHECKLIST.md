@@ -70,8 +70,9 @@
 | Protected admin E2E | Not executed | administrator credentials missing |
 | CRUD and Storage | Not executed | administrator/service credentials missing |
 | Test-residual deletion | Not executed | source and exact UUIDs could not be verified |
-| GitHub Staging workflow | Blocked | local `gh` authentication invalid |
+| GitHub Staging workflow | Blocked | read-only Run 29437124679 failed because required Environment settings were empty; write run not triggered |
 | China/WeChat network | Not executed | real-device and carrier evidence still required |
 
 Acceptance must be rerun after this branch is deployed to an un-tokenized,
 stable Staging domain. A Staging pass must not be described as Production.
+
