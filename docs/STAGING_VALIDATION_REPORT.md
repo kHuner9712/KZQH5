@@ -154,12 +154,22 @@ an accepted fallback.
 
 The workflow now runs the non-destructive Staging database verifier (including a
 count-only summary when service role is configured) before smoke and deployment
-checks. Triggering both `allow_writes=false` and `allow_writes=true` is
-**blocked** locally because `gh auth status` reports an invalid token. No
-Workflow Run URL exists for this execution.
+checks. The read-only run was triggered at
+`https://github.com/kHuner9712/KZQH5/actions/runs/29437124679`.
+
+- checkout, Node setup, `npm ci`, and Playwright install: **passed**;
+- read-only Staging database verification: **failed** because all three required
+  database settings were empty in GitHub Environment `staging`;
+- Supabase smoke, EdgeOne probe, and deployed E2E: **skipped after failure**;
+- explicitly enabled writes job: **skipped** because `allow_writes=false`.
+
+The write run was not triggered because the required read-only pass did not
+occur. Configure the missing Environment settings, rerun `allow_writes=false`,
+and only after it passes rerun with `allow_writes=true`.
 
 ## Remaining decision boundary
 
 No WeChat, China Mobile, China Unicom, China Telecom, home broadband, iOS
 Safari, Android browser, or overseas comparison evidence was collected. ADR-001
 therefore remains **Pending real network validation**.
+
