@@ -63,7 +63,9 @@
 | Dashboard counts | Existing `HEAD` counts could fail while recent `GET` succeeds | Replaced locally with exact limited GET + explicit errors |
 | Health commit | Official environment-variable docs list no injected commit SHA | `unknown` remains supported fallback |
 | Canonical / OG / sitemap tokens | Automated assertions reject EdgeOne preview query parameters | Added; remote run blocked by 401 |
+| GitHub Staging workflow | Run 29437124679 reached the database gate after setup/install passed | Blocked by empty GitHub Environment settings; writes correctly skipped |
 
 The EdgeOne console path for a stable test entry is **Domain Management → Add
 custom domain → Associate with Preview environment**. Temporary three-hour
 preview URLs must not be persisted in repository configuration or SEO output.
+
