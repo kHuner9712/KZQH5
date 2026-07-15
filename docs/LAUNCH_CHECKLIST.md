@@ -106,12 +106,18 @@
 
 ## 6. 部署检查
 
-- [ ] Vercel 环境变量完整（`NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_ANON_KEY` / `SUPABASE_SERVICE_ROLE_KEY` / `NEXT_PUBLIC_SITE_URL`）
-- [ ] `NEXT_PUBLIC_SITE_URL` 是正式域名（非 localhost / 非 vercel.app 临时域名）
+- [ ] EdgeOne Demo Preview 使用独立项目且只设置 `NEXT_PUBLIC_DEMO_MODE=true`
+- [ ] EdgeOne Supabase Staging 使用独立项目和独立 Supabase，未使用 Production 凭据
+- [ ] Makers 配置为 Node 20、`npm ci`、`npm run build`、`.next`
+- [ ] `/api/health` 返回 `no-store`、正确 commit/demo/runtime，且不泄露环境信息
+- [ ] `npm run check:deployed` 对真实 EdgeOne URL exit 0
+- [ ] `npm run test:e2e:staging` 只读流程对真实 EdgeOne URL exit 0
+- [ ] `NEXT_PUBLIC_SITE_URL` 是当前 Staging 根 URL（非 localhost，且不附加 `/en`）
 - [ ] `SUPABASE_SERVICE_ROLE_KEY` 只在服务端环境变量中（未出现在 `NEXT_PUBLIC_*` 变量中）
-- [ ] Preview 部署正常后再上 Production
-- [ ] 自定义域名 HTTPS 正常
-- [ ] 微信内置浏览器可访问
+- [ ] 远程写入仅在 `ALLOW_WRITES=true` 且 `KZQ_STAGING_CONFIRMATION=KZQ-STAGING-ONLY` 时执行
+- [ ] GitHub `staging` Environment Secrets 已配置，PR/fork 不会获得 Secrets
+- [ ] 自定义域名/DNS/HTTPS 未在本阶段擅自变更
+- [ ] 微信与三大运营商结果已填写 `CHINA_WECHAT_NETWORK_TEST.md`；未测项保持“未测”
 - [ ] 询盘提交后 Supabase `inquiries` 表有新记录
 - [ ] 询盘接口限流生效（频繁提交返回 429）
 - [ ] 未配置通知变量时正常提交；通知接口失败时询盘仍成功

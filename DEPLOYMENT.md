@@ -1,11 +1,11 @@
 # 部署指南
 
-本文件说明 KZQ 项目部署到 Vercel（推荐）或 Cloudflare Pages（备选）的完整步骤。
+本文件说明 KZQ 的候选部署与验证流程。当前没有最终生产架构结论：Vercel 仅用于开发和海外临时预览；EdgeOne Makers 是国内/海外统一 Staging 候选；CloudBase 是 Supabase 被实测证明为国内瓶颈后的后端候选。正式结论为 **Pending real network validation**。
 
 ## 前置条件
 
 1. GitHub / GitLab 仓库（已推送项目代码）
-2. Supabase 项目（已完成 schema.sql / policies.sql / seed.sql / cms_seed.sql 部署）
+2. 独立 Supabase Staging 项目（不得使用客户 Production）
 3. 管理员账号已创建（详见 [README.md](./README.md) 第 2 节）
 
 ## 必填环境变量
@@ -17,6 +17,8 @@
 | `SUPABASE_SERVICE_ROLE_KEY` | Supabase service_role key（仅服务端） | `eyJhbGci...` |
 | `NEXT_PUBLIC_SITE_URL` | 站点正式域名 | `https://kzq.example.com` |
 | `NEXT_PUBLIC_DEMO_MODE` | 可选，Demo 模式开关 | `true` / `false` |
+| `STAGING_DIAGNOSTICS_ENABLED` | 可选，仅 Staging 诊断开关 | `true` / `false` |
+| `STAGING_DIAGNOSTICS_TOKEN` | 可选，仅 Staging Bearer secret | 不写示例值 |
 
 ### 可选询盘通知变量
 
@@ -33,11 +35,76 @@
 
 ⚠️ `SUPABASE_SERVICE_ROLE_KEY` 只能在服务端环境变量中配置，不可出现在客户端代码或 `NEXT_PUBLIC_*` 变量中。
 
+## EdgeOne Makers Staging（当前候选）
+
+官方与项目实测边界见 [兼容性矩阵](./docs/EDGEONE_COMPATIBILITY_MATRIX.md)。Makers 当前项目环境变量对所有环境生效，因此 Demo Preview 与 Supabase Staging 推荐创建两个独立 Makers 项目，避免 Preview 继承 Staging 密钥。
+
+### 通用构建设置
+
+- Framework preset：`Next.js`
+- Root Directory：`./`
+- Node.js：`20`（仓库 `.nvmrc` 同步固定）
+- Install Command：`npm ci`
+- Build Command：`npm run build`
+- Output Directory：`.next`
+
+不新增 `edgeone.json`：函数地域、路由重写和 timeout 尚无经部署验证的需求，先使用官方 Next.js preset 与控制台默认值。
+
+### 模式一：Demo Preview
+
+只设置：
+
+```text
+NEXT_PUBLIC_DEMO_MODE=true
+```
+
+不要设置任何 Supabase、通知、微信或诊断密钥。部署后运行：
+
+```powershell
+$env:BASE_URL = "https://<demo>.edgeone.app"
+$env:EXPECT_DEMO_MODE = "true"
+npm run check:deployed
+```
+
+该模式只证明 EdgeOne 可以构建和运行项目，不证明真实 Supabase、Storage、Auth 或中国网络可用。
+
+### 模式二：Supabase Staging
+
+```text
+NEXT_PUBLIC_DEMO_MODE=false
+NEXT_PUBLIC_SUPABASE_URL=<staging>
+NEXT_PUBLIC_SUPABASE_ANON_KEY=<staging>
+SUPABASE_SERVICE_ROLE_KEY=<staging>
+NEXT_PUBLIC_SITE_URL=<edgeone-staging-root-url>
+```
+
+可选诊断必须同时配置 `STAGING_DIAGNOSTICS_ENABLED=true` 与随机 `STAGING_DIAGNOSTICS_TOKEN`。调用时只通过 `Authorization: Bearer <token>`；不要把 token 放 URL。
+
+初始化顺序见 [STAGING_SUPABASE_SETUP.md](./docs/STAGING_SUPABASE_SETUP.md)。部署后默认只读验证：
+
+```powershell
+npm run test:smoke
+$env:BASE_URL = "https://<staging>.edgeone.app"
+npm run check:deployed
+$env:PLAYWRIGHT_BASE_URL = $env:BASE_URL
+npm run test:e2e:staging
+```
+
+写入 Smoke/E2E 还必须分别设置 `SMOKE_TEST_ALLOW_WRITES=true`、`STAGING_E2E_ALLOW_WRITES=true`，并设置 `KZQ_STAGING_CONFIRMATION=KZQ-STAGING-ONLY`。默认 GitHub Workflow 不执行远程写入。
+
+### 控制台人工步骤
+
+1. GitHub 导入 `kHuner9712/KZQH5`，选择 `codex/edgeone-staging-validation` 预览分支。
+2. 使用上方构建设置；保存环境变量后触发新部署，旧部署不会自动更新。
+3. 记录 build log、deployment URL、commit SHA 和 Function request id；不得上传 `.env`。
+4. 先验证 `/api/health`，再运行部署探测与 Staging E2E。
+5. 未取得部署权限时将结果记为“被阻塞”，不得把本地 Demo 记作 EdgeOne 通过。
+
 ---
 
-## 方案一：部署到 Vercel（推荐）
+## Vercel：开发和海外临时预览
 
-Vercel 是 Next.js 官方部署平台，零配置支持 App Router、ISR、Edge Functions。**当前主流程推荐使用 Vercel。**
+保留现有 Vercel 配置用于开发和海外临时 Preview，但当前正式生产目标不依赖 Vercel，也不得用 Vercel 结果替代 EdgeOne/中国网络验收。
 
 ### 步骤
 
@@ -88,7 +155,7 @@ Vercel 是 Next.js 官方部署平台，零配置支持 App Router、ISR、Edge 
 
 ---
 
-## 方案二：部署到 Cloudflare Pages（备选，非推荐）
+## Cloudflare Pages：历史备选（非当前验收范围）
 
 > ⚠️ Cloudflare Pages 不是当前主流程推荐方案。如选择此方案，需额外适配 `@cloudflare/next-on-pages`，且部分 Next.js 功能（如 ISR）支持有限，需自行测试兼容性。
 
@@ -139,9 +206,9 @@ Vercel 是 Next.js 官方部署平台，零配置支持 App Router、ISR、Edge 
 2. `supabase/policies.sql` — RLS 权限策略 + Storage buckets
 3. `supabase/seed.sql` — 基础种子数据（类目/产品/证书/公司/站点设置）
 4. `supabase/cms_seed.sql` — CMS 内容 + 产品 GEO 字段
-5. 按文件名时间顺序执行 `supabase/migrations` 中尚未执行的迁移；本阶段依次为 `20260713181111_upgrade_inquiries.sql`、`20260714032351_b2b_product_search_and_inquiry_items.sql`、`20260714084116_procurement_assets_and_projects.sql`
+5. 按文件名时间顺序执行尚未执行的时间戳 migration，直到 `20260715090000_security_hardening_explicit_grants.sql`
 
-> 如已执行过 `schema.sql` 但需升级到 CMS 版本，可单独执行 `supabase/migrations/cms_upgrade.sql` 再执行 `cms_seed.sql`。已经执行过的历史 migration 不要修改；只执行尚未应用的新 migration。
+> `cms_upgrade.sql` 已折叠进当前基础 SQL，不用于全新安装或标准自动流程。它仅供经审计的旧库兼容，且不得在安全加固 migration 后重跑。已经执行过的历史 migration 不要修改；只执行尚未应用的新 migration。
 
 最新 migration 会启用 `pg_trgm`、创建参数化产品搜索 RPC、`inquiry_items` 表及原子询盘写入函数。无需新增环境变量；请在执行后确认 `anon/authenticated` 可调用公开搜索 RPC，而原子写入 RPC 仅 `service_role` 可执行。
 
@@ -239,9 +306,13 @@ Vercel 是 Next.js 官方部署平台，零配置支持 App Router、ISR、Edge 
 
 ---
 
+## CloudBase 候选边界
+
+本阶段不迁移 CloudBase。只有真实国内对照证据证明 EdgeOne 页面正常而 Supabase 数据、Auth 或 Storage 是瓶颈后，才评估 `EdgeOne Makers + CloudBase 后端`；若 EdgeOne Next.js runtime 本身不兼容，再评估 CloudBase 应用部署。迁移成本与 Go/No-Go 条件见 [ADR-001](./docs/ADR-001-CHINA-DEPLOYMENT.md)。
+
 ## 域名与 SSL
 
-- Vercel / Cloudflare Pages 自动提供 HTTPS
+- Staging 使用平台提供的 HTTPS URL；自定义正式域名、DNS 和生产证书不在本阶段变更
 - 微信公众号菜单绑定 H5 时要求 HTTPS
 - 海外客户通过二维码访问时，HTTPS 是必须的
 - 建议使用顶级域名（如 `kzq.com`）或二级域名（如 `catalog.kzq.com`）
@@ -255,7 +326,7 @@ Vercel 是 Next.js 官方部署平台，零配置支持 App Router、ISR、Edge 
 - 数据库索引（见 schema.sql）
 
 如需进一步优化：
-- 在 Vercel 中开启 Edge Functions
+- 根据真实 EdgeOne Function 与 Supabase 耗时证据选择部署地域或后端迁移
 - 图片使用 Supabase Image Transformations
 ## 第一方统计与微信分享部署
 

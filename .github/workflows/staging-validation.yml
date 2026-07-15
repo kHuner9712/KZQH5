@@ -1,0 +1,74 @@
+name: Staging validation
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: EdgeOne Staging base URL
+        required: true
+        type: string
+      allow_writes:
+        description: Run explicitly marked Staging write tests
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  read-only:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: Read-only Supabase smoke
+        run: npm run test:smoke
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+      - name: Probe EdgeOne deployment
+        run: npm run check:deployed
+        env:
+          BASE_URL: ${{ inputs.base_url }}
+      - name: Read-only deployed E2E
+        run: npm run test:e2e:staging
+        env:
+          PLAYWRIGHT_BASE_URL: ${{ inputs.base_url }}
+
+  explicitly-enabled-writes:
+    if: ${{ inputs.allow_writes }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: Marked write Smoke
+        run: npm run test:smoke
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SMOKE_TEST_ALLOW_WRITES: "true"
+          KZQ_STAGING_CONFIRMATION: KZQ-STAGING-ONLY
+      - name: Marked write deployed E2E
+        run: npm run test:e2e:staging
+        env:
+          PLAYWRIGHT_BASE_URL: ${{ inputs.base_url }}
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          STAGING_E2E_ALLOW_WRITES: "true"
+          KZQ_STAGING_CONFIRMATION: KZQ-STAGING-ONLY

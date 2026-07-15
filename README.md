@@ -42,7 +42,7 @@ KZQ 品牌对外展示站点 + 后台内容管理系统（CMS）。基于 Next.j
 - **样式**：Tailwind CSS（自定义 graphite / steel / gold 配色）
 - **数据库 / 认证 / 文件存储**：Supabase (PostgreSQL + Auth + Storage)
 - **图标**：lucide-react
-- **部署**：Vercel（推荐）/ Cloudflare Pages（备选，需额外适配）
+- **部署状态**：Vercel 仅用于开发和海外临时预览；EdgeOne Makers 是国内/海外统一 Staging 候选；CloudBase 是国内后端候选；正式架构等待真实网络验证
 
 ## 项目结构
 
@@ -103,11 +103,17 @@ docs/LAUNCH_CHECKLIST.md       # 交付前检查清单
    - `Project URL` → `NEXT_PUBLIC_SUPABASE_URL`
    - `anon public` key → `NEXT_PUBLIC_SUPABASE_ANON_KEY`
    - `service_role` key → `SUPABASE_SERVICE_ROLE_KEY`（仅在服务端使用）
-3. 在 **SQL Editor** 中按顺序执行：
+3. 在 **SQL Editor** 中按顺序执行基础文件，并继续执行尚未折叠的时间戳 migration：
    - `supabase/schema.sql`
    - `supabase/policies.sql`
    - `supabase/seed.sql`（基础种子数据）
    - `supabase/cms_seed.sql`（CMS 内容 + 产品 GEO 字段）
+   - `supabase/migrations/20260713181111_upgrade_inquiries.sql`
+   - `supabase/migrations/20260714032351_b2b_product_search_and_inquiry_items.sql`
+   - `supabase/migrations/20260714084116_procurement_assets_and_projects.sql`
+   - `supabase/migrations/20260714125149_production_stability_analytics_wechat.sql`
+   - `supabase/migrations/20260714201851_enforce_inquiry_product_integrity.sql`
+   - `supabase/migrations/20260715090000_security_hardening_explicit_grants.sql`
 4. 在 **Storage** 中确认已创建两个 bucket：
    - `public-assets`（公开读，管理员写）
    - `private-assets`（预留，前台不可访问）
@@ -145,7 +151,7 @@ NEXT_PUBLIC_SITE_URL=http://localhost:3000
 
 > ⚠️ `SUPABASE_SERVICE_ROLE_KEY` 仅在服务端使用，绝不能写入 `NEXT_PUBLIC_*` 前缀变量，也不可提交到 Git。
 
-已部署过数据库的项目还需按时间顺序执行 `supabase/migrations`。依次执行 `20260713181111_upgrade_inquiries.sql`、`20260714032351_b2b_product_search_and_inquiry_items.sql` 与 `20260714084116_procurement_assets_and_projects.sql`；不要修改或重跑历史迁移。全新项目执行基础 SQL 后也要执行这些迁移，再按需加载 seed/demo 数据。
+已部署过数据库的项目只按记录执行尚未应用的时间戳 migration；不要重跑基础 SQL、seed 或历史 migration。`cms_upgrade.sql` 的内容已经折叠进当前 `schema.sql` / `policies.sql`，不属于全新安装序列，只可用于经人工审计的旧库兼容场景。完整顺序和停止点见 `docs/STAGING_SUPABASE_SETUP.md` 与数据库 Runbook。
 
 ### 4. 安装依赖并启动
 
@@ -169,6 +175,13 @@ npm run dev
 ## 部署
 
 详细步骤见 [DEPLOYMENT.md](./DEPLOYMENT.md)。
+
+当前部署结论不是“已选定正式平台”：
+
+- Vercel：开发与海外临时 Preview，不是当前正式生产目标。
+- EdgeOne Makers：全栈 Next.js Staging 候选；官方能力与项目实测必须区分。
+- CloudBase：只有 Supabase 被真实国内网络证据证明为瓶颈后，才进入后端迁移评估。
+- 正式架构：`Pending real network validation`。
 
 ## 生产稳定性、第一方统计与微信分享
 

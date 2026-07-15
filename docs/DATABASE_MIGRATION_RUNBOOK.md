@@ -28,7 +28,7 @@ order by version;
 2. `supabase/policies.sql`
 3. `supabase/seed.sql`
 4. `supabase/cms_seed.sql`
-5. `supabase/migrations` 中所有 SQL，按文件名升序执行
+5. `supabase/migrations` 中尚未执行的**时间戳 SQL**，按文件名升序执行
 
 当前 migration 顺序：
 
@@ -38,11 +38,10 @@ order by version;
 4. `20260714125149_production_stability_analytics_wechat.sql`
 5. `20260714201851_enforce_inquiry_product_integrity.sql`
 6. `20260715090000_security_hardening_explicit_grants.sql`
-7. `cms_upgrade.sql`（兼容性升级，全部语句必须保持幂等）
 
 应用完成后执行 `supabase/tests/permission_matrix.sql` 和 `supabase/tests/atomic_inquiry.sql`。
 
-`schema.sql` / `policies.sql` 只定义 migration 序列之前的基础对象；采购资料、案例、统计等对象由对应 migration 创建。不要把这些对象再次复制回基础快照，否则全新安装会与历史 migration 重复创建。
+`schema.sql` / `policies.sql` 已折叠 CMS 表、字段和 CMS RLS；`cms_upgrade.sql` 是旧库兼容脚本，不得加入当前全新安装或标准自动验证序列，也不得在安全加固 migration 后重跑。询盘第一份 migration 的字段多数已折叠，但外键、补充索引和触发器仍由该 migration 提供，所以时间戳 migration 仍按上列执行。采购资料、案例、统计等对象由对应 migration 创建。
 
 注意：直接运行 `supabase start` 会先自动扫描时间戳 migration，而不会先执行仓库根顺序中的 `schema.sql`、`policies.sql` 和 seed，因此空库会在第一份增量 migration 处停止。全新安装应使用本节顺序或下方验证脚本，不要把 CLI 默认启动顺序当作正式安装顺序。
 

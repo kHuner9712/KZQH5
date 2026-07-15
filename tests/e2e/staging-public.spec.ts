@@ -1,0 +1,216 @@
+import { createClient } from "@supabase/supabase-js";
+import { expect, test, type Page } from "@playwright/test";
+import type { Database } from "@/types/database";
+
+const writeEnabled = process.env.STAGING_E2E_ALLOW_WRITES === "true";
+const writeConfirmed =
+  process.env.KZQ_STAGING_CONFIRMATION === "KZQ-STAGING-ONLY";
+
+if (
+  writeEnabled &&
+  (!writeConfirmed ||
+    !process.env.NEXT_PUBLIC_SUPABASE_URL ||
+    !process.env.SUPABASE_SERVICE_ROLE_KEY)
+) {
+  throw new Error(
+    "Staging write E2E refused: Staging confirmation and server-only Supabase credentials are required",
+  );
+}
+
+async function expectHtmlLanguage(
+  page: Page,
+  path: string,
+  language: "zh-CN" | "en",
+) {
+  await page.goto(path);
+  await expect(page.locator("html")).toHaveAttribute("lang", language);
+  await expect(page.locator("main")).toBeVisible();
+  await expect(page.locator('link[rel="canonical"]')).toHaveAttribute(
+    "href",
+    /^https?:\/\//,
+  );
+  await expect(
+    page.locator('link[rel="alternate"][hreflang="zh-CN"]'),
+  ).toHaveCount(1);
+  await expect(
+    page.locator('link[rel="alternate"][hreflang="en"]'),
+  ).toHaveCount(1);
+}
+
+test.describe("deployed Staging read-only acceptance", () => {
+  test("Chinese and English public routes, metadata, and locale switching", async ({
+    page,
+  }) => {
+    await expectHtmlLanguage(page, "/", "zh-CN");
+    await expectHtmlLanguage(page, "/en", "en");
+
+    const chineseSwitch = page.locator('a[href="/"]').first();
+    await expect(chineseSwitch).toBeVisible();
+
+    for (const path of [
+      "/products",
+      "/certificates",
+      "/projects",
+      "/more",
+      "/privacy",
+      "/en/products",
+      "/en/certificates",
+      "/en/projects",
+      "/en/more",
+      "/en/privacy",
+    ]) {
+      await page.goto(path);
+      await expect(page.locator("main")).toBeVisible();
+      await expect(page).toHaveTitle(/KZQ/i);
+    }
+  });
+
+  test("product search, category, detail, and procurement resources render", async ({
+    page,
+  }) => {
+    await page.goto("/products?q=a");
+    await expect(page.locator("main")).toBeVisible();
+
+    const categoryLink = page.locator('a[href*="category="]').first();
+    if (await categoryLink.count()) {
+      await categoryLink.click();
+      await expect(page).toHaveURL(/category=/);
+    }
+
+    await page.goto("/products");
+    const productLink = page.locator('article a[href^="/products/"]').first();
+    await expect(productLink).toBeVisible();
+    await productLink.click();
+    await expect(page).toHaveURL(/\/products\/[^/?]+/);
+    await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+    await expect(page.locator("main")).toBeVisible();
+  });
+
+  test("sitemap, 404, and health endpoint are deployment-safe", async ({
+    page,
+    request,
+  }) => {
+    const sitemap = await request.get("/sitemap.xml");
+    expect(sitemap.ok()).toBe(true);
+    expect(sitemap.headers()["content-type"]).toContain("xml");
+    expect(await sitemap.text()).toContain("<urlset");
+
+    const robots = await request.get("/robots.txt");
+    expect(robots.ok()).toBe(true);
+    expect(await robots.text()).toMatch(/User-agent:/i);
+
+    const health = await request.get("/api/health");
+    expect(health.ok()).toBe(true);
+    expect(health.headers()["cache-control"]).toBe("no-store");
+    expect(await health.json()).toMatchObject({
+      success: true,
+      app: "kzq-h5",
+      demo: false,
+      dataProvider: "supabase",
+      runtime: "nodejs",
+    });
+
+    const missing = await page.goto(
+      `/staging-regression-missing-${crypto.randomUUID()}`,
+    );
+    expect(missing?.status()).toBe(404);
+    await expect(page.locator("main")).toBeVisible();
+  });
+});
+
+async function submitInquiry(
+  page: Page,
+  locale: "zh" | "en",
+  marker: string,
+  suffix: string,
+) {
+  const prefix = locale === "en" ? "/en" : "";
+  await page.goto(
+    `${prefix}/contact?source=staging-e2e&utm_source=regression&utm_medium=automated&utm_campaign=${encodeURIComponent(marker)}`,
+  );
+  await page.locator('[name="name"]').fill(`${marker} ${suffix}`);
+  if (locale === "zh") {
+    await page.locator('[name="phone"]').fill("13800000000");
+  } else {
+    await page.locator('[name="email"]').fill("regression@example.invalid");
+  }
+  const product = page.locator('[name="interested_product"]');
+  if (await product.isEnabled()) await product.fill(marker);
+  await page.locator('[name="message"]').fill(marker);
+  await page.locator("#privacy-accepted").check();
+
+  const responsePromise = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/api/inquiries") &&
+      response.request().method() === "POST",
+  );
+  await page.locator('button[type="submit"]').click();
+  const response = await responsePromise;
+  expect(response.ok()).toBe(true);
+  const body = (await response.json()) as {
+    success?: boolean;
+    id?: string;
+    submittedProductCount?: number;
+  };
+  expect(body.success).toBe(true);
+  expect(body.id).toMatch(/^[0-9a-f-]{36}$/i);
+  await expect(page.locator("main")).toContainText(/提交成功|submitted/i);
+  return body;
+}
+
+test.describe("deployed Staging explicitly enabled write acceptance", () => {
+  test.skip(!writeEnabled, "Remote writes require explicit opt-in");
+
+  test("writes Chinese, English, and multi-product inquiries then cleans exact IDs", async ({
+    page,
+  }) => {
+    const marker = `[REGRESSION TEST] ${crypto.randomUUID()}`;
+    const created: Array<{ id: string; name: string }> = [];
+    const service = createClient<Database>(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!,
+      { auth: { persistSession: false, autoRefreshToken: false } },
+    );
+
+    try {
+      const zh = await submitInquiry(page, "zh", marker, "zh");
+      created.push({ id: zh.id!, name: `${marker} zh` });
+
+      const en = await submitInquiry(page, "en", marker, "en");
+      created.push({ id: en.id!, name: `${marker} en` });
+
+      await page.goto("/products");
+      const addButtons = page.getByRole("button", {
+        name: /加入询盘|Add to inquiry/i,
+      });
+      expect(await addButtons.count()).toBeGreaterThanOrEqual(2);
+      await addButtons.nth(0).click();
+      await addButtons.nth(1).click();
+      const multi = await submitInquiry(page, "zh", marker, "multi");
+      created.push({ id: multi.id!, name: `${marker} multi` });
+      expect(multi.submittedProductCount).toBeGreaterThanOrEqual(2);
+
+      for (const row of created) {
+        const stored = await service
+          .from("inquiries")
+          .select("id, name, source, utm_source, inquiry_items(id)")
+          .eq("id", row.id)
+          .eq("name", row.name)
+          .single();
+        expect(stored.error).toBeNull();
+        expect(stored.data?.source).toBe("staging-e2e");
+        expect(stored.data?.utm_source).toBe("regression");
+      }
+    } finally {
+      for (const row of created) {
+        await service.from("inquiry_items").delete().eq("inquiry_id", row.id);
+        await service
+          .from("inquiries")
+          .delete()
+          .eq("id", row.id)
+          .eq("name", row.name)
+          .like("message", `${marker}%`);
+      }
+    }
+  });
+});

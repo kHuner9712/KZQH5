@@ -12,9 +12,13 @@
     "test": "npm run test:unit",
     "test:unit": "vitest run",
     "test:e2e": "playwright test",
-    "test:e2e:demo": "cross-env NEXT_PUBLIC_DEMO_MODE=true playwright test",
+    "test:e2e:demo": "cross-env NEXT_PUBLIC_DEMO_MODE=true playwright test tests/e2e/demo-public.spec.ts",
+    "test:e2e:staging": "playwright test tests/e2e/staging-public.spec.ts",
     "test:smoke": "vitest run --config vitest.smoke.config.ts",
     "test:database": "node scripts/verify-database.mjs",
+    "test:database:staging": "node scripts/verify-staging-database.mjs",
+    "database:init:staging": "node scripts/init-staging-database.mjs",
+    "check:deployed": "node scripts/check-deployed-site.mjs",
     "check": "npm run typecheck && npm run lint && npm run test:unit && npm run build:demo"
   },
   "dependencies": {

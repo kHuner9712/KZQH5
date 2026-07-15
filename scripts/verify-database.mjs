@@ -98,7 +98,7 @@ function gitFile(commit, path) {
 
 function migrations() {
   return readdirSync(resolve(root, "supabase/migrations"))
-    .filter((name) => name.endsWith(".sql"))
+    .filter((name) => /^\d{14}_.+\.sql$/.test(name))
     .sort()
     .map((name) => `supabase/migrations/${name}`);
 }
