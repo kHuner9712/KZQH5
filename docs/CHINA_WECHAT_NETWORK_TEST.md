@@ -68,3 +68,16 @@ Still required after redeployment:
 - mainland desktop comparison;
 - a separate overseas-network comparison;
 - page, data, Storage, search, inquiry and timing evidence for each path.
+
+# 2026-07-17 final remote gate note
+
+The stable HTTPS host passed the automated public-route, SEO-origin and Health
+checks from the current non-China execution environment. Plain HTTP still
+returned 200 instead of redirecting to HTTPS, including a request with a path
+and query string. This is deployment-configuration failure evidence only; it is
+not a mainland carrier, device, or WeChat measurement.
+
+No matrix row is promoted to pass. No inquiry was submitted and no file was
+uploaded. China Mobile, China Unicom, China Telecom, mainland home broadband,
+WeChat, iOS, Android, mainland desktop, and an independent overseas comparison
+remain **Not executed**.

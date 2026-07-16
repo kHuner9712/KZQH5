@@ -53,23 +53,38 @@ async function requestWithoutLoop(initialUrl) {
 }
 
 if (baseUrl.protocol === "https:") {
-  const insecureUrl = new URL("/", baseUrl);
-  insecureUrl.protocol = "http:";
-  try {
-    const { response, redirects, finalUrl } =
-      await requestWithoutLoop(insecureUrl);
-    const final = new URL(finalUrl);
-    console.log(
-      `HTTP redirect status=${response.status} redirects=${redirects} final=${finalUrl}`,
-    );
-    if (redirects === 0) failures.push("HTTP origin: did not redirect to HTTPS");
-    if (final.protocol !== "https:" || final.host !== baseUrl.host) {
-      failures.push("HTTP origin: redirect target is not the stable HTTPS host");
+  for (const path of [
+    "/",
+    "/products?source=regression-gate&utm_medium=probe",
+  ]) {
+    const insecureUrl = new URL(path, baseUrl);
+    insecureUrl.protocol = "http:";
+    try {
+      const { response, redirects, finalUrl } =
+        await requestWithoutLoop(insecureUrl);
+      const final = new URL(finalUrl);
+      console.log(
+        `HTTP redirect ${path} status=${response.status} redirects=${redirects} final=${finalUrl}`,
+      );
+      if (redirects === 0)
+        failures.push(`HTTP origin ${path}: did not redirect to HTTPS`);
+      if (final.protocol !== "https:" || final.host !== baseUrl.host) {
+        failures.push(
+          `HTTP origin ${path}: redirect target is not the stable HTTPS host`,
+        );
+      }
+      if (
+        final.pathname !== insecureUrl.pathname ||
+        final.search !== insecureUrl.search
+      ) {
+        failures.push(`HTTP origin ${path}: redirect did not preserve path/query`);
+      }
+      if (!response.ok)
+        failures.push(`HTTP origin ${path}: final HTTP ${response.status}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      failures.push(`HTTP origin ${path}: ${message}`);
     }
-    if (!response.ok) failures.push(`HTTP origin: final HTTP ${response.status}`);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    failures.push(`HTTP origin: ${message}`);
   }
 }
 

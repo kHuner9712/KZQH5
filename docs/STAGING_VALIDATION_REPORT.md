@@ -255,3 +255,71 @@ the prior EdgeOne artifact. The correct forward action is to redeploy current
 redirect, then rerun `allow_writes=false`. Only a complete read-only pass may
 unlock `allow_writes=true`.
 
+# 2026-07-17 Final Remote Staging Acceptance Execution
+
+Baseline: `b8440fdaeca0557b8d81ca2f93ff992bfbcfaaa6`.
+
+Stable Staging URL: `https://h5.kzqdecor.com`.
+
+## Result
+
+The deployment configuration gate **failed**. Every requested HTTPS route
+returned 200 without an EdgeOne 401, preview-auth page, preview query token, or
+redirect to an `edgeone.dev` host. Canonical, Open Graph URL, and sitemap
+origins used the stable HTTPS host. `/api/health` was an **Automated pass** with
+`success=true`, `demo=false`, `dataProvider=supabase`, and `runtime=nodejs`.
+The Health commit remained `unknown`, so the EdgeOne deployment SHA is
+**Blocked** and is not inferred from the repository baseline.
+
+Plain HTTP was the blocking P1 result. Both `/` and paths containing query
+parameters returned HTTP 200 with zero redirects. Therefore HTTPS enforcement,
+path preservation, and query-string preservation did not pass. The existing
+deployment probe was minimally extended to assert the latter two properties on
+future runs; this is **Fixed** test coverage, not a fix to the remote EdgeOne
+configuration.
+
+Per the write safety gate, no GitHub Workflow was triggered. The read-only
+Workflow URL/Run ID/Step statuses and the write Workflow URL/Run ID/Step
+statuses are **Skipped by guard**. Remote database counts and permission
+checks, Dashboard comparison, protected administrator E2E, inquiry acceptance,
+CRUD, and Storage are **Not executed**. No remote row or file was created,
+updated, or deleted, so cleanup is an **Automated pass: nothing to clean**.
+
+## Local regression evidence
+
+| Command | Exit | Result | Classification |
+| --- | ---: | --- | --- |
+| `BASE_URL=https://h5.kzqdecor.com npm run check:deployed` | 1 | HTTPS/SEO/Health passed; HTTP returned 200 with no redirect | Blocked / P1 |
+| HTTP path/query header probes | 0 | both responses were 200, not redirects | Automated failure evidence |
+| `npm ci` | 0 | 521 packages installed from the lockfile | Automated pass |
+| `npm run check` | 0 | typecheck and lint clean; 17 test files / 81 unit tests; Demo build 41/41 pages | Automated pass |
+| `PORT=3129 npm run test:e2e:demo -- --output=.tmp-final-remote-staging-demo-e2e` | 0 | 6 passed, 2 expected skips | Automated pass |
+
+The Playwright tests completed before its dedicated Windows WebServer stopped.
+Only the PID printed by that run was terminated; the test command then exited
+0. No unrelated process was inspected or stopped.
+
+## Acceptance summary
+
+| Area | Result |
+| --- | --- |
+| Operator-supplied domain, TLS, environment and GitHub-secret configuration | Manual pass; no values were read or printed |
+| EdgeOne deployment SHA | Blocked (`/api/health.commit=unknown`) |
+| Stable HTTPS routes, no 401/preview token/project-domain redirect | Automated pass |
+| Canonical, Open Graph URL, sitemap stable origin | Automated pass |
+| HTTP to HTTPS with path and query preservation | Blocked / P1 |
+| Read-only Staging Workflow | Skipped by guard |
+| Write-enabled Staging Workflow | Skipped by guard |
+| Database count-only summary and RLS matrix | Not executed |
+| Dashboard comparison and administrator E2E | Not executed |
+| Inquiry write matrix and exact cleanup | Not executed |
+| CRUD and Storage | Not executed |
+| Secret safety | Automated pass; no Secret, administrator identity, user UUID, inquiry contact, connection string, or test token was printed or stored |
+
+No seed, migration, RLS policy, authentication behavior, visual design,
+database, Storage, DNS, or CloudBase resource was changed. The remote rollback
+path is to revert the EdgeOne redirect-rule change if the operator later applies
+one; the repository rollback path for this execution is to revert the probe and
+documentation commit. After fixing HTTP enforcement, rerun the read-only
+Workflow first and enable writes only after every required read-only step passes.
+

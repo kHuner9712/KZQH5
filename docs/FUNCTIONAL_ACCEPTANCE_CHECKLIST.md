@@ -99,3 +99,20 @@ stable Staging domain. A Staging pass must not be described as Production.
 The deployed probe and Staging E2E now reject a wrong SEO origin and missing
 HTTP-to-HTTPS redirect. They do not alter business behavior or platform state.
 
+## 2026-07-17 Final Remote Staging acceptance update
+
+| Acceptance item | Evidence | Result |
+| --- | --- | --- |
+| Stable HTTPS public routes, SEO origin and Health | real remote probe; all requested HTTPS routes returned 200 and Health reported non-Demo Supabase on Node.js | Automated pass |
+| HTTP to HTTPS, path and query preservation | `/`, `/products`, and a query-bearing URL returned HTTP 200 without a redirect | Blocked / P1 |
+| Local code regression | `npm ci` exit 0; `npm run check` exit 0 with 81 tests; Demo E2E exit 0 with 6 passed / 2 expected skips | Automated pass |
+| Read-only GitHub Staging Workflow | deployment guard failed before dispatch | Skipped by guard |
+| Remote database, Dashboard and administrator read-only acceptance | read-only Workflow did not pass | Not executed |
+| Write Workflow, inquiries, CRUD and Storage | write guard remained closed | Not executed |
+| Test-data cleanup | no remote test data or file was created | Automated pass: nothing to clean |
+
+The local environment had all five credential variables `missing`; this does
+not assert that GitHub Environment settings are missing because the guarded
+Workflow was not dispatched. No credential value or protected identity was
+read, printed, or saved.
+
