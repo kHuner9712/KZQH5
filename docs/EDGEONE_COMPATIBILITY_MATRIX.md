@@ -69,3 +69,22 @@ The EdgeOne console path for a stable test entry is **Domain Management → Add
 custom domain → Associate with Preview environment**. Temporary three-hour
 preview URLs must not be persisted in repository configuration or SEO output.
 
+# 2026-07-16 stable-domain evidence update
+
+| Capability | Evidence | Current conclusion |
+| --- | --- | --- |
+| Custom domain | `h5.kzqdecor.com` showed Effective | Manual pass |
+| Custom-domain TLS | HTTPS showed Deployed and HTTPS requests validated successfully | Manual + automated pass |
+| Environment link | domain table showed Production | Manual pass; this remains a Staging technical acceptance target |
+| Public Next.js routes | requested Chinese, English, admin-login, metadata and Health routes returned 200 | Automated pass |
+| Preview protection removal | no 401, `Tencent Edgeone` page, project-domain redirect, or preview parameter on stable HTTPS routes | Automated pass |
+| Health Route Handler | Supabase, non-Demo, Node.js result | Automated pass |
+| Stable SEO origin | canonical, Open Graph and sitemap still reference the previous project domain | Blocked / P1; redeploy after environment update |
+| HTTP-to-HTTPS | HTTP returned 200 directly | Blocked / P1; enable EdgeOne redirect |
+| Deployment SHA | console list could not be read reliably in this execution | Blocked; stale SEO output already prevents acceptance |
+| Probe coverage | stable final host, preview-auth page, exact SEO origin, sitemap origin, Health provider/runtime and HTTP redirect are now asserted | Fixed locally |
+
+The remote read-only/write workflows remain guarded until a new deployment
+serves the stable origin and HTTP redirects to HTTPS. No EdgeOne configuration
+was changed during this execution.
+

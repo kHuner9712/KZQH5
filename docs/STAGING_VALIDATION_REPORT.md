@@ -173,3 +173,85 @@ No WeChat, China Mobile, China Unicom, China Telecom, home broadband, iOS
 Safari, Android browser, or overseas comparison evidence was collected. ADR-001
 therefore remains **Pending real network validation**.
 
+# 2026-07-16 Stable Domain Remote Staging Acceptance
+
+Baseline: `cd21b755a9e13a7a224b10cf04c3224946560aad`
+
+Stable Staging domain: `https://h5.kzqdecor.com`
+
+## Deployment and public-domain result
+
+- **Manual pass**: the EdgeOne domain table showed `h5.kzqdecor.com` as
+  Effective, HTTPS as Deployed, and the linked environment as Production.
+- **Automated pass**: all requested HTTPS routes returned HTTP 200 on the
+  stable host without an EdgeOne 401 page, preview authentication page,
+  redirect loop, project-domain redirect, or preview query parameter.
+- **Automated pass**: `/api/health` returned `success=true`, `demo=false`,
+  `dataProvider=supabase`, and `runtime=nodejs`; `commit=unknown` was accepted.
+- **Blocked**: the EdgeOne deployment list did not yield a reliable commit-SHA
+  read through the console session. Remote GitHub `main` was independently
+  confirmed identical to the baseline.
+- **Blocked / P1**: the deployed HTML and sitemap still used the previous
+  EdgeOne project domain for canonical, Open Graph, and sitemap URLs. The
+  deployed artifact therefore has not absorbed the required stable
+  `NEXT_PUBLIC_SITE_URL` configuration and must not be used to validate the
+  latest Staging configuration.
+- **Blocked / P1**: plain HTTP returned 200 instead of redirecting to HTTPS.
+
+Per the deployment-version guard, no GitHub Staging workflow was triggered and
+no remote write was attempted. Both read-only and write Workflow URLs are
+therefore **Not executed / Skipped by guard**, not Passed.
+
+## Local regression
+
+The checked-out working directory had unrelated live Node file locks. No
+unrelated process was inspected or terminated. A clean archive of the same SHA
+was tested in an isolated temporary directory.
+
+| Command | Exit | Result | Classification |
+| --- | ---: | --- | --- |
+| `npm ci` in the active workspace | 1 | npm cache permission failure | Local tool failure; superseded |
+| two workspace cache retries | 1 each | stopped after prolonged file-lock stalls | Local tool failure; superseded |
+| `npm ci` | 0 | 521 packages installed from the lockfile in the isolated copy | Automated pass |
+| `npm run check` | 0 | typecheck and lint clean; 17 files / 81 unit tests; Demo build 41/41 pages | Automated pass |
+| `npm run test:e2e:demo` on the occupied default port | 1 | reused an unrelated existing server; 5 failed, 1 passed, 2 skipped | Local port conflict; superseded |
+| `PORT=3117 npm run test:e2e:demo` | 0 | 6 passed, 2 expected skips | Automated pass |
+| `BASE_URL=https://h5.kzqdecor.com npm run check:deployed` (original probe) | 0 | exposed a false-pass coverage gap | Fixed |
+| strengthened deployed probe against the same URL | 1 | correctly rejected HTTP downgrade and stale SEO origins | Automated regression evidence |
+
+The first workspace `npm ci` attempt failed because npm could not write its
+global cache. Two subsequent workspace attempts were stopped after prolonged
+Windows file-lock stalls. The isolated-copy command above is the final result.
+The first workspace Demo E2E result was also superseded by the isolated-port
+rerun; no unrelated server process was stopped.
+
+## Guarded acceptance areas
+
+| Area | Status | Reason |
+| --- | --- | --- |
+| Read-only GitHub workflow and step statuses | Skipped by guard | deployed stable-domain configuration mismatch |
+| Remote database count summary and permission matrix | Not executed | workflow intentionally not triggered |
+| Dashboard/database comparison and recent inquiries | Not executed | deployment guard stopped credentialed acceptance |
+| Protected admin E2E and CSV | Not executed | deployment guard stopped credentialed acceptance |
+| Inquiry write matrix and exact cleanup | Not executed | read-only gate did not pass |
+| CRUD and Storage | Not executed | write gate did not run |
+| Existing inquiry classification or deletion | Not executed | no rows or identifiers were read; nothing deleted |
+
+## Regression coverage and rollback
+
+The deployed probe now verifies the stable origin for canonical/Open Graph,
+sitemap origin, HTTP-to-HTTPS redirect, absence of the EdgeOne project domain,
+preview-auth pages, stable final host, and the complete Health provider/runtime
+contract. Staging E2E now enforces the same origin and downgrade checks.
+
+No Secret, administrator identifier, user identifier, inquiry contact, database
+row, or diagnostic token was printed or stored. No database, Storage, DNS,
+EdgeOne setting, seed, migration, RLS policy, or production resource was
+modified.
+
+Rollback is limited to reverting the probe/E2E assertion commit or redeploying
+the prior EdgeOne artifact. The correct forward action is to redeploy current
+`main` after the stable site URL is saved and enable an EdgeOne HTTP-to-HTTPS
+redirect, then rerun `allow_writes=false`. Only a complete read-only pass may
+unlock `allow_writes=true`.
+

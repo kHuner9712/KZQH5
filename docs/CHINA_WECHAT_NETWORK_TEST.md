@@ -46,3 +46,25 @@ browser, China Mobile, China Unicom, China Telecom, home broadband, iOS Safari,
 Android browser, and an overseas comparison still require real devices and
 networks. Use only `[REGRESSION TEST]` inquiry data and `regression-test-` files
 when those tests are authorized.
+
+# 2026-07-16 stable-domain note
+
+The stable Staging host is reachable from the current non-China automated
+execution environment over valid HTTPS and no longer presents EdgeOne preview
+authentication. This is **Automated pass** for the overseas automation point
+only; it is not evidence for any mainland carrier, WeChat, iOS, Android, or
+home-broadband row.
+
+The current deployment is **Blocked** for real-device testing because its SEO
+URLs still use the previous project domain and plain HTTP does not redirect to
+HTTPS. No test inquiry was submitted, no test file was uploaded, and no matrix
+row is promoted to pass.
+
+Still required after redeployment:
+
+- WeChat embedded browser on China Mobile, China Unicom and China Telecom;
+- WeChat embedded browser on mainland home broadband;
+- iOS Safari and Android browser;
+- mainland desktop comparison;
+- a separate overseas-network comparison;
+- page, data, Storage, search, inquiry and timing evidence for each path.

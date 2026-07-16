@@ -22,6 +22,7 @@ const paths = [
   "/en/more",
   "/privacy",
   "/en/privacy",
+  "/admin/login",
   "/products?q=a",
   "/sitemap.xml",
   "/robots.txt",
@@ -49,6 +50,27 @@ async function requestWithoutLoop(initialUrl) {
     current = new URL(location, current);
   }
   throw new Error("more than 8 redirects");
+}
+
+if (baseUrl.protocol === "https:") {
+  const insecureUrl = new URL("/", baseUrl);
+  insecureUrl.protocol = "http:";
+  try {
+    const { response, redirects, finalUrl } =
+      await requestWithoutLoop(insecureUrl);
+    const final = new URL(finalUrl);
+    console.log(
+      `HTTP redirect status=${response.status} redirects=${redirects} final=${finalUrl}`,
+    );
+    if (redirects === 0) failures.push("HTTP origin: did not redirect to HTTPS");
+    if (final.protocol !== "https:" || final.host !== baseUrl.host) {
+      failures.push("HTTP origin: redirect target is not the stable HTTPS host");
+    }
+    if (!response.ok) failures.push(`HTTP origin: final HTTP ${response.status}`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    failures.push(`HTTP origin: ${message}`);
+  }
 }
 
 for (const path of paths) {
@@ -80,21 +102,27 @@ for (const path of paths) {
     const previewToken = previewParameterPattern.test(
       `${body}\n${finalUrl}`,
     );
+    const final = new URL(finalUrl);
+    const previewAuthPage = isHtml && /Tencent Edgeone/i.test(title);
 
     console.log(
       `${path} status=${response.status} time=${elapsedMs}ms type=${contentType} lang=${htmlLang} title=${JSON.stringify(title)} redirects=${redirects} final=${finalUrl}`,
     );
 
     if (!response.ok) failures.push(`${path}: HTTP ${response.status}`);
-    if (isHtml && title === "(missing)")
+    if (final.host !== baseUrl.host)
+      failures.push(`${path}: redirected away from stable host`);
+    if (isHtml && title === "(missing)" && path !== "/admin/login")
       failures.push(`${path}: missing title`);
     if (platformError) failures.push(`${path}: platform error page detected`);
+    if (previewAuthPage)
+      failures.push(`${path}: EdgeOne preview authentication page detected`);
     if (!expectDemo && demoContent)
       failures.push(`${path}: Demo content detected`);
     if (previewToken)
       failures.push(`${path}: EdgeOne preview token leaked into content or URL`);
 
-    if (isHtml && response.ok) {
+    if (isHtml && response.ok && path !== "/admin/login") {
       const canonical = body.match(
         /<link[^>]+rel=["']canonical["'][^>]+href=["']([^"']+)["']/i,
       )?.[1];
@@ -103,10 +131,28 @@ for (const path of paths) {
       )?.[1];
       if (!canonical) failures.push(`${path}: missing canonical`);
       if (!openGraphUrl) failures.push(`${path}: missing Open Graph URL`);
+      if (canonical && new URL(canonical, baseUrl).origin !== baseUrl.origin)
+        failures.push(`${path}: canonical does not use stable origin`);
+      if (
+        openGraphUrl &&
+        new URL(openGraphUrl, baseUrl).origin !== baseUrl.origin
+      )
+        failures.push(`${path}: Open Graph URL does not use stable origin`);
       if (canonical && previewParameterPattern.test(canonical))
         failures.push(`${path}: preview token in canonical`);
       if (openGraphUrl && previewParameterPattern.test(openGraphUrl))
         failures.push(`${path}: preview token in Open Graph URL`);
+    }
+
+    if (path === "/sitemap.xml" && response.ok) {
+      if (!body.includes(`${baseUrl.origin}/`))
+        failures.push(`${path}: stable origin is missing`);
+      if (
+        baseUrl.hostname !== "edgeone.dev" &&
+        !baseUrl.hostname.endsWith(".edgeone.dev") &&
+        /https?:\/\/[^<]*edgeone\.dev/i.test(body)
+      )
+        failures.push(`${path}: EdgeOne project domain leaked into sitemap`);
     }
 
     if (path === "/api/health" && response.ok) {
@@ -119,6 +165,10 @@ for (const path of paths) {
             `${path}: demo=${String(health.demo)} but EXPECT_DEMO_MODE=${String(expectDemo)}`,
           );
         }
+        if (!expectDemo && health.dataProvider !== "supabase")
+          failures.push(`${path}: dataProvider is not supabase`);
+        if (health.runtime !== "nodejs")
+          failures.push(`${path}: runtime is not nodejs`);
       } catch {
         failures.push(`${path}: invalid JSON`);
       }

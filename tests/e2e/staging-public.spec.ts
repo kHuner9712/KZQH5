@@ -22,12 +22,15 @@ async function expectHtmlLanguage(
   path: string,
   language: "zh-CN" | "en",
 ) {
+  const expectedOrigin = new URL(process.env.PLAYWRIGHT_BASE_URL!).origin;
   await page.goto(path);
   await expect(page.locator("html")).toHaveAttribute("lang", language);
   await expect(page.locator("main")).toBeVisible();
   const canonical = page.locator('link[rel="canonical"]');
   await expect(canonical).toHaveAttribute("href", /^https?:\/\//);
-  expect(await canonical.getAttribute("href")).not.toMatch(/eo_(?:token|time)=/i);
+  const canonicalHref = await canonical.getAttribute("href");
+  expect(canonicalHref).not.toMatch(/eo_(?:token|time)=/i);
+  expect(new URL(canonicalHref!).origin).toBe(expectedOrigin);
   await expect(
     page.locator('link[rel="alternate"][hreflang="zh-CN"]'),
   ).toHaveCount(1);
@@ -36,9 +39,9 @@ async function expectHtmlLanguage(
   ).toHaveCount(1);
   const openGraphUrl = page.locator('meta[property="og:url"]');
   await expect(openGraphUrl).toHaveAttribute("content", /^https?:\/\//);
-  expect(await openGraphUrl.getAttribute("content")).not.toMatch(
-    /eo_(?:token|time)=/i,
-  );
+  const openGraphContent = await openGraphUrl.getAttribute("content");
+  expect(openGraphContent).not.toMatch(/eo_(?:token|time)=/i);
+  expect(new URL(openGraphContent!).origin).toBe(expectedOrigin);
 }
 
 test.describe("deployed Staging read-only acceptance", () => {
@@ -110,12 +113,27 @@ test.describe("deployed Staging read-only acceptance", () => {
     page,
     request,
   }) => {
+    const expectedBaseUrl = new URL(process.env.PLAYWRIGHT_BASE_URL!);
     const sitemap = await request.get("/sitemap.xml");
     expect(sitemap.ok()).toBe(true);
     expect(sitemap.headers()["content-type"]).toContain("xml");
     const sitemapBody = await sitemap.text();
     expect(sitemapBody).toContain("<urlset");
+    expect(sitemapBody).toContain(`${expectedBaseUrl.origin}/`);
     expect(sitemapBody).not.toMatch(/eo_(?:token|time)=/i);
+
+    if (expectedBaseUrl.protocol === "https:") {
+      const insecureUrl = new URL("/", expectedBaseUrl);
+      insecureUrl.protocol = "http:";
+      const insecure = await request.get(insecureUrl.href, { maxRedirects: 0 });
+      expect([301, 302, 307, 308]).toContain(insecure.status());
+      const redirectTarget = new URL(
+        insecure.headers().location || "",
+        insecureUrl,
+      );
+      expect(redirectTarget.protocol).toBe("https:");
+      expect(redirectTarget.host).toBe(expectedBaseUrl.host);
+    }
 
     const robots = await request.get("/robots.txt");
     expect(robots.ok()).toBe(true);

@@ -76,3 +76,26 @@
 Acceptance must be rerun after this branch is deployed to an un-tokenized,
 stable Staging domain. A Staging pass must not be described as Production.
 
+# 2026-07-16 Stable domain acceptance delta
+
+| Area | Result | Evidence / next action |
+| --- | --- | --- |
+| Remote `main` baseline | Automated pass | baseline and remote `main` are identical |
+| Stable HTTPS routes | Automated pass | requested routes returned 200 on `h5.kzqdecor.com`; no preview auth or tokenized URL |
+| Health | Automated pass | non-Demo Supabase provider on Node.js runtime |
+| EdgeOne domain binding | Manual pass | Effective, HTTPS Deployed, linked to Production environment (Staging technical target only) |
+| Deployment configuration | Blocked | public SEO output still reflects the prior project domain; redeploy required |
+| HTTP downgrade protection | Blocked / P1 | HTTP returns 200 instead of HTTPS redirect |
+| canonical / Open Graph / sitemap | Blocked / P1 | stale project-domain origin detected |
+| Local lockfile install | Automated pass | isolated same-SHA copy, 521 packages, exit 0 |
+| Local check | Automated pass | 17 files / 81 tests, lint/typecheck clean, 41/41 Demo build |
+| Demo E2E | Automated pass | 6 passed, 2 expected skips |
+| Read-only Staging workflow | Skipped by guard | deployment configuration mismatch; no run created |
+| Write workflow, inquiries, CRUD, Storage | Not executed | read-only gate was not reached |
+| Database counts, Dashboard and admin E2E | Not executed | credentialed acceptance stopped by deployment guard |
+| Cleanup | Automated pass | no remote test record or file was created; nothing to delete |
+| China/WeChat network | Not executed | real devices, carriers, home broadband and overseas comparison still required |
+
+The deployed probe and Staging E2E now reject a wrong SEO origin and missing
+HTTP-to-HTTPS redirect. They do not alter business behavior or platform state.
+

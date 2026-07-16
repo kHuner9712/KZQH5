@@ -52,3 +52,23 @@ reachability or production readiness. No CloudBase migration, production DNS
 change, production Supabase use, or final architecture decision was made.
 
 **Status remains: Pending real network validation.**
+
+# 2026-07-16 stable-domain acceptance addendum
+
+The stable custom domain is Effective, has deployed HTTPS, and is linked to the
+EdgeOne Production environment for this Staging technical acceptance. Public
+HTTPS routes and the non-Demo Supabase/Node.js Health endpoint are reachable
+without preview authentication.
+
+Acceptance remains blocked because the deployed artifact still emits the prior
+project-domain origin in canonical, Open Graph and sitemap output, and plain
+HTTP does not redirect to HTTPS. Remote database, Dashboard, admin, inquiry,
+CRUD and Storage acceptance was stopped before credentialed execution. No
+GitHub write workflow, remote data write, deletion, DNS change, or EdgeOne
+configuration change was performed.
+
+These findings do not identify Supabase as a mainland bottleneck and provide no
+China carrier or WeChat evidence. They therefore do not meet the entry
+condition for a CloudBase prototype or migration.
+
+**Status remains: Pending real network validation.**
