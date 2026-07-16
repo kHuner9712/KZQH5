@@ -88,3 +88,19 @@ The remote read-only/write workflows remain guarded until a new deployment
 serves the stable origin and HTTP redirects to HTTPS. No EdgeOne configuration
 was changed during this execution.
 
+# 2026-07-17 final remote gate evidence
+
+| Capability | Evidence | Current conclusion |
+| --- | --- | --- |
+| Stable HTTPS routes | all required public, bilingual, metadata, admin-login and Health routes returned 200 | Automated pass |
+| EdgeOne preview isolation | no 401, preview-auth page, preview token, project-domain redirect, or `edgeone.dev` SEO URL | Automated pass |
+| Stable SEO origin | canonical, Open Graph URL and sitemap used `https://h5.kzqdecor.com` | Automated pass |
+| Node Route Handler and Supabase provider | Health reported non-Demo Supabase with Node.js runtime | Automated pass |
+| HTTP enforcement | root, path and query-bearing requests returned 200 with zero redirects | Blocked / P1 |
+| Redirect path/query coverage | existing deployment probe now asserts both properties explicitly | Fixed test coverage; remote rule still blocked |
+| Deployment SHA | Health returned `unknown` | Blocked; not inferred |
+| Credentialed Staging acceptance | deployment guard failed before Workflow dispatch | Skipped by guard |
+
+This result concerns a Staging technical acceptance target only. It is not
+Production evidence and does not establish mainland carrier or WeChat quality.
+
