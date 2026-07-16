@@ -72,3 +72,19 @@ China carrier or WeChat evidence. They therefore do not meet the entry
 condition for a CloudBase prototype or migration.
 
 **Status remains: Pending real network validation.**
+
+# 2026-07-17 final remote gate addendum
+
+The stable Staging HTTPS host now serves the expected canonical, Open Graph and
+sitemap origin, and its Health endpoint reports the non-Demo Supabase provider
+on Node.js. However, real HTTP requests to the root, a path, and a query-bearing
+path returned 200 without redirecting to HTTPS. The deployment gate therefore
+failed before any GitHub Workflow, database, administrator, inquiry, CRUD, or
+Storage acceptance was allowed to run.
+
+No evidence from China Mobile, China Unicom, China Telecom, mainland home
+broadband, WeChat, iOS, Android, or an independent overseas comparison was
+collected. This does not identify Supabase as a mainland bottleneck and does not
+meet the entry condition for a CloudBase prototype or migration.
+
+**Status remains: Pending real network validation.**
