@@ -37,25 +37,45 @@ async function login(page: Page) {
   // cookie asynchronously, and the LoginForm's router.push("/admin") may
   // reach the server before the cookie is available. ProtectedLayout then
   // redirects back to /admin/login?error=no_permission even though the
-  // sign-in itself succeeded. Because redirect() in a server component
-  // prevents any /admin HTML from being sent, the AdminShell never renders
-  // in the race case. We wait for the AdminShell header; if it does not
-  // appear and we ended up back on /admin/login, the cookie is now set, so
-  // retrying the /admin navigation directly will succeed. This is not
-  // replacing the click (the sign-in already happened); it is recovering
-  // from a known SSR auth cookie race that cannot be fixed in the test
-  // layer without modifying the LoginForm (out of scope this round).
+  // sign-in itself succeeded. We wait for the AdminShell header; if it does
+  // not appear, we capture diagnostics (pathname, no_permission flag, error
+  // alert presence, auth cookie presence as boolean) to distinguish between:
+  //   - signIn failure (error alert visible, no auth cookie)
+  //   - signIn success + cookie race (no error alert, auth cookie set)
+  //   - signIn success + cookie not persisted (no error alert, no cookie)
   const adminShell = page.getByText("KZQ 管理后台");
   const sawAdminShell = await adminShell
     .waitFor({ state: "visible", timeout: 20000 })
     .then(() => true)
     .catch(() => false);
   if (!sawAdminShell) {
-    if (page.url().includes("/admin/login")) {
-      // Race condition: signIn succeeded but the server did not see the
-      // cookie in time. The cookie is now set, so a direct navigation
-      // to /admin will succeed on the second attempt.
+    // Diagnostics: only output allowed fields (pathname, no_permission
+    // flag, error alert presence, auth cookie presence as boolean).
+    const urlAfterWait = new URL(page.url());
+    const hasNoPermission =
+      urlAfterWait.searchParams.get("error") === "no_permission";
+    const errorAlertVisible = await page
+      .locator(".text-red-700")
+      .first()
+      .isVisible()
+      .catch(() => false);
+    const cookies = await page.context().cookies();
+    const hasAuthCookie = cookies.some((c) => c.name.includes("auth-token"));
+    console.log(
+      `[login] first wait failed: pathname=${urlAfterWait.pathname} no_permission=${hasNoPermission} errorAlert=${errorAlertVisible} authCookie=${hasAuthCookie}`,
+    );
+
+    if (urlAfterWait.pathname.startsWith("/admin/login")) {
+      // We're still on the login page. Retry direct navigation to /admin.
+      // If the auth cookie is set, this should succeed. If not, we'll be
+      // redirected back to /admin/login?error=no_permission.
       await page.goto("/admin", { waitUntil: "domcontentloaded" });
+      const urlAfterRetry = new URL(page.url());
+      const retryHasNoPermission =
+        urlAfterRetry.searchParams.get("error") === "no_permission";
+      console.log(
+        `[login] after retry goto /admin: pathname=${urlAfterRetry.pathname} no_permission=${retryHasNoPermission}`,
+      );
       await expect(adminShell).toBeVisible({ timeout: 20000 });
     } else {
       // Not on /admin/login and AdminShell not visible: unexpected state.
