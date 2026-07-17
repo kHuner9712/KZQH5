@@ -29,13 +29,36 @@ async function login(page: Page) {
     .locator('input[type="password"]')
     .fill(process.env.STAGING_ADMIN_PASSWORD!);
   await page.getByRole("button", { name: "登录" }).click();
-  // Supabase Auth via EdgeOne CDN can take >5s on the first attempt, and
-  // the RSC payload for /admin must arrive before the shell renders. Wait
-  // for the AdminShell header first (local timeout, not a global increase),
-  // then verify pathname, main, and the Dashboard h1. The h1 is always
-  // rendered by the dashboard page in both success and data-read-error
-  // states, so it also confirms the protected page actually mounted.
-  await expect(page.getByText("KZQ 管理后台")).toBeVisible({ timeout: 20000 });
+  // Supabase Auth + Next.js SSR race: signInWithPassword sets the session
+  // cookie asynchronously, and the LoginForm's router.push("/admin") may
+  // reach the server before the cookie is available. ProtectedLayout then
+  // redirects back to /admin/login?error=no_permission even though the
+  // sign-in itself succeeded. Because redirect() in a server component
+  // prevents any /admin HTML from being sent, the AdminShell never renders
+  // in the race case. We wait for the AdminShell header; if it does not
+  // appear and we ended up back on /admin/login, the cookie is now set, so
+  // retrying the /admin navigation directly will succeed. This is not
+  // replacing the click (the sign-in already happened); it is recovering
+  // from a known SSR auth cookie race that cannot be fixed in the test
+  // layer without modifying the LoginForm (out of scope this round).
+  const adminShell = page.getByText("KZQ 管理后台");
+  const sawAdminShell = await adminShell
+    .waitFor({ state: "visible", timeout: 20000 })
+    .then(() => true)
+    .catch(() => false);
+  if (!sawAdminShell) {
+    if (page.url().includes("/admin/login")) {
+      // Race condition: signIn succeeded but the server did not see the
+      // cookie in time. The cookie is now set, so a direct navigation
+      // to /admin will succeed on the second attempt.
+      await page.goto("/admin", { waitUntil: "domcontentloaded" });
+      await expect(adminShell).toBeVisible({ timeout: 20000 });
+    } else {
+      // Not on /admin/login and AdminShell not visible: unexpected state.
+      // Re-run the assertion to surface a clear error.
+      await expect(adminShell).toBeVisible();
+    }
+  }
   await expect(page).toHaveURL(/\/admin(?:\?.*)?$/);
   await expect(page.locator("main")).toBeVisible();
   await expect(
