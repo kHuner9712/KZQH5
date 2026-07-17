@@ -31,7 +31,10 @@ function decodeSearchTerm(value: string) {
 
 export default async function AnalyticsPage({ searchParams }: { searchParams: SearchParams }) {
   const admin = await getVerifiedAdmin();
-  if (!admin) redirect("/admin/login?error=no_permission");
+  if (!admin.ok) {
+    const stage = admin.reason === "session-missing" || admin.reason === "session-verification-failed" ? "session" : "profile";
+    redirect(`/admin/login?error=admin_guard&stage=${stage}`);
+  }
   const range = dateRange(searchParams);
   let summary;
   try {

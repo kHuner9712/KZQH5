@@ -17,6 +17,10 @@ export function LoginForm() {
   const [error, setError] = useState("");
 
   const noPermission = searchParams.get("error") === "no_permission";
+  // admin_guard is emitted by ProtectedLayout when the server-side guard
+  // (session/profile/data) fails. The internal `stage` query parameter is
+  // reserved for E2E diagnostics and is never shown to the user.
+  const adminGuard = searchParams.get("error") === "admin_guard";
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -70,6 +74,12 @@ export function LoginForm() {
             <div className="flex items-start gap-2 rounded-lg bg-red-50 p-3 text-xs text-red-700">
               <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
               <span>当前账号无管理员权限，请联系超级管理员授权。</span>
+            </div>
+          )}
+          {adminGuard && (
+            <div className="flex items-start gap-2 rounded-lg bg-red-50 p-3 text-xs text-red-700">
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+              <span>管理员会话验证失败，请重新登录或联系系统管理员。</span>
             </div>
           )}
           {error && (

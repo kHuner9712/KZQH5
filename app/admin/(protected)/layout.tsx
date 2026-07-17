@@ -1,27 +1,54 @@
+import { unstable_noStore as noStore } from "next/cache";
 import { redirect } from "next/navigation";
 import { AdminShell } from "@/components/admin/AdminLayout";
 import { ToastProvider } from "@/components/admin/Toast";
 import { countUnreadInquiries } from "@/lib/repositories/inquiries";
 import { getVerifiedAdmin } from "@/lib/services/admin-auth";
 
+// Administrator pages must never be cached or statically rendered.
+// Auth cookies and admin state are per-request, so force dynamic rendering
+// and emit a no-store header to prevent any intermediate CDN caching.
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
+const STAGE_LOG_CODE = {
+  session: "ADMIN_GUARD_SESSION",
+  profile: "ADMIN_GUARD_PROFILE",
+  data: "ADMIN_GUARD_DATA",
+} as const;
+
 export default async function ProtectedLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  // 必须先通过 Supabase Auth 服务验证 JWT，再检查 admin_profiles。
-  // 不信任 getSession() 从 cookie 直接读取的未验证会话内容。
-  const admin = await getVerifiedAdmin();
-  if (!admin) redirect("/admin/login?error=no_permission");
+  // Explicitly opt out of static rendering before any auth work.
+  noStore();
 
+  const admin = await getVerifiedAdmin();
+
+  // Stage 1-3 failure: session or profile verification failed.
+  // Map the internal reason to a coarse external stage for the redirect URL.
+  if (!admin.ok) {
+    const isSession =
+      admin.reason === "session-missing" ||
+      admin.reason === "session-verification-failed";
+    const stage = isSession ? "session" : "profile";
+    console.warn(STAGE_LOG_CODE[stage]);
+    redirect(`/admin/login?error=admin_guard&stage=${stage}`);
+  }
+
+  // TypeScript now narrows admin to { ok: true; user; profile; client }.
   let unreadCount = 0;
-  const email = admin.profile.email || admin.user.email || undefined;
   try {
     unreadCount = await countUnreadInquiries(admin.client);
   } catch {
-    // 特权客户端或数据读取异常时拒绝访问，绝不降级放行。
-    redirect("/admin/login?error=no_permission");
+    // Data-read failure — deny access. Never degrade to an empty count.
+    console.warn(STAGE_LOG_CODE.data);
+    redirect("/admin/login?error=admin_guard&stage=data");
   }
+
+  const email = admin.profile.email || admin.user.email || undefined;
 
   return (
     <ToastProvider>

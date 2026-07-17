@@ -15,8 +15,9 @@ const validStatuses = new Set<InquiryStatus>(["new", "contacted", "closed"]);
 
 export async function GET(request: NextRequest) {
   const admin = await getVerifiedAdmin();
-  if (!admin)
+  if (!admin.ok) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
   try {
     const result = await listInquiries(
       admin.client,
@@ -34,8 +35,9 @@ export async function GET(request: NextRequest) {
 
 export async function PATCH(request: NextRequest) {
   const admin = await getVerifiedAdmin();
-  if (!admin)
+  if (!admin.ok) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
 
   if (!isSameOrigin(request)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });

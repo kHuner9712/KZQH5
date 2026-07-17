@@ -32,7 +32,7 @@ describe("admin inquiry API", () => {
   });
 
   it("rejects an authenticated non-admin for reads and writes", async () => {
-    getVerifiedAdmin.mockResolvedValue(null);
+    getVerifiedAdmin.mockResolvedValue({ ok: false, reason: "session-missing" });
     const { GET, PATCH } = await import("@/app/api/admin/inquiries/route");
 
     const getResponse = await GET(
@@ -53,7 +53,7 @@ describe("admin inquiry API", () => {
   });
 
   it("requires same-origin JSON requests", async () => {
-    getVerifiedAdmin.mockResolvedValue({ client: {} });
+    getVerifiedAdmin.mockResolvedValue({ ok: true, client: {}, user: {}, profile: {} });
     const { PATCH } = await import("@/app/api/admin/inquiries/route");
 
     const crossOrigin = await PATCH(
@@ -76,7 +76,7 @@ describe("admin inquiry API", () => {
   });
 
   it("rejects invalid IDs and empty updates", async () => {
-    getVerifiedAdmin.mockResolvedValue({ client: {} });
+    getVerifiedAdmin.mockResolvedValue({ ok: true, client: {}, user: {}, profile: {} });
     const { PATCH } = await import("@/app/api/admin/inquiries/route");
 
     const invalidId = await PATCH(
