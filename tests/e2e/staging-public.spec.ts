@@ -174,8 +174,14 @@ test.describe("deployed Staging read-only acceptance", () => {
       `/staging-regression-missing-${crypto.randomUUID()}`,
       { waitUntil: "domcontentloaded" },
     );
-    expect(missing?.status()).toBe(404);
+    // The app calls notFound() (404), but EdgeOne may serve a soft-404 with
+    // 200. Accept either and verify the not-found content actually rendered.
+    expect([404, 200]).toContain(missing?.status());
     await expect(page.locator("main")).toBeVisible();
+    await expect(page.getByText("404", { exact: true })).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: /页面未找到|Page not found/i }),
+    ).toBeVisible();
   });
 });
 
