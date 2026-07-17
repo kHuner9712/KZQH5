@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import { classifyProtectedReadResult } from "./lib/protected-read-verification.mjs";
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -69,10 +70,19 @@ await check("search_published_products RPC", async () => {
   });
   return !error;
 });
-await check("anon inquiry read denied", async () => {
+try {
   const { data, error } = await client.from("inquiries").select("id").limit(1);
-  return !error && Array.isArray(data) && data.length === 0;
-});
+  checks.push({
+    name: "anon inquiry read denied",
+    ...classifyProtectedReadResult({ data, error }),
+  });
+} catch {
+  checks.push({
+    name: "anon inquiry read denied",
+    ok: false,
+    mode: "unexpected-error",
+  });
+}
 await check("anon analytics write denied", async () => {
   const { error } = await client
     .from("analytics_events")
@@ -96,9 +106,10 @@ await check("anon inquiry RPC denied", async () => {
 });
 
 for (const result of checks) {
-  console.log(`${result.ok ? "PASS" : "FAIL"} ${result.name}`);
+  const mode = result.mode ? ` mode=${result.mode}` : "";
+  console.log(`${result.ok ? "PASS" : "FAIL"} ${result.name}${mode}`);
 }
-if (checks.some((result) => !result.ok)) process.exit(1);
+let hasFailure = checks.some((result) => !result.ok);
 
 if (service) {
   const countChecks = [
@@ -120,7 +131,8 @@ if (service) {
     const { count, error } = await query;
     if (error || count === null) {
       console.log(`FAIL count ${label}`);
-      process.exit(1);
+      hasFailure = true;
+      continue;
     }
     console.log(`COUNT ${label}=${count}`);
   }
@@ -132,10 +144,12 @@ if (service) {
     .limit(1);
   if (regression.error || regression.count === null) {
     console.log("FAIL count inquiries.regression_test");
-    process.exit(1);
+    hasFailure = true;
+  } else {
+    console.log(`COUNT inquiries.regression_test=${regression.count}`);
   }
-  console.log(`COUNT inquiries.regression_test=${regression.count}`);
 } else {
   console.log("SKIP privileged count summary (service role missing)");
 }
 console.log("Non-destructive Staging database verification completed.");
+if (hasFailure) process.exitCode = 1;
