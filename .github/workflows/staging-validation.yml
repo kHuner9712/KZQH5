@@ -45,8 +45,16 @@ jobs:
         run: npm run check:deployed
         env:
           BASE_URL: ${{ inputs.base_url }}
-      - name: Read-only deployed E2E
-        run: npm run test:e2e:staging
+      - name: Public deployed E2E
+        run: npx playwright test tests/e2e/staging-public.spec.ts --retries=0
+        env:
+          PLAYWRIGHT_BASE_URL: ${{ inputs.base_url }}
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          STAGING_ADMIN_EMAIL: ${{ secrets.STAGING_ADMIN_EMAIL }}
+          STAGING_ADMIN_PASSWORD: ${{ secrets.STAGING_ADMIN_PASSWORD }}
+      - name: Protected admin deployed E2E
+        run: npx playwright test tests/e2e/staging-admin.spec.ts --workers=1 --retries=0
         env:
           PLAYWRIGHT_BASE_URL: ${{ inputs.base_url }}
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
@@ -75,8 +83,18 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           SMOKE_TEST_ALLOW_WRITES: "true"
           KZQ_STAGING_CONFIRMATION: KZQ-STAGING-ONLY
-      - name: Marked write deployed E2E
-        run: npm run test:e2e:staging
+      - name: Marked write public E2E
+        run: npx playwright test tests/e2e/staging-public.spec.ts --retries=0
+        env:
+          PLAYWRIGHT_BASE_URL: ${{ inputs.base_url }}
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          STAGING_ADMIN_EMAIL: ${{ secrets.STAGING_ADMIN_EMAIL }}
+          STAGING_ADMIN_PASSWORD: ${{ secrets.STAGING_ADMIN_PASSWORD }}
+          STAGING_E2E_ALLOW_WRITES: "true"
+          KZQ_STAGING_CONFIRMATION: KZQ-STAGING-ONLY
+      - name: Marked write admin E2E
+        run: npx playwright test tests/e2e/staging-admin.spec.ts --workers=1 --retries=0
         env:
           PLAYWRIGHT_BASE_URL: ${{ inputs.base_url }}
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}

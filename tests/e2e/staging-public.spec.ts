@@ -1,6 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { expect, test, type Page } from "@playwright/test";
 import type { Database } from "@/types/database";
+import { isHealthCacheControlSafe } from "@/lib/services/cache-policy";
 
 const writeEnabled = process.env.STAGING_E2E_ALLOW_WRITES === "true";
 const writeConfirmed =
@@ -23,7 +24,7 @@ async function expectHtmlLanguage(
   language: "zh-CN" | "en",
 ) {
   const expectedOrigin = new URL(process.env.PLAYWRIGHT_BASE_URL!).origin;
-  await page.goto(path);
+  await page.goto(path, { waitUntil: "domcontentloaded" });
   await expect(page.locator("html")).toHaveAttribute("lang", language);
   await expect(page.locator("main")).toBeVisible();
   const canonical = page.locator('link[rel="canonical"]');
@@ -52,8 +53,12 @@ test.describe("deployed Staging read-only acceptance", () => {
     await expectHtmlLanguage(page, "/en", "en");
     await expect(page.locator('script[type="application/ld+json"]')).not.toHaveCount(0);
 
-    const chineseSwitch = page.locator('a[href="/"]').first();
-    await expect(chineseSwitch).toBeVisible();
+    // Use the semantic, visible language switcher control instead of a fragile
+    // `a[href="/"].first()` selector that may match the logo or footer links.
+    // On the English page the switcher is labeled "切换到中文" and points to "/".
+    const toChineseSwitch = page.getByRole("link", { name: "切换到中文" });
+    await expect(toChineseSwitch).toBeVisible();
+    await expect(toChineseSwitch).toHaveAttribute("href", "/");
 
     for (const path of [
       "/products",
@@ -69,7 +74,7 @@ test.describe("deployed Staging read-only acceptance", () => {
       "/en/more",
       "/en/privacy",
     ]) {
-      await page.goto(path);
+      await page.goto(path, { waitUntil: "domcontentloaded" });
       await expect(page.locator("main")).toBeVisible();
       await expect(page).toHaveTitle(/KZQ/i);
     }
@@ -78,7 +83,7 @@ test.describe("deployed Staging read-only acceptance", () => {
   test("product search, category, detail, and procurement resources render", async ({
     page,
   }) => {
-    await page.goto("/products?q=a");
+    await page.goto("/products?q=a", { waitUntil: "domcontentloaded" });
     await expect(page.locator("main")).toBeVisible();
     await expect(page).toHaveURL(/\?q=a/);
 
@@ -92,20 +97,31 @@ test.describe("deployed Staging read-only acceptance", () => {
     await subcategoryLink.click();
     await expect(page).toHaveURL(/subcategory=/);
 
-    await page.goto("/products");
+    await page.goto("/products", { waitUntil: "domcontentloaded" });
     const productLink = page.locator('article a[href^="/products/"]').first();
     await expect(productLink).toBeVisible();
-    await productLink.click();
-    await expect(page).toHaveURL(/\/products\/[^/?]+/);
+    const productHref = await productLink.getAttribute("href");
+    expect(productHref).toMatch(/^\/products\/[^/?]+/);
+    // Coordinate click with waitForURL to avoid the click→assert race that left
+    // the URL at /products. No force click, no waitForTimeout, no goto fallback.
+    await Promise.all([
+      page.waitForURL((url) => url.pathname === productHref),
+      productLink.click(),
+    ]);
     await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
     await expect(page.locator("main")).toBeVisible();
 
-    await page.goto("/en/products");
+    await page.goto("/en/products", { waitUntil: "domcontentloaded" });
     const englishProductLink = page
       .locator('article a[href^="/en/products/"]')
       .first();
     await expect(englishProductLink).toBeVisible();
-    await englishProductLink.click();
+    const englishHref = await englishProductLink.getAttribute("href");
+    expect(englishHref).toMatch(/^\/en\/products\/[^/?]+/);
+    await Promise.all([
+      page.waitForURL((url) => url.pathname === englishHref),
+      englishProductLink.click(),
+    ]);
     await expect(page).toHaveURL(/\/en\/products\/[^/?]+/);
   });
 
@@ -141,7 +157,11 @@ test.describe("deployed Staging read-only acceptance", () => {
 
     const health = await request.get("/api/health");
     expect(health.ok()).toBe(true);
-    expect(health.headers()["cache-control"]).toBe("no-store");
+    // The app sets no-store, but EdgeOne may rewrite to
+    // public,max-age=0,must-revalidate. Both are safe non-cacheable strategies.
+    expect(
+      isHealthCacheControlSafe(health.headers()["cache-control"]),
+    ).toBe(true);
     expect(await health.json()).toMatchObject({
       success: true,
       app: "kzq-h5",
@@ -152,6 +172,7 @@ test.describe("deployed Staging read-only acceptance", () => {
 
     const missing = await page.goto(
       `/staging-regression-missing-${crypto.randomUUID()}`,
+      { waitUntil: "domcontentloaded" },
     );
     expect(missing?.status()).toBe(404);
     await expect(page.locator("main")).toBeVisible();
