@@ -23,6 +23,10 @@ const service = adminConfigured
   : null;
 
 async function login(page: Page) {
+  // The Supabase Auth cookie race recovery below can take up to ~45s
+  // (20s first wait + page.goto + 20s retry wait). The default per-test
+  // timeout of 30s is too short, so extend this test only (not global).
+  test.setTimeout(60000);
   await page.goto("/admin/login");
   await page.locator('input[type="email"]').fill(process.env.STAGING_ADMIN_EMAIL!);
   await page
