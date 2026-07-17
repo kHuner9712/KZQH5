@@ -29,8 +29,18 @@ async function login(page: Page) {
     .locator('input[type="password"]')
     .fill(process.env.STAGING_ADMIN_PASSWORD!);
   await page.getByRole("button", { name: "登录" }).click();
+  // Supabase Auth via EdgeOne CDN can take >5s on the first attempt, and
+  // the RSC payload for /admin must arrive before the shell renders. Wait
+  // for the AdminShell header first (local timeout, not a global increase),
+  // then verify pathname, main, and the Dashboard h1. The h1 is always
+  // rendered by the dashboard page in both success and data-read-error
+  // states, so it also confirms the protected page actually mounted.
+  await expect(page.getByText("KZQ 管理后台")).toBeVisible({ timeout: 20000 });
   await expect(page).toHaveURL(/\/admin(?:\?.*)?$/);
-  await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
+  await expect(page.locator("main")).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Dashboard" }),
+  ).toBeVisible();
 }
 
 async function exactCount(
