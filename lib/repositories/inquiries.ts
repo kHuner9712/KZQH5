@@ -1,8 +1,34 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
+import {
+  classifyAdminDataError,
+  type AdminDataFailureCause,
+} from "@/lib/services/admin-data-error";
 import { normalizeSearchTerm } from "@/lib/utils";
 import type { Database, Inquiry, InquiryStatus } from "@/types/database";
 import type { InquiryCreateRecord } from "@/lib/services/inquiries/validation";
+
+/**
+ * Fixed error thrown by {@link countUnreadInquiries} when the Supabase query
+ * fails or returns no count. Carries ONLY a coarse {@link AdminDataFailureCause}
+ * so the protected layout can redirect with a safe `cause` query param.
+ *
+ * Safety contract:
+ *   - message is a fixed constant string
+ *   - the original Supabase error is NEVER stored on this Error (no `cause`,
+ *     no private fields holding message/details/hint/stack/url/headers)
+ *   - `causeCode` is one of the fixed enum values, safe to log and to expose
+ *     in redirect query params
+ */
+export class UnreadInquiryCountError extends Error {
+  readonly causeCode: AdminDataFailureCause;
+
+  constructor(causeCode: AdminDataFailureCause) {
+    super("Unread inquiry count failed");
+    this.name = "UnreadInquiryCountError";
+    this.causeCode = causeCode;
+  }
+}
 
 export interface InquiryFilters {
   search?: string;
@@ -85,14 +111,33 @@ export async function listInquiries(
 }
 
 export async function countUnreadInquiries(client: InquiryClient): Promise<number> {
-  const { count, error } = await client
-    .from("inquiries")
-    .select("id", { count: "exact" })
-    .eq("is_read", false)
-    .limit(1);
-  if (error || count === null) {
-    throw error || new Error("Unread inquiry count unavailable");
+  let result: { count: number | null; error: unknown };
+
+  try {
+    result = await client
+      .from("inquiries")
+      .select("id", { count: "exact" })
+      .eq("is_read", false)
+      .limit(1);
+  } catch (err) {
+    // fetch or client-side throw (network, abort, etc.). Classify by code/name
+    // only; never propagate the original error object.
+    throw new UnreadInquiryCountError(classifyAdminDataError(err));
   }
+
+  const { count, error } = result;
+
+  if (error) {
+    // Supabase returned an error object. Classify by code/name only.
+    // The original error object is intentionally dropped.
+    throw new UnreadInquiryCountError(classifyAdminDataError(error));
+  }
+
+  if (count === null || count === undefined) {
+    // No error, but count missing — treat as a distinct, safe cause.
+    throw new UnreadInquiryCountError("count-unavailable");
+  }
+
   return count;
 }
 

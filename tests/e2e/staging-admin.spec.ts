@@ -36,45 +36,158 @@ async function login(page: Page) {
   // Supabase Auth + Next.js SSR race: signInWithPassword sets the session
   // cookie asynchronously, and the LoginForm's router.push("/admin") may
   // reach the server before the cookie is available. ProtectedLayout then
-  // redirects back to /admin/login?error=no_permission even though the
-  // sign-in itself succeeded. We wait for the AdminShell header; if it does
-  // not appear, we capture diagnostics (pathname, no_permission flag, error
-  // alert presence, auth cookie presence as boolean) to distinguish between:
-  //   - signIn failure (error alert visible, no auth cookie)
-  //   - signIn success + cookie race (no error alert, auth cookie set)
-  //   - signIn success + cookie not persisted (no error alert, no cookie)
+  // redirects back to /admin/login?error=admin_guard&stage=session even
+  // though the sign-in itself succeeded. We wait for the AdminShell header;
+  // if it does not appear, we capture structured diagnostics to distinguish
+  // failure modes. Each prompt is identified by a stable data-testid so we
+  // never rely on a generic `.text-red-700` selector:
+  //   - login-no-permission  → ?error=no_permission (legacy guard)
+  //   - login-admin-guard    → ?error=admin_guard&stage=session|profile|data
+  //   - login-auth-error     → client-side signIn failure (LoginForm state)
+  // We also classify the `error` and `stage` query params directly, and
+  // record whether the auth cookie is set (boolean only, never the value).
+  // signInError.message is never logged.
   const adminShell = page.getByText("KZQ 管理后台");
   const sawAdminShell = await adminShell
     .waitFor({ state: "visible", timeout: 20000 })
     .then(() => true)
     .catch(() => false);
   if (!sawAdminShell) {
-    // Diagnostics: only output allowed fields (pathname, no_permission
-    // flag, error alert presence, auth cookie presence as boolean).
+    // Diagnostics: capture structured fields only. Never output
+    // signInError.message, Cookies, UUIDs, or any PII. Each login-state
+    // prompt is identified by a stable data-testid so we can distinguish:
+    //   - login-no-permission  → server redirect with ?error=no_permission
+    //   - login-admin-guard    → server redirect with ?error=admin_guard
+    //   - login-auth-error     → client-side signIn failure (local state)
     const urlAfterWait = new URL(page.url());
-    const hasNoPermission =
-      urlAfterWait.searchParams.get("error") === "no_permission";
-    const errorAlertVisible = await page
-      .locator(".text-red-700")
-      .first()
-      .isVisible()
-      .catch(() => false);
-    const cookies = await page.context().cookies();
-    const hasAuthCookie = cookies.some((c) => c.name.includes("auth-token"));
+    const errorParam = urlAfterWait.searchParams.get("error");
+    const stageParam = urlAfterWait.searchParams.get("stage");
+
+    function classifyError(value: string | null):
+      | "none"
+      | "no_permission"
+      | "admin_guard"
+      | "other" {
+      if (value === null) return "none";
+      if (value === "no_permission") return "no_permission";
+      if (value === "admin_guard") return "admin_guard";
+      return "other";
+    }
+    function classifyStage(value: string | null):
+      | "none"
+      | "session"
+      | "profile"
+      | "data"
+      | "other" {
+      if (value === null) return "none";
+      if (value === "session" || value === "profile" || value === "data")
+        return value;
+      return "other";
+    }
+    function classifyCause(value: string | null):
+      | "none"
+      | "schema"
+      | "permission"
+      | "authentication"
+      | "connection"
+      | "timeout"
+      | "count-unavailable"
+      | "unknown"
+      | "other" {
+      if (value === null) return "none";
+      const allowed = [
+        "schema",
+        "permission",
+        "authentication",
+        "connection",
+        "timeout",
+        "count-unavailable",
+        "unknown",
+      ] as const;
+      if (allowed.includes(value as (typeof allowed)[number]))
+        return value as (typeof allowed)[number];
+      return "other";
+    }
+
+    const errorClass = classifyError(errorParam);
+    const stageClass = classifyStage(stageParam);
+    const causeClass = classifyCause(urlAfterWait.searchParams.get("cause"));
+    const leftLogin = !urlAfterWait.pathname.startsWith("/admin/login");
+
+    const [
+      noPermissionVisible,
+      adminGuardVisible,
+      authErrorVisible,
+      hasAuthCookie,
+    ] = await Promise.all([
+      page
+        .locator('[data-testid="login-no-permission"]')
+        .isVisible()
+        .catch(() => false),
+      page
+        .locator('[data-testid="login-admin-guard"]')
+        .isVisible()
+        .catch(() => false),
+      page
+        .locator('[data-testid="login-auth-error"]')
+        .isVisible()
+        .catch(() => false),
+      page
+        .context()
+        .cookies()
+        .then((cookies) =>
+          cookies.some((c) => c.name.includes("auth-token")),
+        ),
+    ]);
+
     console.log(
-      `[login] first wait failed: pathname=${urlAfterWait.pathname} no_permission=${hasNoPermission} errorAlert=${errorAlertVisible} authCookie=${hasAuthCookie}`,
+      `[login] first wait failed: pathname=${urlAfterWait.pathname} leftLogin=${leftLogin} error=${errorClass} stage=${stageClass} cause=${causeClass} noPermission=${noPermissionVisible} adminGuard=${adminGuardVisible} authError=${authErrorVisible} authCookie=${hasAuthCookie}`,
     );
 
     if (urlAfterWait.pathname.startsWith("/admin/login")) {
       // We're still on the login page. Retry direct navigation to /admin.
       // If the auth cookie is set, this should succeed. If not, we'll be
-      // redirected back to /admin/login?error=no_permission.
+      // redirected back to /admin/login?error=admin_guard&stage=...
       await page.goto("/admin", { waitUntil: "domcontentloaded" });
       const urlAfterRetry = new URL(page.url());
-      const retryHasNoPermission =
-        urlAfterRetry.searchParams.get("error") === "no_permission";
+      const retryErrorClass = classifyError(
+        urlAfterRetry.searchParams.get("error"),
+      );
+      const retryStageClass = classifyStage(
+        urlAfterRetry.searchParams.get("stage"),
+      );
+      const retryCauseClass = classifyCause(
+        urlAfterRetry.searchParams.get("cause"),
+      );
+      const retryLeftLogin =
+        !urlAfterRetry.pathname.startsWith("/admin/login");
+      const [
+        retryNoPermission,
+        retryAdminGuard,
+        retryAuthError,
+        retryAuthCookie,
+      ] = await Promise.all([
+        page
+          .locator('[data-testid="login-no-permission"]')
+          .isVisible()
+          .catch(() => false),
+        page
+          .locator('[data-testid="login-admin-guard"]')
+          .isVisible()
+          .catch(() => false),
+        page
+          .locator('[data-testid="login-auth-error"]')
+          .isVisible()
+          .catch(() => false),
+        page
+          .context()
+          .cookies()
+          .then((cookies) =>
+            cookies.some((c) => c.name.includes("auth-token")),
+          ),
+      ]);
       console.log(
-        `[login] after retry goto /admin: pathname=${urlAfterRetry.pathname} no_permission=${retryHasNoPermission}`,
+        `[login] after retry goto /admin: pathname=${urlAfterRetry.pathname} leftLogin=${retryLeftLogin} error=${retryErrorClass} stage=${retryStageClass} cause=${retryCauseClass} noPermission=${retryNoPermission} adminGuard=${retryAdminGuard} authError=${retryAuthError} authCookie=${retryAuthCookie}`,
       );
       await expect(adminShell).toBeVisible({ timeout: 20000 });
     } else {

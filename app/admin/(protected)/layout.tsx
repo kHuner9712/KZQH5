@@ -2,7 +2,11 @@ import { unstable_noStore as noStore } from "next/cache";
 import { redirect } from "next/navigation";
 import { AdminShell } from "@/components/admin/AdminLayout";
 import { ToastProvider } from "@/components/admin/Toast";
-import { countUnreadInquiries } from "@/lib/repositories/inquiries";
+import {
+  ADMIN_DATA_LOG_CODE,
+  type AdminDataFailureCause,
+} from "@/lib/services/admin-data-error";
+import { UnreadInquiryCountError, countUnreadInquiries } from "@/lib/repositories/inquiries";
 import { getVerifiedAdmin } from "@/lib/services/admin-auth";
 
 // Administrator pages must never be cached or statically rendered.
@@ -14,7 +18,6 @@ export const revalidate = 0;
 const STAGE_LOG_CODE = {
   session: "ADMIN_GUARD_SESSION",
   profile: "ADMIN_GUARD_PROFILE",
-  data: "ADMIN_GUARD_DATA",
 } as const;
 
 export default async function ProtectedLayout({
@@ -38,14 +41,18 @@ export default async function ProtectedLayout({
     redirect(`/admin/login?error=admin_guard&stage=${stage}`);
   }
 
-  // TypeScript now narrows admin to { ok: true; user; profile; client }.
+  // Stage 4: protected data-read. On failure, deny access with a coarse
+  // `cause` so operators can triage without exposing sensitive payload.
   let unreadCount = 0;
   try {
     unreadCount = await countUnreadInquiries(admin.client);
-  } catch {
-    // Data-read failure — deny access. Never degrade to an empty count.
-    console.warn(STAGE_LOG_CODE.data);
-    redirect("/admin/login?error=admin_guard&stage=data");
+  } catch (err) {
+    const cause: AdminDataFailureCause =
+      err instanceof UnreadInquiryCountError ? err.causeCode : "unknown";
+    // Single fixed string argument only. No error object, no stack, no
+    // message, no second argument.
+    console.warn(ADMIN_DATA_LOG_CODE[cause]);
+    redirect(`/admin/login?error=admin_guard&stage=data&cause=${cause}`);
   }
 
   const email = admin.profile.email || admin.user.email || undefined;
