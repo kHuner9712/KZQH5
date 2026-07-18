@@ -84,9 +84,34 @@ async function login(page: Page) {
         return value;
       return "other";
     }
+    function classifyCause(value: string | null):
+      | "none"
+      | "schema"
+      | "permission"
+      | "authentication"
+      | "connection"
+      | "timeout"
+      | "count-unavailable"
+      | "unknown"
+      | "other" {
+      if (value === null) return "none";
+      const allowed = [
+        "schema",
+        "permission",
+        "authentication",
+        "connection",
+        "timeout",
+        "count-unavailable",
+        "unknown",
+      ] as const;
+      if (allowed.includes(value as (typeof allowed)[number]))
+        return value as (typeof allowed)[number];
+      return "other";
+    }
 
     const errorClass = classifyError(errorParam);
     const stageClass = classifyStage(stageParam);
+    const causeClass = classifyCause(urlAfterWait.searchParams.get("cause"));
     const leftLogin = !urlAfterWait.pathname.startsWith("/admin/login");
 
     const [
@@ -116,7 +141,7 @@ async function login(page: Page) {
     ]);
 
     console.log(
-      `[login] first wait failed: pathname=${urlAfterWait.pathname} leftLogin=${leftLogin} error=${errorClass} stage=${stageClass} noPermission=${noPermissionVisible} adminGuard=${adminGuardVisible} authError=${authErrorVisible} authCookie=${hasAuthCookie}`,
+      `[login] first wait failed: pathname=${urlAfterWait.pathname} leftLogin=${leftLogin} error=${errorClass} stage=${stageClass} cause=${causeClass} noPermission=${noPermissionVisible} adminGuard=${adminGuardVisible} authError=${authErrorVisible} authCookie=${hasAuthCookie}`,
     );
 
     if (urlAfterWait.pathname.startsWith("/admin/login")) {
@@ -130,6 +155,9 @@ async function login(page: Page) {
       );
       const retryStageClass = classifyStage(
         urlAfterRetry.searchParams.get("stage"),
+      );
+      const retryCauseClass = classifyCause(
+        urlAfterRetry.searchParams.get("cause"),
       );
       const retryLeftLogin =
         !urlAfterRetry.pathname.startsWith("/admin/login");
@@ -159,7 +187,7 @@ async function login(page: Page) {
           ),
       ]);
       console.log(
-        `[login] after retry goto /admin: pathname=${urlAfterRetry.pathname} leftLogin=${retryLeftLogin} error=${retryErrorClass} stage=${retryStageClass} noPermission=${retryNoPermission} adminGuard=${retryAdminGuard} authError=${retryAuthError} authCookie=${retryAuthCookie}`,
+        `[login] after retry goto /admin: pathname=${urlAfterRetry.pathname} leftLogin=${retryLeftLogin} error=${retryErrorClass} stage=${retryStageClass} cause=${retryCauseClass} noPermission=${retryNoPermission} adminGuard=${retryAdminGuard} authError=${retryAuthError} authCookie=${retryAuthCookie}`,
       );
       await expect(adminShell).toBeVisible({ timeout: 20000 });
     } else {
