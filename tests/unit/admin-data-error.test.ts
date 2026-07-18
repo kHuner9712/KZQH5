@@ -124,6 +124,145 @@ describe("classifyAdminDataError", () => {
       expect(() => classifyAdminDataError("string-error" as any)).not.toThrow();
     });
   });
+
+  describe("SQLSTATE class prefix matching", () => {
+    it("classifies 0L000 as permission (0L prefix)", () => {
+      expect(classifyAdminDataError({ code: "0L000" })).toBe("permission");
+    });
+    it("classifies 0P000 as permission (0P prefix)", () => {
+      expect(classifyAdminDataError({ code: "0P000" })).toBe("permission");
+    });
+    it("classifies 08001 as connection (08 prefix)", () => {
+      expect(classifyAdminDataError({ code: "08001" })).toBe("connection");
+    });
+    it("classifies 08004 as connection (08 prefix)", () => {
+      expect(classifyAdminDataError({ code: "08004" })).toBe("connection");
+    });
+    it("classifies 08P01 as connection (08 prefix)", () => {
+      expect(classifyAdminDataError({ code: "08P01" })).toBe("connection");
+    });
+    it("classifies lowercase 0l000 as permission (case-insensitive)", () => {
+      expect(classifyAdminDataError({ code: "0l000" })).toBe("permission");
+    });
+    it("classifies lowercase 08006 still as connection (already exact)", () => {
+      expect(classifyAdminDataError({ code: "08006" })).toBe("connection");
+    });
+    it("does NOT treat 0L as schema even if code looks code-like", () => {
+      // 0L000 is RLS / role-related, must be permission, not unknown.
+      expect(classifyAdminDataError({ code: "0L000" })).not.toBe("unknown");
+      expect(classifyAdminDataError({ code: "0L000" })).not.toBe("schema");
+    });
+  });
+
+  describe("never throws (defensive)", () => {
+    it("returns unknown when code.toString throws", () => {
+      const err = {
+        get code() {
+          throw new Error("code toString exploded");
+        },
+      };
+      expect(() => classifyAdminDataError(err)).not.toThrow();
+      expect(classifyAdminDataError(err)).toBe("unknown");
+    });
+
+    it("returns unknown when code getter throws", () => {
+      const err = {
+        get code() {
+          throw new Error("getter exploded");
+        },
+        name: "SomeError",
+      };
+      expect(() => classifyAdminDataError(err)).not.toThrow();
+      // code unreadable → falls through → name not a timeout name → unknown
+      expect(classifyAdminDataError(err)).toBe("unknown");
+    });
+
+    it("returns timeout when code getter throws but name is AbortError", () => {
+      // Even if code is unreadable, name-based timeout detection still works.
+      const err = {
+        get code() {
+          throw new Error("getter exploded");
+        },
+        name: "AbortError",
+      };
+      expect(() => classifyAdminDataError(err)).not.toThrow();
+      expect(classifyAdminDataError(err)).toBe("timeout");
+    });
+
+    it("returns unknown when name getter throws", () => {
+      const err = {
+        code: "42703", // schema-eligible, so name is not even needed
+        get name() {
+          throw new Error("name getter exploded");
+        },
+      };
+      expect(() => classifyAdminDataError(err)).not.toThrow();
+      // code is read first and matches schema; name is never consulted.
+      expect(classifyAdminDataError(err)).toBe("schema");
+    });
+
+    it("returns unknown when name getter throws and code is unknown", () => {
+      const err = {
+        code: "XYZ123",
+        get name() {
+          throw new Error("name getter exploded");
+        },
+      };
+      expect(() => classifyAdminDataError(err)).not.toThrow();
+      expect(classifyAdminDataError(err)).toBe("unknown");
+    });
+
+    it("returns unknown for non-string/non-number code (boolean)", () => {
+      expect(classifyAdminDataError({ code: true })).toBe("unknown");
+    });
+
+    it("returns unknown for non-string/non-number code (object)", () => {
+      expect(classifyAdminDataError({ code: { nested: "42703" } })).toBe(
+        "unknown",
+      );
+    });
+
+    it("returns unknown for non-string/non-number name (number)", () => {
+      // name must be a string to match TIMEOUT_NAMES; a number name is ignored.
+      expect(classifyAdminDataError({ code: "XYZ", name: 123 })).toBe(
+        "unknown",
+      );
+    });
+  });
+
+  describe("message never participates in classification", () => {
+    it("does NOT match schema code found in message field", () => {
+      const err = {
+        code: "UNKNOWN",
+        message: "42703 undefined column",
+      };
+      expect(classifyAdminDataError(err)).toBe("unknown");
+    });
+
+    it("does NOT match permission code found in message field", () => {
+      const err = {
+        code: "UNKNOWN",
+        message: "42501 insufficient privilege",
+      };
+      expect(classifyAdminDataError(err)).toBe("unknown");
+    });
+
+    it("does NOT match connection prefix found in message field", () => {
+      const err = {
+        code: "UNKNOWN",
+        message: "08006 connection failure",
+      };
+      expect(classifyAdminDataError(err)).toBe("unknown");
+    });
+
+    it("does NOT match 0L prefix found in message field", () => {
+      const err = {
+        code: "UNKNOWN",
+        message: "0L000 role does not exist",
+      };
+      expect(classifyAdminDataError(err)).toBe("unknown");
+    });
+  });
 });
 
 describe("normalizeCause", () => {

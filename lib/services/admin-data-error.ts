@@ -20,6 +20,13 @@
  *
  * The output is a fixed enum-like string, safe to emit to server logs and to
  * propagate through redirect query params.
+ *
+ * Contract:
+ *   - classifyAdminDataError NEVER throws. Any input (including getters that
+ *     throw, non-string/non-number codes, null, undefined, primitives) is
+ *     normalized to a fixed cause.
+ *   - Only string and number codes/names are inspected. Anything else is
+ *     treated as an empty string.
  */
 
 export type AdminDataFailureCause =
@@ -107,38 +114,71 @@ const TIMEOUT_NAMES: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Normalize a value into a string key for set lookups.
- * Numbers are coerced to string. Anything else is stringified.
+ * Safely read a property from an object without throwing. If the property
+ * accessor throws, or the value is not a string or number, returns "".
+ *
+ * Only string and number are accepted. Booleans, objects, symbols, etc.
+ * are treated as empty — we never call String(value) on them, which could
+ * invoke unexpected toString() implementations or getters.
  */
-function toKey(value: unknown): string {
-  if (value === null || value === undefined) return "";
-  if (typeof value === "number") return String(value);
-  if (typeof value === "string") return value;
-  return String(value);
+function safeReadKey(obj: object, key: string): string {
+  try {
+    const value = (obj as Record<string, unknown>)[key];
+    if (typeof value === "string") return value;
+    if (typeof value === "number") return String(value);
+    return "";
+  } catch {
+    return "";
+  }
 }
 
 /**
  * Inspect an unknown error-like value and return a fixed cause.
  *
  * Only reads `code` and `name` from the error. Falls through to "unknown"
- * for anything that doesn't match a known code/name. Never throws.
+ * for anything that doesn't match a known code/name. NEVER throws.
+ *
+ * Judgment order:
+ *   1. schema exact codes
+ *   2. permission exact codes OR 0L/0P SQLSTATE class prefix
+ *   3. authentication exact codes
+ *   4. timeout exact codes
+ *   5. connection exact codes OR 08 SQLSTATE class prefix
+ *   6. timeout by name (AbortError, TimeoutError)
+ *   7. unknown
  */
 export function classifyAdminDataError(err: unknown): AdminDataFailureCause {
   if (err === null || err === undefined) return "unknown";
-  if (typeof err === "object") {
-    const code = toKey((err as { code?: unknown }).code).toUpperCase();
-    const name = toKey((err as { name?: unknown }).name);
+  if (typeof err !== "object") return "unknown";
 
-    if (code) {
-      if (SCHEMA_CODES.has(code)) return "schema";
-      if (PERMISSION_CODES.has(code)) return "permission";
-      if (AUTHENTICATION_CODES.has(code)) return "authentication";
-      if (CONNECTION_CODES.has(code)) return "connection";
-      if (TIMEOUT_CODES.has(code)) return "timeout";
-    }
+  const codeRaw = safeReadKey(err, "code");
+  const nameRaw = safeReadKey(err, "name");
+  const code = codeRaw.toUpperCase();
+  const name = nameRaw;
 
-    if (name && TIMEOUT_NAMES.has(name)) return "timeout";
+  // 1. schema exact
+  if (code && SCHEMA_CODES.has(code)) return "schema";
+
+  // 2. permission exact OR 0L*/0P* SQLSTATE class prefix
+  if (code && PERMISSION_CODES.has(code)) return "permission";
+  if (code.length >= 2 && (code.startsWith("0L") || code.startsWith("0P"))) {
+    return "permission";
   }
+
+  // 3. authentication exact
+  if (code && AUTHENTICATION_CODES.has(code)) return "authentication";
+
+  // 4. timeout exact
+  if (code && TIMEOUT_CODES.has(code)) return "timeout";
+
+  // 5. connection exact OR 08 SQLSTATE class prefix
+  if (code && CONNECTION_CODES.has(code)) return "connection";
+  if (code.length >= 2 && code.startsWith("08")) return "connection";
+
+  // 6. timeout by name
+  if (name && TIMEOUT_NAMES.has(name)) return "timeout";
+
+  // 7. unknown
   return "unknown";
 }
 
