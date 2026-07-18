@@ -1,0 +1,4 @@
+Workflow: Staging validation
+Branch/ref: main
+base_url: https://h5.kzqdecor.com
+allow_writes: false
