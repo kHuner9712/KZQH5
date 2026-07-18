@@ -24,6 +24,15 @@ begin
   if has_function_privilege('authenticated', 'public.create_inquiry_with_items(jsonb,jsonb)', 'execute') then
     raise exception 'ordinary authenticated can execute atomic inquiry RPC';
   end if;
+  if has_function_privilege('anon', 'public.count_unread_inquiries()', 'execute') then
+    raise exception 'anon can execute unread count RPC';
+  end if;
+  if has_function_privilege('authenticated', 'public.count_unread_inquiries()', 'execute') then
+    raise exception 'ordinary authenticated can execute unread count RPC';
+  end if;
+  if not has_function_privilege('service_role', 'public.count_unread_inquiries()', 'execute') then
+    raise exception 'service_role cannot execute unread count RPC';
+  end if;
   if not has_function_privilege('anon', 'public.search_published_products(text,uuid,uuid,integer,integer)', 'execute') then
     raise exception 'anon cannot execute public search RPC';
   end if;

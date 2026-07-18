@@ -566,6 +566,10 @@ export type Database = {
     };
     Views: Record<string, never>;
     Functions: {
+      count_unread_inquiries: {
+        Args: Record<string, never>;
+        Returns: number;
+      };
       search_published_products: {
         Args: {
           p_query?: string | null;

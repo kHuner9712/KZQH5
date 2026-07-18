@@ -12,42 +12,80 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 type InquiryClient = SupabaseClient<Database>;
 
 function makeClient(opts: {
-  count?: number | null;
+  data?: unknown;
   error?: unknown;
   throw?: unknown;
 }): InquiryClient {
-  // Chain: client.from("inquiries").select(...).eq(...).limit(...)
-  // limit() resolves to { count, error }.
-  const limit = vi.fn(async () => {
-    if (opts.throw) throw opts.throw;
-    return { count: opts.count ?? null, error: opts.error ?? null };
+  const rpc = vi.fn(async () => {
+    if (Object.prototype.hasOwnProperty.call(opts, "throw")) {
+      throw opts.throw;
+    }
+    return {
+      data: Object.prototype.hasOwnProperty.call(opts, "data")
+        ? opts.data
+        : null,
+      error: opts.error ?? null,
+    };
   });
-  const eq = vi.fn(() => ({ limit }));
-  const select = vi.fn(() => ({ eq }));
-  return {
-    from: vi.fn(() => ({ select })),
-  } as unknown as InquiryClient;
+  return { rpc } as unknown as InquiryClient;
 }
 
 describe("countUnreadInquiries", () => {
-  it("returns count when query succeeds with non-null count", async () => {
-    const client = makeClient({ count: 1 });
+  it("returns 1 when the RPC returns number 1", async () => {
+    const client = makeClient({ data: 1 });
     const result = await countUnreadInquiries(client);
     expect(result).toBe(1);
+    expect(client.rpc).toHaveBeenCalledExactlyOnceWith(
+      "count_unread_inquiries",
+    );
   });
 
-  it("returns 0 when query succeeds with count=0 (no unread)", async () => {
-    const client = makeClient({ count: 0 });
+  it("returns 0 only when the RPC returns number 0", async () => {
+    const client = makeClient({ data: 0 });
     const result = await countUnreadInquiries(client);
     expect(result).toBe(0);
   });
 
-  it("throws UnreadInquiryCountError with cause=count-unavailable when count is null", async () => {
-    const client = makeClient({ count: null });
+  it("returns 1 when the RPC returns decimal string 1", async () => {
+    const client = makeClient({ data: "1" });
+    await expect(countUnreadInquiries(client)).resolves.toBe(1);
+  });
+
+  it("returns 0 when the RPC returns decimal string 0", async () => {
+    const client = makeClient({ data: "0" });
+    await expect(countUnreadInquiries(client)).resolves.toBe(0);
+  });
+
+  it("classifies null as count-unavailable", async () => {
+    const client = makeClient({ data: null });
     await expect(countUnreadInquiries(client)).rejects.toMatchObject({
       name: "UnreadInquiryCountError",
       causeCode: "count-unavailable",
       message: "Unread inquiry count failed",
+    });
+  });
+
+  it.each([
+    ["undefined", undefined],
+    ["negative number", -1],
+    ["fractional number", 1.5],
+    ["NaN", Number.NaN],
+    ["Infinity", Number.POSITIVE_INFINITY],
+    ["number above MAX_SAFE_INTEGER", Number.MAX_SAFE_INTEGER + 1],
+    ["empty string", ""],
+    ["negative string", "-1"],
+    ["positive-signed string", "+1"],
+    ["decimal string", "1.0"],
+    ["scientific-notation string", "1e3"],
+    ["string above MAX_SAFE_INTEGER", "9007199254740992"],
+    ["object", { count: 1 }],
+    ["array", [1]],
+    ["boolean", true],
+  ])("classifies %s as count-unavailable", async (_label, data) => {
+    const client = makeClient({ data });
+    await expect(countUnreadInquiries(client)).rejects.toMatchObject({
+      name: "UnreadInquiryCountError",
+      causeCode: "count-unavailable",
     });
   });
 
@@ -64,6 +102,14 @@ describe("countUnreadInquiries", () => {
     await expect(countUnreadInquiries(client)).rejects.toMatchObject({
       name: "UnreadInquiryCountError",
       causeCode: "permission",
+    });
+  });
+
+  it("throws UnreadInquiryCountError with cause=authentication when error.code=PGRST301", async () => {
+    const client = makeClient({ error: { code: "PGRST301" } });
+    await expect(countUnreadInquiries(client)).rejects.toMatchObject({
+      name: "UnreadInquiryCountError",
+      causeCode: "authentication",
     });
   });
 
@@ -111,14 +157,19 @@ describe("countUnreadInquiries", () => {
 
   it("does NOT return 0 on failure (no deny-by-default regression)", async () => {
     const client = makeClient({ error: { code: "42501" } });
-    const result = countUnreadInquiries(client);
-    await expect(result).rejects.toBeInstanceOf(UnreadInquiryCountError);
-    // Explicitly assert it's not a resolved 0.
-    await expect(result).rejects.not.toEqual(0 as any);
+    const outcome = await countUnreadInquiries(client).then(
+      (value) => ({ status: "resolved" as const, value }),
+      (error: unknown) => ({ status: "rejected" as const, error }),
+    );
+    expect(outcome.status).toBe("rejected");
+    expect(outcome).not.toMatchObject({ status: "resolved", value: 0 });
+    if (outcome.status === "rejected") {
+      expect(outcome.error).toBeInstanceOf(UnreadInquiryCountError);
+    }
   });
 
   it("UnreadInquiryCountError.message is the fixed constant string", async () => {
-    const client = makeClient({ count: null });
+    const client = makeClient({ data: null });
     try {
       await countUnreadInquiries(client);
       throw new Error("should have thrown");
@@ -133,10 +184,10 @@ describe("countUnreadInquiries", () => {
   it("UnreadInquiryCountError does not expose the original Supabase error", async () => {
     const originalError = {
       code: "42501",
-      message: "permission denied for table inquiries",
-      details: "row-level security policy",
-      hint: "Use service_role key",
-      stack: "Error: ...",
+      message: "ORIGINAL_MESSAGE_MARKER",
+      details: "ORIGINAL_DETAILS_MARKER",
+      hint: "ORIGINAL_HINT_MARKER",
+      stack: "ORIGINAL_STACK_MARKER",
     };
     const client = makeClient({ error: originalError });
     try {
@@ -151,6 +202,8 @@ describe("countUnreadInquiries", () => {
       expect(e.message).toBe("Unread inquiry count failed");
       // causeCode is the only safe field exposed.
       expect(e.causeCode).toBe("permission");
+      expect(JSON.stringify(e)).not.toContain("ORIGINAL_");
+      expect(e.stack ?? "").not.toContain("ORIGINAL_STACK_MARKER");
     }
   });
 });

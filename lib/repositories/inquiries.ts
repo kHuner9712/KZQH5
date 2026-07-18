@@ -51,6 +51,19 @@ export interface InquiryListResult {
 
 type InquiryClient = SupabaseClient<Database>;
 
+function parseUnreadInquiryCount(value: unknown): number | null {
+  if (typeof value === "number") {
+    return Number.isSafeInteger(value) && value >= 0 ? value : null;
+  }
+
+  if (typeof value !== "string" || !/^\d+$/.test(value)) {
+    return null;
+  }
+
+  const count = Number(value);
+  return Number.isSafeInteger(count) && count >= 0 ? count : null;
+}
+
 export async function createInquiry(record: InquiryCreateRecord): Promise<Inquiry> {
   const client = createAdminSupabaseClient();
   const { data, error } = await client
@@ -111,21 +124,17 @@ export async function listInquiries(
 }
 
 export async function countUnreadInquiries(client: InquiryClient): Promise<number> {
-  let result: { count: number | null; error: unknown };
+  let result: { data: unknown; error: unknown };
 
   try {
-    result = await client
-      .from("inquiries")
-      .select("id", { count: "exact" })
-      .eq("is_read", false)
-      .limit(1);
+    result = await client.rpc("count_unread_inquiries");
   } catch (err) {
     // fetch or client-side throw (network, abort, etc.). Classify by code/name
     // only; never propagate the original error object.
     throw new UnreadInquiryCountError(classifyAdminDataError(err));
   }
 
-  const { count, error } = result;
+  const { data, error } = result;
 
   if (error) {
     // Supabase returned an error object. Classify by code/name only.
@@ -133,8 +142,9 @@ export async function countUnreadInquiries(client: InquiryClient): Promise<numbe
     throw new UnreadInquiryCountError(classifyAdminDataError(error));
   }
 
-  if (count === null || count === undefined) {
-    // No error, but count missing — treat as a distinct, safe cause.
+  const count = parseUnreadInquiryCount(data);
+  if (count === null) {
+    // No error, but the scalar response is not a safe non-negative integer.
     throw new UnreadInquiryCountError("count-unavailable");
   }
 
