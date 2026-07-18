@@ -27,9 +27,10 @@ const options = {
 const anon = configured
   ? createClient<Database>(url!, anonKey!, options)
   : null;
-const service = serviceKey
-  ? createClient<Database>(url!, serviceKey!, options)
-  : null;
+const service =
+  url && serviceKey
+    ? createClient<Database>(url, serviceKey, options)
+    : null;
 
 function expectSuccess(result: { error: unknown }, label: string) {
   expect(result.error, label).toBeNull();
@@ -43,6 +44,15 @@ function parseNonNegativeSafeInteger(value: unknown): number | null {
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null;
 }
+
+describe.skipIf(Boolean(url && serviceKey))(
+  "service client configuration guard",
+  () => {
+    it("does not create a service client from incomplete configuration", () => {
+      expect(service).toBeNull();
+    });
+  },
+);
 
 describe.skipIf(!configured)("real environment read-only smoke", () => {
   it("connects and reads every published public resource", async () => {
