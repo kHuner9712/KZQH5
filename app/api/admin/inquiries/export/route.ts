@@ -10,7 +10,9 @@ const MAX_EXPORT_ROWS = 10000;
 
 export async function GET(request: NextRequest) {
   const admin = await getVerifiedAdmin();
-  if (!admin) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!admin.ok) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
 
   const baseFilters = inquiryFiltersFromSearchParams(request.nextUrl.searchParams, {
     pageSizeMaximum: BATCH_SIZE,

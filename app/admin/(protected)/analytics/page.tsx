@@ -16,7 +16,7 @@ function dateRange(params: SearchParams) {
   const end = new Date();
   if (params.range === "custom" && validDate(params.from) && validDate(params.to)) {
     const start = new Date(`${params.from}T00:00:00.000Z`);
-    const exclusiveEnd = new Date(`${params.to}T00:00:00.000Z`);
+    const exclusiveEnd = new Date(`${params.to}T00:00:00Z`);
     exclusiveEnd.setUTCDate(exclusiveEnd.getUTCDate() + 1);
     if (start < exclusiveEnd) return { start, end: exclusiveEnd, label: `${params.from} 至 ${params.to}` };
   }
@@ -31,7 +31,10 @@ function decodeSearchTerm(value: string) {
 
 export default async function AnalyticsPage({ searchParams }: { searchParams: SearchParams }) {
   const admin = await getVerifiedAdmin();
-  if (!admin) redirect("/admin/login?error=no_permission");
+  if (!admin.ok) {
+    const stage = admin.reason === "session-missing" || admin.reason === "session-verification-failed" ? "session" : "profile";
+    redirect(`/admin/login?error=admin_guard&stage=${stage}`);
+  }
   const range = dateRange(searchParams);
   let summary;
   try {
