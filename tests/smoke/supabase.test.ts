@@ -27,13 +27,32 @@ const options = {
 const anon = configured
   ? createClient<Database>(url!, anonKey!, options)
   : null;
-const service = writeRequested
-  ? createClient<Database>(url!, serviceKey!, options)
-  : null;
+const service =
+  url && serviceKey
+    ? createClient<Database>(url, serviceKey, options)
+    : null;
 
 function expectSuccess(result: { error: unknown }, label: string) {
   expect(result.error, label).toBeNull();
 }
+
+function parseNonNegativeSafeInteger(value: unknown): number | null {
+  if (typeof value === "number") {
+    return Number.isSafeInteger(value) && value >= 0 ? value : null;
+  }
+  if (typeof value !== "string" || !/^\d+$/.test(value)) return null;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null;
+}
+
+describe.skipIf(Boolean(url && serviceKey))(
+  "service client configuration guard",
+  () => {
+    it("does not create a service client from incomplete configuration", () => {
+      expect(service).toBeNull();
+    });
+  },
+);
 
 describe.skipIf(!configured)("real environment read-only smoke", () => {
   it("connects and reads every published public resource", async () => {
@@ -85,6 +104,12 @@ describe.skipIf(!configured)("real environment read-only smoke", () => {
       p_limit: 1,
     });
     expectSuccess(result, "search_published_products");
+  });
+
+  it("denies anon execution of the unread count RPC", async () => {
+    const result = await anon!.rpc("count_unread_inquiries");
+    expect(result.error).not.toBeNull();
+    expect(result.data).toBeNull();
   });
 
   it("does not expose unpublished content to anon", async () => {
@@ -140,6 +165,17 @@ describe.skipIf(!configured)("real environment read-only smoke", () => {
     expect(inquiryRpc.error).not.toBeNull();
   });
 });
+
+describe.skipIf(!configured || !serviceKey)(
+  "service-role-only unread count RPC smoke",
+  () => {
+    it("allows service_role to execute the read-only scalar RPC", async () => {
+      const result = await service!.rpc("count_unread_inquiries");
+      expectSuccess(result, "service_role count_unread_inquiries");
+      expect(parseNonNegativeSafeInteger(result.data)).not.toBeNull();
+    });
+  },
+);
 
 async function createMarkedInquiry(
   client: SupabaseClient<Database>,

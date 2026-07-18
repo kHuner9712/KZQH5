@@ -42,6 +42,15 @@ async function check(name, operation) {
   }
 }
 
+function parseNonNegativeSafeInteger(value) {
+  if (typeof value === "number") {
+    return Number.isSafeInteger(value) && value >= 0 ? value : null;
+  }
+  if (typeof value !== "string" || !/^\d+$/.test(value)) return null;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null;
+}
+
 for (const [table, column, value] of [
   ["products", "is_published", true],
   ["categories", "is_active", true],
@@ -112,6 +121,7 @@ for (const result of checks) {
 let hasFailure = checks.some((result) => !result.ok);
 
 if (service) {
+  let directUnreadCount = null;
   const countChecks = [
     ["products", "products", null],
     ["products.published", "products", ["is_published", true]],
@@ -135,6 +145,23 @@ if (service) {
       continue;
     }
     console.log(`COUNT ${label}=${count}`);
+    if (label === "inquiries.unread") directUnreadCount = count;
+  }
+
+  const unreadRpc = await service.rpc("count_unread_inquiries");
+  const unreadRpcCount = parseNonNegativeSafeInteger(unreadRpc.data);
+  if (
+    unreadRpc.error ||
+    unreadRpcCount === null ||
+    directUnreadCount === null ||
+    unreadRpcCount !== directUnreadCount ||
+    unreadRpcCount !== 1
+  ) {
+    console.log("FAIL service_role count_unread_inquiries RPC");
+    hasFailure = true;
+  } else {
+    console.log("PASS service_role count_unread_inquiries RPC");
+    console.log(`COUNT inquiries.unread.rpc=${unreadRpcCount}`);
   }
 
   const regression = await service
