@@ -16,7 +16,7 @@ function dateRange(params: SearchParams) {
   const end = new Date();
   if (params.range === "custom" && validDate(params.from) && validDate(params.to)) {
     const start = new Date(`${params.from}T00:00:00.000Z`);
-    const exclusiveEnd = new Date(`${params.to}T00:00:00.000Z`);
+    const exclusiveEnd = new Date(`${params.to}T00:00:00Z`);
     exclusiveEnd.setUTCDate(exclusiveEnd.getUTCDate() + 1);
     if (start < exclusiveEnd) return { start, end: exclusiveEnd, label: `${params.from} 至 ${params.to}` };
   }
