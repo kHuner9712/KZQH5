@@ -1,0 +1,15 @@
+[
+  {
+    "catalog_topic_id": "wpc-wall-panel",
+    "title_cn": "WPC 墙板综合目录",
+    "title_en": "WPC Wall Panel Catalog",
+    "description_cn": "",
+    "description_en": "",
+    "asset_type": "catalog",
+    "source_file": "./catalog-source/wpc-wall-panel.pdf",
+    "cover_file": "./catalog-source/wpc-wall-panel-cover.jpg",
+    "published_at": "2026-07-01",
+    "sort_order": 10,
+    "is_published": false
+  }
+]
