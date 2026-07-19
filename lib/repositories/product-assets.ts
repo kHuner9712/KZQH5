@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { isDemoMode } from "@/lib/demo";
-import { mockProductAssets } from "@/lib/mock-data";
+import { mockCatalogAssets } from "@/lib/mock-catalog-assets";
 import { createPublicSupabaseClient } from "@/lib/supabase/public";
 import type { Database, ProductAsset } from "@/types/database";
 
@@ -8,7 +8,7 @@ type Client = SupabaseClient<Database>;
 
 export async function getPublishedProductAssets(productId: string | null): Promise<ProductAsset[]> {
   if (isDemoMode()) {
-    return mockProductAssets
+    return mockCatalogAssets
       .filter((asset) => asset.is_published && asset.product_id === productId)
       .sort((a, b) => a.sort_order - b.sort_order);
   }
@@ -19,7 +19,7 @@ export async function getPublishedProductAssets(productId: string | null): Promi
     query = productId ? query.eq("product_id", productId) : query.is("product_id", null);
     const { data, error } = await query
       .order("sort_order", { ascending: true })
-      .order("created_at", { ascending: true });
+      .order("created_at", { ascending: false });
     if (error) return [];
     return (data as ProductAsset[] | null) || [];
   } catch {
