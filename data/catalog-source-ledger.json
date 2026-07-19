@@ -1,0 +1,23 @@
+[
+  {"catalog_topic_id":"color-card","status":"customer-required","source_url":"","local_file":"","notes":"等待 KZQ 自有色卡或获授权公开版本。"},
+  {"catalog_topic_id":"gz-series","status":"customer-required","source_url":"","local_file":"","notes":"等待可核验文件。"},
+  {"catalog_topic_id":"hd-spc-catalog","status":"customer-required","source_url":"","local_file":"","notes":"等待可核验文件。"},
+  {"catalog_topic_id":"product-information-book","status":"rebuild-required","source_url":"","local_file":"","notes":"建议基于 KZQ 实际产品重建。"},
+  {"catalog_topic_id":"wpc-wall-panel","status":"customer-required","source_url":"","local_file":"","notes":"等待 KZQ 或供应链可公开目录。"},
+  {"catalog_topic_id":"wpc-solid-splicing","status":"customer-required","source_url":"","local_file":"","notes":"等待可核验文件。"},
+  {"catalog_topic_id":"wpc-door-series","status":"customer-required","source_url":"","local_file":"","notes":"等待可核验文件。"},
+  {"catalog_topic_id":"carbon-crystal-wall-panel","status":"customer-required","source_url":"","local_file":"","notes":"等待可核验文件。"},
+  {"catalog_topic_id":"anti-collision-wall-panel","status":"rebuild-required","source_url":"","local_file":"","notes":"根据实际供应产品制作资料。"},
+  {"catalog_topic_id":"fireproof-wall-panel","status":"customer-required","source_url":"","local_file":"","notes":"性能数据必须与实际产品一致。"},
+  {"catalog_topic_id":"aluminum-alloy-profile","status":"customer-required","source_url":"","local_file":"","notes":"等待型材规格资料。"},
+  {"catalog_topic_id":"sound-absorption-grille","status":"customer-required","source_url":"","local_file":"","notes":"等待可核验文件。"},
+  {"catalog_topic_id":"soft-stone-series","status":"customer-required","source_url":"","local_file":"","notes":"等待可核验文件。"},
+  {"catalog_topic_id":"spc-wpc-flooring","status":"customer-required","source_url":"","local_file":"","notes":"等待可核验文件。"},
+  {"catalog_topic_id":"edge-finishing","status":"rebuild-required","source_url":"","local_file":"","notes":"可根据 KZQ 型材和节点重建。"},
+  {"catalog_topic_id":"wpc-lines","status":"customer-required","source_url":"","local_file":"","notes":"等待线条规格资料。"},
+  {"catalog_topic_id":"wood-grain","status":"customer-required","source_url":"","local_file":"","notes":"等待 KZQ 实际木纹花色。"},
+  {"catalog_topic_id":"metal-series","status":"customer-required","source_url":"","local_file":"","notes":"等待 KZQ 实际金属纹花色。"},
+  {"catalog_topic_id":"stone-grain","status":"customer-required","source_url":"","local_file":"","notes":"等待 KZQ 实际石纹花色。"},
+  {"catalog_topic_id":"solid-color","status":"customer-required","source_url":"","local_file":"","notes":"等待 KZQ 实际纯色花色。"},
+  {"catalog_topic_id":"cloth-grain","status":"customer-required","source_url":"","local_file":"","notes":"等待 KZQ 实际布纹花色。"}
+]
