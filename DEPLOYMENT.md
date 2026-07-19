@@ -1,6 +1,15 @@
 # 部署指南
 
-本文件说明 KZQ 的候选部署与验证流程。当前没有最终生产架构结论：Vercel 仅用于开发和海外临时预览；EdgeOne Makers 是国内/海外统一 Staging 候选；CloudBase 是 Supabase 被实测证明为国内瓶颈后的后端候选。正式结论为 **Pending real network validation**。
+本文件说明 KZQ 的正式部署与验证流程。
+
+**生产架构（已确定）：**
+
+- **EdgeOne**：正式前端及 Next.js 服务端运行平台（SSR / ISR / Route Handlers / `next/image` / CDN），Node 20。
+- **Supabase**：正式数据库、Auth 与 Storage。
+- **Vercel**：已废弃，不再用于 Preview 或 Production；本指南不再维护 Vercel 部署步骤。
+- **Cloudflare Pages / CloudBase**：历史备选方案，仅在 `docs/ADR-001-CHINA-DEPLOYMENT.md` 中作为决策证据保留，不属于当前部署主流程。
+
+中国大陆运营商、微信内置浏览器与真机验收仍属人工验收项，未在代码自动化中替代；详见 `docs/CHINA_WECHAT_NETWORK_TEST.md`。
 
 ## 前置条件
 
@@ -35,7 +44,7 @@
 
 ⚠️ `SUPABASE_SERVICE_ROLE_KEY` 只能在服务端环境变量中配置，不可出现在客户端代码或 `NEXT_PUBLIC_*` 变量中。
 
-## EdgeOne Makers Staging（当前候选）
+## EdgeOne Makers（生产平台）
 
 官方与项目实测边界见 [兼容性矩阵](./docs/EDGEONE_COMPATIBILITY_MATRIX.md)。Makers 当前项目环境变量对所有环境生效，因此 Demo Preview 与 Supabase Staging 推荐创建两个独立 Makers 项目，避免 Preview 继承 Staging 密钥。
 
@@ -94,107 +103,11 @@ npm run test:e2e:staging
 
 ### 控制台人工步骤
 
-1. GitHub 导入 `kHuner9712/KZQH5`，选择 `codex/edgeone-staging-validation` 预览分支。
+1. GitHub 导入 `kHuner9712/KZQH5`，部署分支以仓库和 EdgeOne 当前真实配置为准（正式部署分支：`main`）。
 2. 使用上方构建设置；保存环境变量后触发新部署，旧部署不会自动更新。
 3. 记录 build log、deployment URL、commit SHA 和 Function request id；不得上传 `.env`。
 4. 先验证 `/api/health`，再运行部署探测与 Staging E2E。
 5. 未取得部署权限时将结果记为“被阻塞”，不得把本地 Demo 记作 EdgeOne 通过。
-
----
-
-## Vercel：开发和海外临时预览
-
-保留现有 Vercel 配置用于开发和海外临时 Preview，但当前正式生产目标不依赖 Vercel，也不得用 Vercel 结果替代 EdgeOne/中国网络验收。
-
-### 步骤
-
-1. **导入项目**
-   - 访问 https://vercel.com → New Project
-   - 选择你的 Git 仓库 → Import
-
-2. **配置项目**
-   - Framework Preset: `Next.js`（自动识别）
-   - Root Directory: `./`
-   - Build Command: `next build`（默认）
-   - Output Directory: `.next`（默认）
-
-3. **配置环境变量**
-   - 在 Environment Variables 中逐个添加：
-     ```
-     NEXT_PUBLIC_SUPABASE_URL
-     NEXT_PUBLIC_SUPABASE_ANON_KEY
-     SUPABASE_SERVICE_ROLE_KEY
-     NEXT_PUBLIC_SITE_URL
-     # 可选：INQUIRY_WECOM_WEBHOOK_URL / RESEND_API_KEY /
-     # INQUIRY_NOTIFICATION_FROM / INQUIRY_NOTIFICATION_TO
-     ```
-   - 勾选 Production / Preview / Development 三个环境
-
-4. **部署**
-   - 点击 Deploy
-   - 等待构建完成（约 2-3 分钟）
-   - 部署成功后会得到 `xxx.vercel.app` 临时域名
-
-5. **绑定自定义域名**
-   - 进入项目 Settings → Domains
-   - 添加你的域名（如 `kzq.example.com`）
-   - 按提示在域名服务商处添加 CNAME 记录
-   - 等 DNS 生效后即可通过自定义域名访问
-
-6. **更新 NEXT_PUBLIC_SITE_URL**
-   - 将环境变量改为正式域名
-   - 触发一次 Redeploy
-
-### Vercel 优势
-
-- 自动 HTTPS
-- 全球 CDN
-- 自动部署（push 即发布）
-- Preview 部署（每个 PR 一个预览环境）
-- 原生支持 Next.js App Router / ISR / Route Handlers
-
----
-
-## Cloudflare Pages：历史备选（非当前验收范围）
-
-> ⚠️ Cloudflare Pages 不是当前主流程推荐方案。如选择此方案，需额外适配 `@cloudflare/next-on-pages`，且部分 Next.js 功能（如 ISR）支持有限，需自行测试兼容性。
-
-### 步骤
-
-1. **安装 Wrangler CLI**（可选，用于本地预览）
-   ```bash
-   npm install -g wrangler
-   ```
-
-2. **构建项目**
-   - 访问 https://dash.cloudflare.com → Pages → Create a project
-   - 选择 Connect to Git → 关联仓库
-   - 配置：
-     - Framework preset: `Next.js`
-     - Build command: `npx @cloudflare/next-on-pages`
-     - Build output directory: `.vercel/output/static`
-   - Environment variables：添加上述必填环境变量
-
-3. **首次构建**
-   - 点击 Save and Deploy
-   - 等待构建完成
-
-4. **绑定自定义域名**
-   - 进入 Pages 项目 → Custom domains
-   - 添加域名，按提示配置 CNAME
-
-### Cloudflare Pages 注意事项
-
-- 需要安装 `@cloudflare/next-on-pages` 适配器
-- 部分 Next.js 功能（如 ISR）在 Cloudflare 上支持有限
-- Edge Runtime 兼容性需测试
-- 内存级限流（如询盘接口）在 Cloudflare 上不是强一致，建议搭配 Cloudflare WAF / Rate Limiting 规则
-- 建议在 `package.json` 中添加：
-  ```json
-  "scripts": {
-    "build:cf": "npx @cloudflare/next-on-pages"
-  }
-  ```
 
 ---
 
@@ -306,9 +219,9 @@ npm run test:e2e:staging
 
 ---
 
-## CloudBase 候选边界
+## 历史备选方案（仅供参考，不属于当前架构）
 
-本阶段不迁移 CloudBase。只有真实国内对照证据证明 EdgeOne 页面正常而 Supabase 数据、Auth 或 Storage 是瓶颈后，才评估 `EdgeOne Makers + CloudBase 后端`；若 EdgeOne Next.js runtime 本身不兼容，再评估 CloudBase 应用部署。迁移成本与 Go/No-Go 条件见 [ADR-001](./docs/ADR-001-CHINA-DEPLOYMENT.md)。
+CloudBase 与 Cloudflare Pages 曾作为中国大陆部署的备选方案评估，但当前正式架构已确定为 EdgeOne + Supabase，本节仅作为决策证据保留。除非 EdgeOne 或 Supabase 在中国大陆运营商网络下被真实证据证明为瓶颈，否则不进入迁移评估。完整历史候选方案与 Go/No-Go 条件见 [ADR-001](./docs/ADR-001-CHINA-DEPLOYMENT.md)。
 
 ## 域名与 SSL
 

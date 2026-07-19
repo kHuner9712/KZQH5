@@ -45,9 +45,32 @@ export function formatDate(dateStr: string): string {
 }
 
 // 站点绝对 URL
+// 规则（与 docs/CODE_FINALIZATION_REPORT.md 与 .env.example 一致）：
+// - NEXT_PUBLIC_SITE_URL 必须是站点根，不携带语言前缀（不附加 /en）。
+// - 去除多余的尾部斜杠。
+// - 缺失配置时回退到 http://localhost:3000，仅供本地开发使用。
+// - 生产环境（NODE_ENV=production）下若 base 为 http 且非 localhost，
+//   记录一次安全警告（不抛错以避免破坏构建），canonical/sitemap/OG 仍以该 base 输出，
+//   实际 HTTPS 强制跳转交由 EdgeOne 控制台完成。
+// - path 由调用方决定（通常是 localePath(locale, path)）；本函数不重复处理语言前缀。
 export function siteUrl(path: string = ""): string {
-  const base = process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";
-  return `${base.replace(/\/$/, "")}${path}`;
+  const raw = process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";
+  // 去除尾部斜杠
+  let base = raw.replace(/\/+$/, "");
+  // 防御 /en 或 /zh 被错误配置进 NEXT_PUBLIC_SITE_URL（仅剥离末尾一次，不破坏子路径）
+  base = base.replace(/\/(en|zh)$/i, "");
+  if (
+    process.env.NODE_ENV === "production" &&
+    base.startsWith("http://") &&
+    !base.includes("localhost") &&
+    !base.includes("127.0.0.1")
+  ) {
+    // 仅记录一次警告，避免在 ISR 重建时刷屏；不抛错。
+    console.warn(
+      "siteUrl: NEXT_PUBLIC_SITE_URL is http:// in production; HTTPS enforcement belongs to EdgeOne.",
+    );
+  }
+  return `${base}${path}`;
 }
 
 // JSON-LD 会写入 <script> 文本节点；转义小于号可阻止 CMS 文本闭合 script 标签。

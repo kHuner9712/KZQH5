@@ -35,7 +35,7 @@ flowchart TD
 - **BaaS**：Supabase（PostgreSQL + Auth + Storage + RLS）
 - **客户端 SDK**：`@supabase/supabase-js`（浏览器用 anon key，服务端用 service_role key）
 - **初始化工具**：`create-next-app`（手动追加依赖）
-- **部署目标**：Vercel（首选）/ Cloudflare Pages（兼容）
+- **部署目标**：EdgeOne（正式生产平台，Node 20）/ Supabase（数据库 + Auth + Storage）；Vercel 已废弃
 - **不使用**：复杂状态管理库、冷门 UI 框架、需要额外运行时的技术
 
 ## 3. 路由定义

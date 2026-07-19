@@ -1,8 +1,11 @@
 # ADR-001：中国大陆部署架构
 
-- 状态：Pending real network validation
+- 状态：Superseded（已被最终生产架构取代）
+- 当前正式架构：EdgeOne + Supabase（见 [README.md](../README.md) 与 [DEPLOYMENT.md](../DEPLOYMENT.md)）
 - 日期：2026-07-15
 - 基线：`51a3073167ed722f53d2aab9158ce14cf43c6a71`
+
+> 本文件为历史决策证据保留。Supabase 与 EdgeOne 已被真实部署证据接受为正式生产架构，Vercel 因无法满足中国大陆访问要求而废弃，CloudBase / Cloudflare 不再属于当前架构主流程。下方原文与三份附录按时间顺序记录了从“待网络验证”到“Staging 已具备稳定 HTTPS 域名、健康接口、SEO origin 一致性”的演进，仅作为后续若需重新评估中国大陆瓶颈时的参考，不作为当前操作说明。中国大陆运营商、微信内置浏览器与真机验收仍属人工验收项。
 
 ## 背景与证据
 

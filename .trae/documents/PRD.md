@@ -162,5 +162,5 @@ flowchart LR
 - **SEO**：每页独立 metadata，产品详情 JSON-LD Product，公司页 Organization JSON-LD，sitemap.xml，robots.txt
 - **国际化**：中英文字段预留，前台默认中文，后续可扩展语言切换
 - **安全**：service_role 仅服务端，前台仅 anon key，RLS 强制开启，询盘匿名可写不可读
-- **可部署**：Vercel / Cloudflare Pages 兼容，无 Node 运行时依赖的静态部分可 CDN
+- **可部署**：EdgeOne（正式生产平台，Node 20）+ Supabase；Vercel 已废弃
 - **可运行**：本地 `npm install && npm run dev` 可直接跑通，连接 Supabase 后全功能可用

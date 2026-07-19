@@ -42,7 +42,8 @@ KZQ 品牌对外展示站点 + 后台内容管理系统（CMS）。基于 Next.j
 - **样式**：Tailwind CSS（自定义 graphite / steel / gold 配色）
 - **数据库 / 认证 / 文件存储**：Supabase (PostgreSQL + Auth + Storage)
 - **图标**：lucide-react
-- **部署状态**：Vercel 仅用于开发和海外临时预览；EdgeOne Makers 是国内/海外统一 Staging 候选；CloudBase 是国内后端候选；正式架构等待真实网络验证
+- **部署平台**：EdgeOne（正式前端及 Next.js 服务端运行平台，Node 20）
+- **已废弃平台**：Vercel（无法满足中国大陆访问要求，已正式停用，不再用于 Preview 或 Production）
 
 ## 项目结构
 
@@ -176,12 +177,14 @@ npm run dev
 
 详细步骤见 [DEPLOYMENT.md](./DEPLOYMENT.md)。
 
-当前部署结论不是“已选定正式平台”：
+当前生产架构已确定：
 
-- Vercel：开发与海外临时 Preview，不是当前正式生产目标。
-- EdgeOne Makers：全栈 Next.js Staging 候选；官方能力与项目实测必须区分。
-- CloudBase：只有 Supabase 被真实国内网络证据证明为瓶颈后，才进入后端迁移评估。
-- 正式架构：`Pending real network validation`。
+- **EdgeOne**：正式前端及 Next.js 服务端运行平台（SSR / ISR / Route Handlers / `next/image` / CDN），Node 20。
+- **Supabase**：正式数据库、Auth 与 Storage。
+- **Vercel**：已废弃，不再用于 Preview 或 Production。
+- **Cloudflare / CloudBase**：历史备选方案，不再属于当前架构主流程；仅在 ADR-001 中作为决策证据保留。
+
+正式部署分支以仓库和 EdgeOne 当前真实配置为准（参见 `docs/STAGING_VALIDATION_REPORT.md` 与 EdgeOne 控制台）。中国大陆运营商、微信内置浏览器与真机验收仍属人工验收项，未在代码自动化中替代。
 
 ## 生产稳定性、第一方统计与微信分享
 

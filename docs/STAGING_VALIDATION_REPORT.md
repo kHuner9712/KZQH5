@@ -1,6 +1,8 @@
 # EdgeOne Staging 验证报告
 
-日期：2026-07-15。分支：`codex/edgeone-staging-validation`。基线：`51a3073167ed722f53d2aab9158ce14cf43c6a71`。
+> 历史记录：本报告记录 2026-07-15 至 2026-07-17 期间对 EdgeOne Staging 的远程验收执行情况。当前生产架构已确定为 EdgeOne + Supabase，正式部署分支为 `main`；本文件中的 `codex/edgeone-staging-validation` 分支引用是当时的预览分支，不再使用。中国大陆运营商、微信内置浏览器与真机验收仍属人工验收项，未在代码自动化中替代。
+
+日期：2026-07-15。分支：`codex/edgeone-staging-validation`（历史预览分支，已被 `main` 取代）。基线：`51a3073167ed722f53d2aab9158ce14cf43c6a71`。
 
 ## 已实际执行
 
@@ -322,4 +324,3 @@ path is to revert the EdgeOne redirect-rule change if the operator later applies
 one; the repository rollback path for this execution is to revert the probe and
 documentation commit. After fixing HTTP enforcement, rerun the read-only
 Workflow first and enable writes only after every required read-only step passes.
-
