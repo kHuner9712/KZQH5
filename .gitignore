@@ -25,9 +25,10 @@ yarn-error.log*
 # local env files
 .env
 .env*.local
+# 历史游离文件（含真实密钥，禁止提交；详见 docs/CODE_FINALIZATION_REPORT.md）
 /Import .env
 
-# vercel
+# vercel (历史防御性忽略，当前正式部署平台为 EdgeOne)
 .vercel
 
 # typescript

@@ -102,7 +102,7 @@ KZQ 是**对外展示型**系统，类似品牌官网 + 海外询盘站。系统
 | 4 | message 垃圾内容判断 | message 中 URL 数量 ≥ 3 时拒绝；message 超长截断至 2000 字符 |
 | 5 | Demo 模式 | Demo 模式下不写入 Supabase，直接返回成功（用于前端 Mock Preview） |
 
-> ⚠️ Vercel serverless 环境中内存级限流不是强一致（不同实例间不共享状态），仅作为第一层保护。如需更强限流，建议在 Vercel 层面配置 Rate Limiting 或使用 Upstash Redis 等外部存储。
+> ⚠️ EdgeOne 多实例运行环境中内存级限流不是强一致（不同实例间不共享状态），仅作为第一层保护。如需更强限流，建议在 EdgeOne 控制台启用 WAF / Rate Limiting 规则，或迁移到 KV/Redis 等外部存储；后者属于生产验收项，不在代码层强制实现。
 
 询盘会记录用户主动提交的联系方式、产品上下文、当前页面、referrer 与 UTM 参数，仅用于处理询盘和识别来源。站点不使用跨站跟踪或指纹识别。`INQUIRY_WECOM_WEBHOOK_URL` 与 `RESEND_API_KEY` 均不得使用 `NEXT_PUBLIC_*` 前缀，错误日志不得输出完整 webhook 或密钥。数据访问、更正和删除请求通过公开联系页处理。
 
@@ -126,7 +126,7 @@ KZQ 是**对外展示型**系统，类似品牌官网 + 海外询盘站。系统
 如怀疑 `SUPABASE_SERVICE_ROLE_KEY` 泄露：
 
 1. 立即在 Supabase Dashboard → Settings → API 中重置 service_role key
-2. 更新所有部署环境（Vercel / Cloudflare Pages）的环境变量
+2. 更新所有部署环境（EdgeOne）的环境变量
 3. 重新部署应用
 4. 检查 `inquiries` 表是否有异常数据
 
