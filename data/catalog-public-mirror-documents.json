@@ -1,0 +1,32 @@
+[
+  {
+    "topic_ids": ["sound-absorption-grille", "edge-finishing", "wood-grain", "metal-series", "stone-grain", "solid-color", "cloth-grain"],
+    "title": "Fluted Wall Panels Information of BAIJAX",
+    "url": "https://hoset.ee/assets/catalog/146/68de43dec14e3/fluted_wall_panels_information_of_bajaxa.pdf_compressed.pdf",
+    "source": "HOSET Estonia public catalog mirror",
+    "access": "public_direct_pdf",
+    "verified": true,
+    "pages": 15,
+    "content_summary": "格栅墙板结构、规格、E0/B1、安装拼接方式及金属、木纹、纯色、布纹、石纹色号。",
+    "branding_note": "PDF 内含 HOSET 经销商标识，正式对外使用前须确认授权或重制 KZQ 版本。"
+  },
+  {
+    "topic_ids": ["color-card", "wood-grain", "metal-series", "stone-grain", "solid-color", "cloth-grain"],
+    "title": "BAIJAX Color Card Compressed",
+    "url": "https://www.matlab.com.lb/wp-content/uploads/2024/06/BAIJAX-Color-card-compressed.pdf",
+    "source": "MATLAB Architectural Materials public resource library",
+    "access": "public_direct_pdf",
+    "verified": true,
+    "content_summary": "黎巴嫩 BAIJAX 经销商公开资源中的压缩综合色卡。",
+    "branding_note": "正式对外使用前须确认经销展示授权或重制 KZQ 版本。"
+  },
+  {
+    "topic_ids": ["sound-absorption-grille"],
+    "title": "WPC Sound Absorption Wall Panel",
+    "url": "https://baijax.ee/wp-content/uploads/2024/10/WPC-Sound-absorption-wall-panel.pdf",
+    "source": "BAIJAX Estonia public mirror",
+    "access": "public_direct_pdf",
+    "verified": false,
+    "content_summary": "公开吸音墙板 PDF 直链，待文件下载环境恢复后做逐页核验。"
+  }
+]
