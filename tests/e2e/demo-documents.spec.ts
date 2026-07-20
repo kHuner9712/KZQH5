@@ -6,22 +6,34 @@ async function expectNoHorizontalOverflow(page: import("@playwright/test").Page)
 }
 
 test.describe("Demo catalog center", () => {
-  test("Chinese catalog topics, preview and inquiry fallback", async ({ page, request }) => {
+  test("Chinese catalog topics, image preview, PDF preview and inquiry fallback", async ({ page, request }) => {
     await page.goto("/documents");
     await expect(page.getByRole("heading", { level: 1, name: "产品目录与色卡" })).toBeVisible();
     await expect(page.locator('[data-testid^="catalog-topic-"]')).toHaveCount(21);
-    await expect(page.getByText("3 个已匹配文件")).toBeVisible();
+    // 4 demo assets: 3 SVG + 1 test PDF.
+    await expect(page.getByText("4 个已匹配文件")).toBeVisible();
 
+    // Image (SVG) preview via ImageViewer — should render an <img>, not an iframe.
     await page.getByTestId("catalog-topic-color-card").click();
-    const dialog = page.getByRole("dialog", { name: "KZQ 综合色卡" });
-    await expect(dialog).toBeVisible();
-    await expect(dialog.locator("iframe")).toHaveAttribute("src", "/demo/catalogs/kzq-color-card.svg");
+    const imgDialog = page.getByRole("dialog", { name: "KZQ 综合色卡" });
+    await expect(imgDialog).toBeVisible();
+    await expect(imgDialog.locator("img")).toBeVisible();
     await page.keyboard.press("Escape");
-    await expect(dialog).toHaveCount(0);
+    await expect(imgDialog).toHaveCount(0);
 
+    // Inquiry fallback for a topic without a published asset.
     await page.getByTestId("catalog-topic-gz-series").click();
     await expect(page).toHaveURL(/\/contact\?.*product=/);
     await expectNoHorizontalOverflow(page);
+
+    // PDF preview via PdfViewer — should render a <canvas>.
+    await page.goto("/documents");
+    await page.getByTestId("catalog-topic-hd-spc-catalog").click();
+    const pdfDialog = page.getByRole("dialog", { name: "HD / SPC 测试样本" });
+    await expect(pdfDialog).toBeVisible();
+    await expect(pdfDialog.locator("canvas")).toBeVisible({ timeout: 15_000 });
+    await page.keyboard.press("Escape");
+    await expect(pdfDialog).toHaveCount(0);
 
     const sitemap = await request.get("/sitemap.xml");
     expect(sitemap.ok()).toBe(true);
@@ -40,5 +52,50 @@ test.describe("Demo catalog center", () => {
     await page.getByRole("button", { name: "Close" }).click();
     await expect(page.getByRole("dialog")).toHaveCount(0);
     await expectNoHorizontalOverflow(page);
+  });
+
+  test("PDF viewer page navigation", async ({ page }) => {
+    await page.goto("/documents");
+    await page.getByTestId("catalog-topic-hd-spc-catalog").click();
+    const dialog = page.getByRole("dialog", { name: "HD / SPC 测试样本" });
+    await expect(dialog).toBeVisible();
+    await expect(dialog.locator("canvas")).toBeVisible({ timeout: 15_000 });
+    // The test PDF has 2 pages. Navigate to next page via the next button.
+    await dialog.getByRole("button", { name: "Next" }).click();
+    // Verify page input shows 2.
+    await expect(dialog.getByRole("spinbutton", { name: "Jump to page" })).toHaveValue("2");
+    // Go back to page 1.
+    await dialog.getByRole("button", { name: "Previous" }).click();
+    await expect(dialog.getByRole("spinbutton", { name: "Jump to page" })).toHaveValue("1");
+    await page.keyboard.press("Escape");
+    await expect(dialog).toHaveCount(0);
+  });
+
+  test("WeChat UA does not block PDF preview", async ({ browser }) => {
+    // Simulate WeChat in-app browser. The viewer should still attempt to load
+    // the PDF (not block based on UA alone).
+    const context = await browser.newContext({
+      userAgent: "Mozilla/5.0 (Linux; Android 12) MicroMessenger/8.0.40",
+      viewport: { width: 390, height: 844 },
+    });
+    const page = await context.newPage();
+    await page.goto("/documents");
+    await page.getByTestId("catalog-topic-hd-spc-catalog").click();
+    const dialog = page.getByRole("dialog", { name: "HD / SPC 测试样本" });
+    await expect(dialog).toBeVisible();
+    // PDF.js should still render the canvas in this Chromium-based WeChat UA.
+    await expect(dialog.locator("canvas")).toBeVisible({ timeout: 15_000 });
+    await context.close();
+  });
+
+  test("image asset preview is unaffected", async ({ page }) => {
+    await page.goto("/en/documents");
+    await page.getByTestId("catalog-topic-edge-finishing").click();
+    const dialog = page.getByRole("dialog", { name: "Fluted Wall Panel Edge Finishing Solutions" });
+    await expect(dialog).toBeVisible();
+    await expect(dialog.locator("img")).toBeVisible();
+    await expect(dialog.locator("canvas")).toHaveCount(0);
+    await page.keyboard.press("Escape");
+    await expect(dialog).toHaveCount(0);
   });
 });

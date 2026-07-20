@@ -1,12 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { FileText, Loader2, Pencil, Plus, Search, ShieldAlert, Trash2 } from "lucide-react";
+import { Eye, FileText, Loader2, Pencil, Plus, Search, ShieldAlert, Trash2 } from "lucide-react";
 import { FileUpload } from "@/components/admin/FileUpload";
 import { FormActions, Modal } from "@/components/admin/Modal";
 import { useToast } from "@/components/admin/Toast";
 import { Button } from "@/components/ui/Button";
 import { Input, Textarea } from "@/components/ui/Input";
+import { ProductAssetViewer, canPreviewProductAsset } from "@/components/public/ProductAssetViewer";
 import { catalogTopics } from "@/lib/catalog-topics";
 import { deleteProductAsset, listProductAssets, saveProductAsset } from "@/lib/repositories/product-assets";
 import { createBrowserSupabaseClient } from "@/lib/supabase/client";
@@ -52,6 +53,7 @@ export default function ProductAssetsAdminPage() {
   const [assets, setAssets] = useState<ProductAsset[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [editing, setEditing] = useState<ProductAsset | "new" | null>(null);
+  const [previewing, setPreviewing] = useState<ProductAsset | null>(null);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [topicFilter, setTopicFilter] = useState("");
@@ -137,13 +139,14 @@ export default function ProductAssetsAdminPage() {
                 <td className="p-4 text-xs text-gray-600">{asset.published_at || "—"}</td>
                 <td className="p-4 text-xs">{asset.sort_order}</td>
                 <td className="p-4"><button type="button" onClick={() => toggle(asset)} className={asset.is_published ? "rounded bg-emerald-50 px-2 py-1 text-xs text-emerald-700" : "rounded bg-gray-100 px-2 py-1 text-xs text-gray-500"}>{asset.is_published ? "已发布" : "草稿"}</button></td>
-                <td className="p-4"><div className="flex justify-end gap-1"><button type="button" onClick={() => setEditing(asset)} className="rounded p-2 text-gray-500 hover:bg-gray-50" aria-label="编辑"><Pencil className="h-4 w-4" /></button><button type="button" onClick={() => remove(asset)} className="rounded p-2 text-red-500 hover:bg-red-50" aria-label="删除"><Trash2 className="h-4 w-4" /></button></div></td>
+                <td className="p-4"><div className="flex justify-end gap-1">{canPreviewProductAsset(asset) && <button type="button" onClick={() => setPreviewing(asset)} className="rounded p-2 text-steel hover:bg-gray-50" aria-label="预览"><Eye className="h-4 w-4" /></button>}<button type="button" onClick={() => setEditing(asset)} className="rounded p-2 text-gray-500 hover:bg-gray-50" aria-label="编辑"><Pencil className="h-4 w-4" /></button><button type="button" onClick={() => remove(asset)} className="rounded p-2 text-red-500 hover:bg-red-50" aria-label="删除"><Trash2 className="h-4 w-4" /></button></div></td>
               </tr>
             ))}</tbody>
           </table>
         </div>
       ) : <div className="rounded-xl bg-white p-12 text-center text-sm text-gray-400 ring-1 ring-gray-100">没有符合筛选条件的资料</div>}
       {editing && <AssetModal initial={editing === "new" ? null : editing} products={products} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); load(); }} />}
+      {previewing && <ProductAssetViewer asset={previewing} locale="zh" onClose={() => setPreviewing(null)} />}
     </div>
   );
 }

@@ -71,3 +71,37 @@ Demo 模式提供 3 份明确标注的本地示例资料：
 ## 回滚
 
 代码回滚不会删除资料或 Storage 文件。若需要停用目录中心，可回滚应用版本；新增数据库字段保持不动即可，不需要执行破坏性回滚。
+
+## 文档查看器
+
+`ProductAssetViewer` 使用 PDF.js（`pdfjs-dist`）在 Canvas 上渲染 PDF，不依赖浏览器原生
+iframe 预览，兼容桌面、iPhone Safari、Android Chrome、微信内置浏览器和企业微信。
+
+架构：
+
+- `components/public/product-asset-viewer/ProductAssetViewer.tsx` — 主入口，决定 PDF / 图片 / 不支持
+- `PdfViewer.tsx` — PDF.js Canvas 渲染，翻页、缩放、旋转、适应宽度/页面、全屏、滑动翻页
+- `ImageViewer.tsx` — JPG/PNG/WebP/SVG 图片预览，缩放、旋转
+- `ViewerToolbar` / `ViewerError` / `ViewerLoading` — 工具栏、错误状态、加载状态
+- `hooks/usePdfDocument.ts` — 动态加载 PDF.js（不进入首页 JS 包），文档生命周期管理
+- `hooks/useViewerKeyboard.ts` — 键盘快捷键（方向键翻页、+/- 缩放、Esc 关闭）
+- `hooks/useViewerDownload.ts` — 下载回退链（blob → anchor → 新窗口）
+- `lib/client/viewer-utils.ts` — URL 协议校验、文件名清理、微信检测、页码/缩放边界、错误映射
+
+PDF.js worker 位于 `public/lib/pdfjs/pdf.worker.min.mjs`（legacy 构建，兼容旧浏览器）。
+PDF.js 主模块仅在打开 PDF 时通过动态 `import()` 加载，不进入首页初始包。
+
+### 统计事件映射
+
+现有数据库 `analytics_event` 枚举暂未包含 PDF 专用事件名（如 `pdf_open`、`pdf_load_success`
+等）。在枚举扩展前，查看器交互统一映射到已有的 `catalog_download` 事件：
+
+| 交互 | 映射事件 |
+|------|----------|
+| 打开 PDF / 图片查看器 | `catalog_download` |
+| PDF 加载成功 / 失败 | `catalog_download` |
+| 复制链接 | `catalog_download` |
+| 新窗口打开 / 下载 | `catalog_download` |
+
+未来扩展枚举后，可在 `trackAnalyticsEvent` 调用处替换为专用事件名。不记录用户查看的 PDF
+文本内容。

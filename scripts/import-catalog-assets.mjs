@@ -78,13 +78,54 @@ async function uploadPublicObject(client, objectPath, file) {
   return client.storage.from(bucket).getPublicUrl(objectPath).data.publicUrl;
 }
 
-async function main() {
-  const [manifest, ledger] = await Promise.all([loadJson(manifestPath), loadJson(ledgerPath)]);
-  if (!Array.isArray(manifest)) throw new Error("Catalog manifest must be an array");
-  if (!Array.isArray(ledger)) throw new Error("Catalog source ledger must be an array");
+// Maps the download manifest (object form produced by
+// scripts/download-catalog-assets.mjs) into import rows. PDFs larger than the
+// 20 MB upload cap are skipped here (they remain recorded in the manifest for
+// reference, but cannot be uploaded to Supabase Storage as-is).
+function manifestToRows(manifest, ledger) {
   const topicIds = new Set(ledger.map((item) => item.catalog_topic_id));
-  const duplicateTopics = ledger.map((item) => item.catalog_topic_id).filter((id, index, values) => values.indexOf(id) !== index);
-  if (duplicateTopics.length) throw new Error(`Duplicate topic IDs in source ledger: ${duplicateTopics.join(", ")}`);
+  const rows = [];
+  for (const pdf of manifest.pdfs || []) {
+    if (!pdf.pdf_valid) continue;
+    if (!pdf.primary_catalog_topic_id) continue;
+    if (!topicIds.has(pdf.primary_catalog_topic_id)) continue;
+    if (pdf.size_bytes && pdf.size_bytes > maxBytes) continue;
+    rows.push({
+      catalog_topic_id: pdf.primary_catalog_topic_id,
+      title_cn: pdf.title || pdf.primary_catalog_topic_id,
+      title_en: pdf.title || "",
+      description_cn: "",
+      description_en: "",
+      asset_type: "catalog",
+      source_file: "./" + pdf.local_file,
+      cover_file: pdf.rendered_cover ? "./" + pdf.rendered_cover : undefined,
+      published_at: pdf.downloaded_at || "",
+      sort_order: 10,
+      is_published: false,
+    });
+  }
+  return rows;
+}
+
+async function main() {
+  const [rawManifest, ledger] = await Promise.all([
+    loadJson(manifestPath),
+    loadJson(ledgerPath),
+  ]);
+  if (!Array.isArray(ledger)) throw new Error("Catalog source ledger must be an array");
+  // Accept both the legacy array manifest and the object manifest produced by
+  // scripts/download-catalog-assets.mjs ({ pdfs, covers, stats, ... }).
+  const manifest = Array.isArray(rawManifest)
+    ? rawManifest
+    : Array.isArray(rawManifest && rawManifest.pdfs)
+      ? manifestToRows(rawManifest, ledger)
+      : [];
+  const topicIds = new Set(ledger.map((item) => item.catalog_topic_id));
+  const duplicateTopics = ledger
+    .map((item) => item.catalog_topic_id)
+    .filter((id, index, values) => values.indexOf(id) !== index);
+  if (duplicateTopics.length)
+    throw new Error(`Duplicate topic IDs in source ledger: ${duplicateTopics.join(", ")}`);
 
   manifest.forEach((row, index) => validateRow(row, index, topicIds));
 
