@@ -11,6 +11,11 @@ import { ProductAssetViewer, canPreviewProductAsset } from "@/components/public/
 import { catalogTopics } from "@/lib/catalog-topics";
 import { deleteProductAsset, listProductAssets, saveProductAsset } from "@/lib/repositories/product-assets";
 import { createBrowserSupabaseClient } from "@/lib/supabase/client";
+import {
+  formatFieldErrors,
+  payloadFromAsset as buildPayloadFromAsset,
+  validateProductAssetPayload,
+} from "@/lib/validation/product-asset";
 import type { Product, ProductAsset, ProductAssetType } from "@/types/database";
 
 const assetTypes: Array<{ value: ProductAssetType; label: string }> = [
@@ -25,26 +30,6 @@ const assetTypes: Array<{ value: ProductAssetType; label: string }> = [
 function topicLabel(topicId: string | null): string {
   if (!topicId) return "未绑定主题";
   return catalogTopics.find((topic) => topic.id === topicId)?.titleCn || topicId;
-}
-
-function payloadFromAsset(asset: ProductAsset) {
-  return {
-    product_id: asset.product_id,
-    asset_type: asset.asset_type,
-    catalog_topic_id: asset.catalog_topic_id || null,
-    title_cn: asset.title_cn,
-    title_en: asset.title_en,
-    description_cn: asset.description_cn,
-    description_en: asset.description_en,
-    file_url: asset.file_url,
-    cover_image_url: asset.cover_image_url || null,
-    file_size: asset.file_size,
-    mime_type: asset.mime_type,
-    published_at: asset.published_at || null,
-    content_hash: asset.content_hash || null,
-    is_published: asset.is_published,
-    sort_order: asset.sort_order,
-  };
 }
 
 export default function ProductAssetsAdminPage() {
@@ -92,7 +77,7 @@ export default function ProductAssetsAdminPage() {
 
   async function toggle(asset: ProductAsset) {
     try {
-      await saveProductAsset(client, { ...payloadFromAsset(asset), is_published: !asset.is_published }, asset.id);
+      await saveProductAsset(client, { ...buildPayloadFromAsset(asset), is_published: !asset.is_published }, asset.id);
       setAssets((rows) => rows.map((row) => row.id === asset.id ? { ...row, is_published: !row.is_published } : row));
       show(asset.is_published ? "资料已下架" : "资料已发布");
     } catch (error) {
@@ -187,27 +172,32 @@ function AssetModal({ initial, products, onClose, onSaved }: { initial: ProductA
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
-    if (!form.title_cn.trim() || !form.file_url.trim()) { show("请填写中文标题和文件 URL", "error"); return; }
     if (!confirmed) { show("请先确认文件允许公开展示", "error"); return; }
+    const payload = {
+      product_id: form.product_id || null,
+      asset_type: form.asset_type,
+      catalog_topic_id: form.catalog_topic_id || null,
+      title_cn: form.title_cn.trim(),
+      title_en: form.title_en.trim() || null,
+      description_cn: form.description_cn.trim() || null,
+      description_en: form.description_en.trim() || null,
+      file_url: form.file_url.trim(),
+      cover_image_url: form.cover_image_url.trim() || null,
+      file_size: form.file_size ? Math.max(0, Number(form.file_size)) : null,
+      mime_type: form.mime_type.trim() || null,
+      published_at: form.published_at || null,
+      content_hash: form.content_hash || null,
+      is_published: form.is_published,
+      sort_order: Number(form.sort_order) || 0,
+    };
+    const validation = validateProductAssetPayload(payload);
+    if (!validation.ok) {
+      show(formatFieldErrors(validation.errors), "error");
+      return;
+    }
     setSaving(true);
     try {
-      await saveProductAsset(client, {
-        product_id: form.product_id || null,
-        asset_type: form.asset_type,
-        catalog_topic_id: form.catalog_topic_id || null,
-        title_cn: form.title_cn.trim(),
-        title_en: form.title_en.trim() || null,
-        description_cn: form.description_cn.trim() || null,
-        description_en: form.description_en.trim() || null,
-        file_url: form.file_url.trim(),
-        cover_image_url: form.cover_image_url.trim() || null,
-        file_size: form.file_size ? Math.max(0, Number(form.file_size)) : null,
-        mime_type: form.mime_type.trim() || null,
-        published_at: form.published_at || null,
-        content_hash: form.content_hash || null,
-        is_published: form.is_published,
-        sort_order: Number(form.sort_order) || 0,
-      }, initial?.id);
+      await saveProductAsset(client, payload, initial?.id);
       show(initial ? "资料已更新" : "资料已创建");
       onSaved();
     } catch (error) {
