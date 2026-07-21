@@ -13,10 +13,13 @@ test.describe("Demo catalog center", () => {
     await expect(page.getByText("4 个已匹配文件")).toBeVisible();
 
     // Image (SVG) preview via ImageViewer — should render an <img>, not an iframe.
+    // The <img> is mounted immediately but is not "visible" (non-empty bounding
+    // box) until the SVG actually loads — match the PDF canvas pattern with a
+    // generous timeout.
     await page.getByTestId("catalog-topic-color-card").click();
     const imgDialog = page.getByRole("dialog", { name: "KZQ 综合色卡" });
     await expect(imgDialog).toBeVisible();
-    await expect(imgDialog.locator("img")).toBeVisible();
+    await expect(imgDialog.locator("img")).toBeVisible({ timeout: 10_000 });
     await page.keyboard.press("Escape");
     await expect(imgDialog).toHaveCount(0);
 
@@ -110,8 +113,36 @@ test.describe("Demo catalog center", () => {
     await page.getByTestId("catalog-topic-edge-finishing").click();
     const dialog = page.getByRole("dialog", { name: "Fluted Wall Panel Edge Finishing Solutions" });
     await expect(dialog).toBeVisible();
-    await expect(dialog.locator("img")).toBeVisible();
+    // The <img> mounts immediately, but the SVG must load before it has a
+    // non-empty bounding box. Match the PDF canvas pattern with a timeout.
+    await expect(dialog.locator("img")).toBeVisible({ timeout: 10_000 });
     await expect(dialog.locator("canvas")).toHaveCount(0);
+    await page.keyboard.press("Escape");
+    await expect(dialog).toHaveCount(0);
+  });
+
+  test("image viewer shows error recovery UI when image fails to load", async ({ page }) => {
+    // Intercept the SVG asset request and return 404 to trigger onError.
+    await page.route("**/demo/catalogs/edge-finishing.svg", (route) =>
+      route.fulfill({ status: 404, contentType: "text/plain", body: "Not Found" }),
+    );
+
+    await page.goto("/en/documents");
+    await page.getByTestId("catalog-topic-edge-finishing").click();
+    const dialog = page.getByRole("dialog", { name: "Fluted Wall Panel Edge Finishing Solutions" });
+    await expect(dialog).toBeVisible();
+
+    // The shared ViewerError UI should appear with an alert role.
+    const alert = dialog.getByRole("alert");
+    await expect(alert).toBeVisible({ timeout: 10_000 });
+
+    // Recovery actions are present inside the alert (scoped to avoid the
+    // toolbar's own "Open in browser" link, which also matches the role).
+    await expect(alert.getByRole("button", { name: "Retry" })).toBeVisible();
+    await expect(alert.getByRole("link", { name: "Open in browser" })).toBeVisible();
+    await expect(alert.getByRole("button", { name: "Download" })).toBeVisible();
+
+    // Escape closes the dialog.
     await page.keyboard.press("Escape");
     await expect(dialog).toHaveCount(0);
   });
