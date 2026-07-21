@@ -1,0 +1,23 @@
+[
+  {"catalog_topic_id":"color-card","status":"public_direct_pdf_found","best_source":"https://baijiaxiang.spb.ru/f/baijax_color_card_new.pdf","cover":"official_current","notes":"俄罗斯官方代表站公开主色卡；另有黎巴嫩经销商压缩版。"},
+  {"catalog_topic_id":"gz-series","status":"public_direct_pdf_found","best_source":"https://baijiaxiang.spb.ru/f/1121_gz_series_color1.pdf","cover":"official_current","notes":"俄罗斯官方代表站公开 GZ 色卡。"},
+  {"catalog_topic_id":"hd-spc-catalog","status":"public_direct_pdf_found","best_source":"https://baijiaxiang.spb.ru/f/hd_spc_katalog_reach.pdf","cover":"official_current","notes":"俄罗斯官方代表站公开 HD/SPC Reach 目录；旧官网也有被索引的官方 PDF。"},
+  {"catalog_topic_id":"product-information-book","status":"public_direct_pdf_found","best_source":"https://baijiaxiang.spb.ru/f/broshyura_po_panelyam.pdf","cover":"official_current","notes":"公开直链；另有 Scribd 12 页完整公开阅读版和旧官网官方直链。"},
+  {"catalog_topic_id":"wpc-wall-panel","status":"public_direct_pdf_found","best_source":"https://baijiaxiang.spb.ru/f/katalog_stenovyh_panelej_osnovnoj_1.pdf","cover":"official_current","notes":"俄罗斯官方代表站公开主墙板目录。"},
+  {"catalog_topic_id":"wpc-solid-splicing","status":"public_direct_pdf_found","best_source":"https://baijiaxiang.spb.ru/f/katalog_stenovyh_panelej_s_zamkom_ship-paz_1.pdf","cover":"official_current","notes":"公开锁扣/拼接板目录，并由产品信息手册补充。"},
+  {"catalog_topic_id":"wpc-door-series","status":"public_direct_pdf_found","best_source":"https://baijiaxiang.spb.ru/f/wpc_door.pdf","cover":"official_current","notes":"公开 16,241,051 字节真实门系列 PDF；旧官网亦有官方直链索引。"},
+  {"catalog_topic_id":"carbon-crystal-wall-panel","status":"covered_by_public_brochure","best_source":"https://baijiaxiang.spb.ru/f/broshyura_po_panelyam.pdf","cover":"official_current","notes":"综合产品手册正文覆盖碳晶墙板；独立公开 PDF 尚未找到。"},
+  {"catalog_topic_id":"anti-collision-wall-panel","status":"covered_by_public_catalog","best_source":"https://baijiaxiang.spb.ru/f/hd_spc_katalog_reach.pdf","cover":"official_current","notes":"HD/SPC 与公开产品资料覆盖防撞板内容；独立公开 PDF 尚未找到。"},
+  {"catalog_topic_id":"fireproof-wall-panel","status":"public_direct_pdf_found","best_source":"https://baijiaxiang.spb.ru/f/ogneupornaya_stenovaya_panel.pdf","cover":"official_current","notes":"俄罗斯官方代表站公开防火墙板 PDF。"},
+  {"catalog_topic_id":"aluminum-alloy-profile","status":"public_direct_pdf_found","best_source":"https://baijiaxiang.spb.ru/f/montazhnye_profili_385866.pdf","cover":"official_current","notes":"公开铝合金安装型材目录。"},
+  {"catalog_topic_id":"sound-absorption-grille","status":"public_direct_pdf_found","best_source":"https://baijiaxiang.spb.ru/f/riflenaya_stenovaya_panel_katalog.pdf","cover":"official_current","notes":"公开格栅目录；爱沙尼亚镜像另有吸音墙板 PDF。"},
+  {"catalog_topic_id":"soft-stone-series","status":"public_read_only_found","best_source":"https://www.scribd.com/document/858570088/Soft-Stone-Catalog","cover":"official_current","notes":"18 页百嘉祥真实软石手册完整公开阅读；尚未找到无需平台权限的原始 PDF 直链。"},
+  {"catalog_topic_id":"spc-wpc-flooring","status":"password_source_only","best_source":"https://www.baijiaxiang.net/PRODUCTDOCUMENT/","cover":"official_current","notes":"官方目录确认存在，尚未找到可信的百嘉祥公开直链。"},
+  {"catalog_topic_id":"edge-finishing","status":"covered_by_public_catalogs","best_source":"https://baijiaxiang.spb.ru/f/instrukciya_po_montazhu.pdf","cover":"official_current","notes":"公开安装说明、铝型材和格栅目录可覆盖节点；同名独立 PDF 尚未找到。"},
+  {"catalog_topic_id":"wpc-lines","status":"public_product_data_found","best_source":"https://baijiaxiang.com.cn/","cover":"official_current","notes":"官方公开 WPC Lines 型号和产品数据，独立 PDF 尚未找到。"},
+  {"catalog_topic_id":"wood-grain","status":"public_direct_pdf_found","best_source":"https://baijiaxiang.spb.ru/f/baijax_color_card_new.pdf","cover":"official_current","notes":"主色卡公开直链；旧官网另有木纹专册 PDF 索引。"},
+  {"catalog_topic_id":"metal-series","status":"public_direct_pdf_found","best_source":"https://baijiaxiang.spb.ru/f/baijax_color_card_new.pdf","cover":"official_current","notes":"主色卡公开直链；旧官网另有 FT25712/FT25713 专页 PDF 索引。"},
+  {"catalog_topic_id":"stone-grain","status":"public_direct_pdf_found","best_source":"https://baijiaxiang.spb.ru/f/baijax_color_card_new.pdf","cover":"official_current","notes":"主色卡公开直链和俄罗斯公开产品色号。"},
+  {"catalog_topic_id":"solid-color","status":"public_direct_pdf_found","best_source":"https://baijiaxiang.spb.ru/f/baijax_color_card_new.pdf","cover":"official_current","notes":"主色卡公开直链和俄罗斯公开产品色号。"},
+  {"catalog_topic_id":"cloth-grain","status":"public_direct_pdf_found","best_source":"https://baijiaxiang.spb.ru/f/baijax_color_card_new.pdf","cover":"official_current","notes":"主色卡公开直链；旧官网另有布纹专册 PDF 索引。"}
+]

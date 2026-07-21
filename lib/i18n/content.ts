@@ -100,17 +100,33 @@ export function localizeProjectImage(image: ProjectImage, locale: Locale, fallba
   return localizedValue<string>(image as unknown as LocalizedSource, "alt", locale, fallback)!;
 }
 
+function insertNavigationItem(
+  navigation: NavItem[],
+  item: NavItem,
+  beforeHrefs: string[],
+): void {
+  if (navigation.some((candidate) => candidate.href === item.href)) return;
+  const beforeIndex = navigation.findIndex((candidate) => beforeHrefs.includes(candidate.href));
+  const insertIndex = beforeIndex >= 0 ? beforeIndex : navigation.length;
+  const nextSortOrder = navigation[insertIndex]?.sort_order ?? insertIndex + 1;
+  navigation.splice(insertIndex, 0, {
+    ...item,
+    sort_order: nextSortOrder - 0.5,
+  });
+}
+
 export function navigationWithProjects(items: NavItem[] | null | undefined): NavItem[] {
   const navigation = [...(items || [])];
-  if (!navigation.some((item) => item.href === "/projects")) {
-    const contactIndex = navigation.findIndex((item) => item.href === "/contact");
-    navigation.splice(contactIndex >= 0 ? contactIndex : navigation.length, 0, {
-      href: "/projects",
-      label_cn: "应用案例",
-      label_en: "Projects",
-      sort_order: contactIndex >= 0 ? (navigation[contactIndex].sort_order ?? contactIndex + 1) - 0.5 : navigation.length + 1,
-    });
-  }
+  insertNavigationItem(
+    navigation,
+    { href: "/documents", label_cn: "产品目录", label_en: "Catalogs" },
+    ["/projects", "/certificates", "/about", "/contact"],
+  );
+  insertNavigationItem(
+    navigation,
+    { href: "/projects", label_cn: "应用案例", label_en: "Projects" },
+    ["/certificates", "/about", "/contact"],
+  );
   return navigation.sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
 }
 

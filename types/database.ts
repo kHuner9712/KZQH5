@@ -415,6 +415,14 @@ export const analyticsEventNames = [
   "add_to_inquiry",
   "inquiry_start",
   "inquiry_success",
+  // Catalog viewer taxonomy — distinguish open / load / copy / external / download.
+  // `catalog_download` is the actual file download click; the others describe
+  // different user actions so analytics can distinguish them.
+  "catalog_open",
+  "catalog_load_success",
+  "catalog_load_failure",
+  "catalog_copy_link",
+  "catalog_open_external",
   "catalog_download",
   "certificate_view",
   "project_view",

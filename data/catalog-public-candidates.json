@@ -1,0 +1,202 @@
+[
+  {
+    "topic_ids": ["product-information-book", "hd-spc-catalog", "wpc-wall-panel", "wpc-solid-splicing", "carbon-crystal-wall-panel", "fireproof-wall-panel"],
+    "title": "2025 Product Information Booklet - Hubei Baijiaxiang",
+    "url": "https://www.scribd.com/document/751114254/Product-Manuals",
+    "access": "public_read_only",
+    "verified": true,
+    "notes": "公开可阅读 12 页完整正文，页面明确显示 Hubei Baijiaxiang 公司名；平台下载需遵守 Scribd 权限。"
+  },
+  {
+    "topic_ids": ["wpc-wall-panel"],
+    "title": "Indoor 1 - WPC wall panel",
+    "url": "https://msmoonptyltd.com/wp-content/uploads/2020/12/Indoor-1-WPC-wall-panel.pdf",
+    "access": "direct_pdf_discovered",
+    "verified": false,
+    "notes": "公开页面直接链接到 PDF；当前抓取器缓存未命中，待使用普通浏览器下载后核验品牌和页数。"
+  },
+  {
+    "topic_ids": ["sound-absorption-grille", "edge-finishing"],
+    "title": "Indoor 2 - Fluted Wall Panels",
+    "url": "https://msmoonptyltd.com/wp-content/uploads/2020/12/Indoor-2-Fluted-Wall-Panels.pdf",
+    "access": "direct_pdf_discovered",
+    "verified": false,
+    "notes": "公开页面直接链接到 PDF，待下载核验。"
+  },
+  {
+    "topic_ids": ["hd-spc-catalog"],
+    "title": "Indoor 3 - HD & SPC printing wall panel",
+    "url": "https://msmoonptyltd.com/wp-content/uploads/2020/12/Indoor-3-HD-SPC-printing-wall-panel.pdf",
+    "access": "direct_pdf_discovered",
+    "verified": false,
+    "notes": "公开页面直接链接到 PDF，待下载核验。"
+  },
+  {
+    "topic_ids": ["wpc-wall-panel", "wood-grain"],
+    "title": "Outdoor Cladding Catalog",
+    "url": "https://msmoonptyltd.com/wp-content/uploads/2023/11/Cladding-Catalog-1.pdf",
+    "access": "direct_pdf_verified",
+    "verified": true,
+    "notes": "26 页真实生产目录，包含产品截面、尺寸、木纹色卡、性能和安装说明；品牌为 COOWIN，不是百嘉祥。"
+  },
+  {
+    "topic_ids": ["anti-collision-wall-panel", "wood-grain", "metal-series", "stone-grain", "solid-color", "cloth-grain"],
+    "title": "Decorative Wall Panel Catalog - Peretedecorativ",
+    "url": "https://ro.scribd.com/document/964644491/Catalog-Peretedecorativ-md",
+    "access": "public_read_only",
+    "verified": true,
+    "notes": "公开完整目录，含 WPC/anti-collision 结构以及 WS、MS、SP、SC、ST 系列真实色号；需核验供应链关系。"
+  },
+  {
+    "topic_ids": ["wpc-door-series"],
+    "title": "Catalog of WPC Door",
+    "url": "https://www.scribd.com/document/811441810/Catalog-of-WPC-Door",
+    "access": "public_read_only",
+    "verified": true,
+    "notes": "10 页真实 WPC 门生产目录，包含门型、颜色、门框和截面；非百嘉祥品牌。"
+  },
+  {
+    "topic_ids": ["color-card"],
+    "title": "2025 NO.03 BJX Color Card cover",
+    "url": "https://www.baijia-xiang.com/uploads/allimg/20250724/1-250H4140040c1.jpg",
+    "access": "official_cover_image",
+    "verified": true,
+    "notes": "百嘉祥旧官网公开目录封面地址。"
+  },
+  {
+    "topic_ids": ["gz-series"],
+    "title": "2025 NO.03 BJX GZ Series cover",
+    "url": "https://www.baijia-xiang.com/uploads/allimg/20250724/1-250H4135039301.jpg",
+    "access": "official_cover_image",
+    "verified": true,
+    "notes": "百嘉祥旧官网公开目录封面地址。"
+  },
+  {
+    "topic_ids": ["hd-spc-catalog"],
+    "title": "HD / SPC Catalog cover",
+    "url": "https://www.baijia-xiang.com/uploads/allimg/20250724/1-250H4141259524.jpg",
+    "access": "official_cover_image",
+    "verified": true,
+    "notes": "百嘉祥旧官网公开目录封面地址。"
+  },
+  {
+    "topic_ids": ["wpc-door-series"],
+    "title": "WPC Door Series cover",
+    "url": "https://www.baijia-xiang.com/uploads/allimg/20250724/1-250H414145Q92.jpg",
+    "access": "official_cover_image",
+    "verified": true,
+    "notes": "百嘉祥旧官网公开目录封面地址。"
+  },
+  {
+    "topic_ids": ["product-information-book"],
+    "title": "Product Information Book cover",
+    "url": "https://www.baijia-xiang.com/uploads/allimg/20250725/1-250H5144454U4.jpg",
+    "access": "official_cover_image",
+    "verified": true,
+    "notes": "百嘉祥旧官网公开目录封面地址。"
+  },
+  {
+    "topic_ids": ["wpc-solid-splicing"],
+    "title": "WPC Wall Panel & WPC Solid Splicing Board cover",
+    "url": "https://www.baijia-xiang.com/uploads/allimg/20250724/1-250H414400X25.jpg",
+    "access": "official_cover_image",
+    "verified": true,
+    "notes": "百嘉祥旧官网公开目录封面地址。"
+  },
+  {
+    "topic_ids": ["wpc-wall-panel"],
+    "title": "WPC Wall Panel cover",
+    "url": "https://www.baijia-xiang.com/uploads/allimg/20250625/1-250625134323N5.jpg",
+    "access": "official_cover_image",
+    "verified": true,
+    "notes": "百嘉祥旧官网公开目录封面地址。"
+  },
+  {
+    "topic_ids": ["anti-collision-wall-panel"],
+    "title": "Anti-Collision Wall Panel cover",
+    "url": "https://www.baijia-xiang.com/uploads/allimg/20250724/1-250H415413Q44.jpg",
+    "access": "official_cover_image",
+    "verified": true,
+    "notes": "百嘉祥旧官网公开目录封面地址。"
+  },
+  {
+    "topic_ids": ["fireproof-wall-panel"],
+    "title": "Fireproof Wall Panel cover",
+    "url": "https://www.baijia-xiang.com/uploads/allimg/20250725/1-250H5094555163.jpg",
+    "access": "official_cover_image",
+    "verified": true,
+    "notes": "百嘉祥旧官网公开目录封面地址。"
+  },
+  {
+    "topic_ids": ["aluminum-alloy-profile"],
+    "title": "Aluminum Alloy Wallboard Profile cover",
+    "url": "https://www.baijia-xiang.com/uploads/allimg/20250724/1-250H415510I10.jpg",
+    "access": "official_cover_image",
+    "verified": true,
+    "notes": "百嘉祥旧官网公开目录封面地址。"
+  },
+  {
+    "topic_ids": ["sound-absorption-grille"],
+    "title": "Sound Absorption Panel Grille Series cover",
+    "url": "https://www.baijia-xiang.com/uploads/allimg/20250724/1-250H41429235E.jpg",
+    "access": "official_cover_image",
+    "verified": true,
+    "notes": "百嘉祥旧官网公开目录封面地址。"
+  },
+  {
+    "topic_ids": ["soft-stone-series"],
+    "title": "Soft Stone Series cover",
+    "url": "https://www.baijia-xiang.com/uploads/allimg/20250724/1-250H4143F9440.jpg",
+    "access": "official_cover_image",
+    "verified": true,
+    "notes": "百嘉祥旧官网公开目录封面地址。"
+  },
+  {
+    "topic_ids": ["spc-wpc-flooring"],
+    "title": "SPC & WPC Flooring cover",
+    "url": "https://www.baijia-xiang.com/uploads/allimg/20250724/1-250H4145I62G.jpg",
+    "access": "official_cover_image",
+    "verified": true,
+    "notes": "百嘉祥旧官网公开目录封面地址。"
+  },
+  {
+    "topic_ids": ["wood-grain"],
+    "title": "WPC Wall Panel - Wood Grain cover",
+    "url": "https://www.baijia-xiang.com/uploads/allimg/20250725/1-250H5141442C8.jpg",
+    "access": "official_cover_image",
+    "verified": true,
+    "notes": "百嘉祥旧官网公开目录封面地址。"
+  },
+  {
+    "topic_ids": ["metal-series"],
+    "title": "WPC Wall Panel - Metal Series cover",
+    "url": "https://www.baijia-xiang.com/uploads/allimg/20250725/1-250H5141441b7.jpg",
+    "access": "official_cover_image",
+    "verified": true,
+    "notes": "百嘉祥旧官网公开目录封面地址。"
+  },
+  {
+    "topic_ids": ["stone-grain"],
+    "title": "WPC Wall Panel - Stone Grain cover",
+    "url": "https://www.baijia-xiang.com/uploads/allimg/20250725/1-250H5141442118.jpg",
+    "access": "official_cover_image",
+    "verified": true,
+    "notes": "百嘉祥旧官网公开目录封面地址。"
+  },
+  {
+    "topic_ids": ["solid-color"],
+    "title": "WPC Wall Panel - Solid Color cover",
+    "url": "https://www.baijia-xiang.com/uploads/allimg/20250725/1-250H51414401P.jpg",
+    "access": "official_cover_image",
+    "verified": true,
+    "notes": "百嘉祥旧官网公开目录封面地址。"
+  },
+  {
+    "topic_ids": ["cloth-grain"],
+    "title": "WPC Wall Panel - Cloth Grain cover",
+    "url": "https://www.baijia-xiang.com/uploads/allimg/20250725/1-250H5141440607.jpg",
+    "access": "official_cover_image",
+    "verified": true,
+    "notes": "百嘉祥旧官网公开目录封面地址。"
+  }
+]

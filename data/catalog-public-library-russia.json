@@ -1,0 +1,121 @@
+{
+  "source_name": "BAIJAX Saint Petersburg official representative",
+  "source_page": "https://baijiaxiang.spb.ru/katalog",
+  "authorization_evidence": "The distributor publicly states it is an official BAIJAX representative in Saint Petersburg and Northwest Russia.",
+  "retrieved_at": "2026-07-20",
+  "documents": [
+    {
+      "topic_ids": ["color-card", "wood-grain", "metal-series", "stone-grain", "solid-color", "cloth-grain"],
+      "title": "BAIJAX Main Color Card",
+      "url": "https://baijiaxiang.spb.ru/f/baijax_color_card_new.pdf",
+      "access": "public_direct_pdf",
+      "status": "link_verified"
+    },
+    {
+      "topic_ids": ["gz-series", "color-card"],
+      "title": "BAIJAX GZ Series Color Card",
+      "url": "https://baijiaxiang.spb.ru/f/1121_gz_series_color1.pdf",
+      "access": "public_direct_pdf",
+      "status": "link_verified"
+    },
+    {
+      "topic_ids": ["aluminum-alloy-profile", "edge-finishing"],
+      "title": "BAIJAX Aluminum Mounting Profiles",
+      "url": "https://baijiaxiang.spb.ru/f/montazhnye_profili_385866.pdf",
+      "access": "public_direct_pdf",
+      "status": "content_indexed"
+    },
+    {
+      "topic_ids": ["product-information-book", "hd-spc-catalog", "wpc-wall-panel", "wpc-solid-splicing", "carbon-crystal-wall-panel", "fireproof-wall-panel"],
+      "title": "BAIJAX Product Information Booklet",
+      "url": "https://baijiaxiang.spb.ru/f/broshyura_po_panelyam.pdf",
+      "access": "public_direct_pdf",
+      "status": "content_indexed"
+    },
+    {
+      "topic_ids": ["wpc-wall-panel", "wood-grain", "metal-series", "stone-grain", "solid-color", "cloth-grain"],
+      "title": "BAIJAX Main Wall Panel Catalog",
+      "url": "https://baijiaxiang.spb.ru/f/katalog_stenovyh_panelej_osnovnoj_1.pdf",
+      "access": "public_direct_pdf",
+      "status": "link_verified"
+    },
+    {
+      "topic_ids": ["hd-spc-catalog", "anti-collision-wall-panel"],
+      "title": "BAIJAX HD & SPC Catalog with REACH",
+      "url": "https://baijiaxiang.spb.ru/f/hd_spc_katalog_reach.pdf",
+      "access": "public_direct_pdf",
+      "status": "link_verified"
+    },
+    {
+      "topic_ids": ["sound-absorption-grille", "edge-finishing"],
+      "title": "BAIJAX Fluted Wall Panel Catalog",
+      "url": "https://baijiaxiang.spb.ru/f/riflenaya_stenovaya_panel_katalog.pdf",
+      "access": "public_direct_pdf",
+      "status": "content_indexed"
+    },
+    {
+      "topic_ids": ["wpc-solid-splicing", "edge-finishing"],
+      "title": "BAIJAX Tongue-and-Groove Wall Panel Catalog",
+      "url": "https://baijiaxiang.spb.ru/f/katalog_stenovyh_panelej_s_zamkom_ship-paz_1.pdf",
+      "access": "public_direct_pdf",
+      "status": "link_verified"
+    },
+    {
+      "topic_ids": ["color-card", "wood-grain", "metal-series", "stone-grain", "solid-color", "cloth-grain"],
+      "title": "BAIJAX Self-Adhesive Film Color Card",
+      "url": "https://baijiaxiang.spb.ru/f/bjx_plenka.pdf",
+      "access": "public_direct_pdf",
+      "status": "content_indexed"
+    },
+    {
+      "topic_ids": ["wpc-wall-panel", "metal-series"],
+      "title": "BAIJAX Product Application Photography",
+      "url": "https://baijiaxiang.spb.ru/f/foto_primeneniya_produkcii_1.pdf",
+      "access": "public_direct_pdf",
+      "status": "content_indexed"
+    },
+    {
+      "topic_ids": ["wpc-wall-panel", "edge-finishing", "aluminum-alloy-profile"],
+      "title": "BAIJAX Wall Panel Installation Instructions",
+      "url": "https://baijiaxiang.spb.ru/f/instrukciya_po_montazhu.pdf",
+      "access": "public_direct_pdf",
+      "status": "link_verified"
+    },
+    {
+      "topic_ids": ["fireproof-wall-panel"],
+      "title": "BAIJAX Fireproof Wall Panel",
+      "url": "https://baijiaxiang.spb.ru/f/ogneupornaya_stenovaya_panel.pdf",
+      "access": "public_direct_pdf",
+      "status": "link_verified"
+    },
+    {
+      "topic_ids": ["wpc-wall-panel", "product-information-book"],
+      "title": "BAIJAX Base Catalog with Project Examples",
+      "url": "https://baijiaxiang.spb.ru/f/bazovyj_katalog_s_primerami_rabot.pdf",
+      "access": "public_direct_pdf",
+      "status": "link_verified"
+    },
+    {
+      "topic_ids": ["wpc-wall-panel", "product-information-book"],
+      "title": "BAIJAX Application Cases",
+      "url": "https://baijiaxiang.spb.ru/f/kejsy_primeneniya.pdf",
+      "access": "public_direct_pdf",
+      "status": "link_verified"
+    },
+    {
+      "topic_ids": ["wpc-door-series"],
+      "title": "BAIJAX WPC Door Catalog",
+      "url": "https://baijiaxiang.spb.ru/f/wpc_door.pdf",
+      "access": "public_direct_pdf",
+      "status": "content_indexed",
+      "indexed_size_bytes": 16241051
+    },
+    {
+      "topic_ids": ["hd-spc-catalog", "wpc-wall-panel", "wpc-solid-splicing"],
+      "title": "BAIJAX 3D Printing Wall Panel Album",
+      "url": "https://baijiaxiang.spb.ru/f/bambukovye_paneli_s_3d-pechatyu.pdf",
+      "access": "public_direct_pdf",
+      "status": "content_indexed"
+    }
+  ]
+}

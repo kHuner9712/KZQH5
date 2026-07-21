@@ -95,7 +95,10 @@ export async function getProductMetadata(
   return buildLocalizedMetadata({
     locale,
     path: `/products/${slug}`,
-    title: content.seoTitle || `${content.name} | KZQ`,
+    // Root layout applies the `| KZQ` template suffix automatically — do
+    // NOT append `| KZQ` here, otherwise the final title becomes
+    // "<product name> | KZQ | KZQ".
+    title: content.seoTitle || content.name,
     description: content.seoDescription || content.summary || content.name,
     image: product.cover_image_url,
   });

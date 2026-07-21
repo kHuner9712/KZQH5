@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Building2, FileText, FolderKanban, Languages, Mail, ShieldCheck } from "lucide-react";
+import { BookOpen, Building2, FileText, FolderKanban, Languages, Mail, ShieldCheck } from "lucide-react";
 import { LanguageSwitcher } from "./LanguageSwitcher";
 import { ResponsiveContainer } from "./ResponsiveContainer";
 import { localePath, type Locale } from "@/lib/i18n/config";
@@ -14,6 +14,7 @@ export function getPrivacyMetadata(locale: Locale): Metadata { const copy = getD
 export function MorePageContent({ locale }: { locale: Locale }) {
   const copy = getDictionary(locale);
   const links = [
+    { href: "/documents", label: locale === "zh" ? "产品目录与色卡" : "Catalogs & Color Cards", icon: BookOpen },
     { href: "/projects", label: copy.more.projects, icon: FolderKanban },
     { href: "/certificates", label: copy.more.certificates, icon: ShieldCheck },
     { href: "/about", label: copy.more.about, icon: Building2 },

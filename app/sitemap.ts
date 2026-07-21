@@ -8,17 +8,17 @@ import { getPublishedProjects } from "@/lib/repositories/projects";
 import { localizedAlternates } from "@/lib/i18n/metadata";
 
 export const revalidate = 300;
-const publicPaths = ["/", "/products", "/projects", "/certificates", "/about", "/contact", "/privacy", "/more"];
+const publicPaths = ["/", "/products", "/documents", "/projects", "/certificates", "/about", "/contact", "/privacy", "/more"];
 const routeEntry = (locale: Locale, path: string, priority: number, lastModified?: Date): MetadataRoute.Sitemap[number] => ({
   url: siteUrl(localePath(locale, path)),
   ...(lastModified ? { lastModified } : {}),
-  changeFrequency: path === "/" || path.startsWith("/products") ? "weekly" : "monthly",
+  changeFrequency: path === "/" || path.startsWith("/products") || path === "/documents" ? "weekly" : "monthly",
   priority,
   alternates: { languages: localizedAlternates(path) },
 });
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
-  const staticRoutes = (["zh", "en"] as const).flatMap((locale) => publicPaths.map((path) => routeEntry(locale, path, path === "/" ? 1 : path === "/products" ? 0.9 : 0.6)));
+  const staticRoutes = (["zh", "en"] as const).flatMap((locale) => publicPaths.map((path) => routeEntry(locale, path, path === "/" ? 1 : path === "/products" ? 0.9 : path === "/documents" ? 0.8 : 0.6)));
   let products: Array<{ slug: string; updated_at: string | null }> = [];
   if (isDemoMode()) products = mockProducts.filter((product) => product.is_published).map((product) => ({ slug: product.slug, updated_at: product.updated_at }));
   else { try { const { data } = await createPublicSupabaseClient().from("products").select("slug, updated_at").eq("is_published", true); products = (data as typeof products | null) || []; } catch { return staticRoutes; } }
