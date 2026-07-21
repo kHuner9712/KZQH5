@@ -68,13 +68,22 @@ export function ProductAssetViewer({
     }
   }, [urlIsValid, safeUrl, content.title, downloadExt, runDownload, locale, asset.product_id]);
 
+  /** Track "open in browser" — distinct from download so analytics can tell
+   *  opening a new tab apart from downloading the file. */
+  const trackOpenExternal = useCallback(() => {
+    trackAnalyticsEvent({ event_name: "catalog_open_external", locale, product_id: asset.product_id });
+  }, [locale, asset.product_id]);
+
   useDialogFocusTrap({ active: true, containerRef: dialogRef, onClose });
 
   useEffect(() => {
     const previouslyFocused = document.activeElement as HTMLElement | null;
     setIsWeChat(typeof navigator !== "undefined" && isWeChatBrowser(navigator.userAgent));
     document.body.style.overflow = "hidden";
-    trackAnalyticsEvent({ event_name: "catalog_download", locale, product_id: asset.product_id });
+    // Track viewer open as a distinct event from download. Previously the
+    // mount effect sent `catalog_download`, which made every viewer open
+    // look like a download in analytics.
+    trackAnalyticsEvent({ event_name: "catalog_open", locale, product_id: asset.product_id });
     return () => {
       document.body.style.overflow = "";
       previouslyFocused?.focus();
@@ -84,7 +93,9 @@ export function ProductAssetViewer({
   const handleCopy = useCallback(async () => {
     if (await copyText(safeUrl)) {
       setCopied(true);
-      trackAnalyticsEvent({ event_name: "catalog_download", locale, product_id: asset.product_id });
+      // Track copy-link as a distinct event — previously this also fired
+      // `catalog_download`, conflating two different user intents.
+      trackAnalyticsEvent({ event_name: "catalog_copy_link", locale, product_id: asset.product_id });
     }
   }, [safeUrl, locale, asset.product_id]);
 
@@ -125,7 +136,7 @@ export function ProductAssetViewer({
             {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
             <span>{copied ? labels.copied : labels.copy}</span>
           </button>
-          <a href={safeUrl} target="_blank" rel="noopener noreferrer" className="hidden h-9 items-center gap-1.5 rounded-full px-3 text-xs text-white/70 hover:bg-white/10 sm:flex" aria-label={labels.open}>
+          <a href={safeUrl} target="_blank" rel="noopener noreferrer" onClick={trackOpenExternal} className="hidden h-9 items-center gap-1.5 rounded-full px-3 text-xs text-white/70 hover:bg-white/10 sm:flex" aria-label={labels.open}>
             <ExternalLink className="h-4 w-4" /><span>{labels.open}</span>
           </a>
         </>
@@ -134,7 +145,7 @@ export function ProductAssetViewer({
       {isPdf ? (
         <PdfViewer url={safeUrl} locale={locale} isWeChat={isWeChat} onClose={onClose} onDownload={download} />
       ) : isImage ? (
-        <ImageViewer url={safeUrl} locale={locale} />
+        <ImageViewer url={safeUrl} locale={locale} onClose={onClose} onDownload={download} />
       ) : (
         <ViewerError
           errorKind="unsupported_mime"
