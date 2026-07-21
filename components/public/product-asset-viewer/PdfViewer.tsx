@@ -9,6 +9,7 @@ import type { Locale } from "@/lib/i18n/config";
 import {
   clampPage, clampZoom, snapZoom, ZOOM_MIN, ZOOM_MAX,
 } from "@/lib/client/viewer-utils";
+import { trackAnalyticsEvent } from "@/lib/client/analytics";
 import { usePdfDocument, type PdfPageProxy, type PdfDocumentProxy } from "./hooks/usePdfDocument";
 import { useViewerKeyboard } from "./hooks/useViewerKeyboard";
 import { ViewerLoading } from "./ViewerLoading";
@@ -20,16 +21,28 @@ const copy = {
     zoomIn: "放大", zoomOut: "缩小", rotate: "旋转", fitWidth: "适应宽度",
     fitPage: "适应页面", fullscreen: "全屏", exitFullscreen: "退出全屏",
     loadingPage: "渲染页面…",
+    renderError: "该页渲染失败。请重试或在新窗口中打开原文件。",
+    retryPage: "重试当前页",
   },
   en: {
     page: "Page", of: "of", jumpTo: "Jump to page", prev: "Previous", next: "Next",
     zoomIn: "Zoom in", zoomOut: "Zoom out", rotate: "Rotate", fitWidth: "Fit width",
     fitPage: "Fit page", fullscreen: "Fullscreen", exitFullscreen: "Exit fullscreen",
     loadingPage: "Rendering page…",
+    renderError: "This page failed to render. Retry or open the original file in a browser.",
+    retryPage: "Retry page",
   },
 } as const;
 
 type FitMode = "width" | "page" | "manual";
+
+/**
+ * Per-page render state machine. The canvas render call can fail (e.g.
+ * pdf.js RenderingCancelledException on rapid page switches, OOM on huge
+ * pages, malformed font streams). When it fails we surface a real error UI
+ * with retry + open-in-browser — not just a console.error.
+ */
+type PageRenderState = "idle" | "rendering" | "ready" | "error";
 
 export function PdfViewer({
   url,
@@ -52,7 +65,11 @@ export function PdfViewer({
   const [rotation, setRotation] = useState(0);
   const [fitMode, setFitMode] = useState<FitMode>("width");
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [pageRendering, setPageRendering] = useState(false);
+  // Page render state machine — surfaces render failures as a real UI state.
+  const [pageRender, setPageRender] = useState<PageRenderState>("idle");
+  // Per-page render attempt counter — bumping it forces the render effect to
+  // re-run, which is what "Retry page" needs.
+  const [pageRenderToken, setPageRenderToken] = useState(0);
   // Container size state — updated by ResizeObserver. Changing this triggers
   // a proper re-render (not a setState(v=>v) no-op) so fit calculations rerun.
   const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
@@ -72,8 +89,29 @@ export function PdfViewer({
       setScale(1);
       setRotation(0);
       setFitMode("width");
+      setPageRender("idle");
+      setPageRenderToken((t) => t + 1);
+      // Document-level load success — distinct from page render success.
+      // This fires once per document load (not per page render).
+      trackAnalyticsEvent({ event_name: "catalog_load_success", locale });
     }
-  }, [state.status]);
+  }, [state.status, locale]);
+
+  // Track document-level load failure. Fires once when the PDF load
+  // transitions into the error state (timeout / network / 404 / parse).
+  // Page render failures are NOT counted here — they have their own UI.
+  const trackedLoadFailure = useRef(false);
+  useEffect(() => {
+    if (state.status === "error") {
+      if (!trackedLoadFailure.current) {
+        trackedLoadFailure.current = true;
+        trackAnalyticsEvent({ event_name: "catalog_load_failure", locale });
+      }
+    } else if (state.status === "loading") {
+      // Reset on retry — allow a fresh failure event if the retry also fails.
+      trackedLoadFailure.current = false;
+    }
+  }, [state.status, locale]);
 
   // Track container size for fit calculations. This replaces the old
   // setFitMode((m) => m) no-op with a proper state update.
@@ -116,18 +154,27 @@ export function PdfViewer({
     if (!isReady || !doc) return;
     let cancelled = false;
     const canvas = canvasRef.current;
-    if (!canvas) return;
 
     const renderPage = async () => {
       try {
+        setPageRender("rendering");
         const page = await doc.getPage(currentPage);
         if (cancelled) return;
 
         const effectiveScale = computeFitScale(page);
         const viewport = page.getViewport({ scale: effectiveScale, rotation });
 
+        if (!canvas) {
+          // No canvas mounted — the viewer is in error UI mode. Reset state.
+          setPageRender("idle");
+          return;
+        }
         const ctx = canvas.getContext("2d");
-        if (!ctx) return;
+        if (!ctx) {
+          // Canvas 2D context unavailable (rare). Surface as error.
+          setPageRender("error");
+          return;
+        }
 
         const dpr = Math.min(window.devicePixelRatio || 1, 2);
         canvas.width = Math.floor(viewport.width * dpr);
@@ -137,7 +184,6 @@ export function PdfViewer({
 
         currentRender.current?.cancel();
 
-        setPageRendering(true);
         const renderTask = page.render({
           canvasContext: ctx,
           transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : undefined,
@@ -146,18 +192,32 @@ export function PdfViewer({
         currentRender.current = renderTask;
 
         await renderTask.promise;
-        if (!cancelled) {
-          setPageRendering(false);
-          if (fitMode !== "manual") {
-            setScale(effectiveScale);
-          }
+        if (cancelled) return;
+        setPageRender("ready");
+        if (fitMode !== "manual") {
+          setScale(effectiveScale);
         }
       } catch (err) {
-        if (!cancelled) setPageRendering(false);
-        if (!/cancel/i.test(err instanceof Error ? err.message : String(err))) {
-          // eslint-disable-next-line no-console
-          console.error("[PdfViewer] render error:", err);
+        if (cancelled) {
+          // Cancelled by the next render — don't touch state.
+          return;
         }
+        // Cancelled errors are expected on rapid page switches; don't surface
+        // them as failures.
+        const msg = err instanceof Error ? err.message : String(err);
+        if (/cancel/i.test(msg)) {
+          setPageRender("idle");
+          return;
+        }
+        // Real render failure — surface it so the user can retry or open
+        // the original file. Don't leave a half-drawn canvas on screen.
+        if (canvas) {
+          const ctx = canvas.getContext("2d");
+          ctx?.clearRect(0, 0, canvas.width, canvas.height);
+        }
+        // eslint-disable-next-line no-console
+        console.error("[PdfViewer] page render failed:", err);
+        setPageRender("error");
       }
     };
 
@@ -166,7 +226,7 @@ export function PdfViewer({
       cancelled = true;
       currentRender.current?.cancel();
     };
-  }, [doc, currentPage, rotation, fitMode, computeFitScale, isReady, containerSize.width, containerSize.height]);
+  }, [doc, currentPage, rotation, fitMode, computeFitScale, isReady, containerSize.width, containerSize.height, pageRenderToken]);
 
   // Fullscreen handling.
   const toggleFullscreen = useCallback(() => {
@@ -207,6 +267,12 @@ export function PdfViewer({
   // --- Action handlers (stable refs for keyboard hook) ---
   const prevPage = useCallback(() => setCurrentPage((p) => clampPage(p - 1, pageCount)), [pageCount]);
   const nextPage = useCallback(() => setCurrentPage((p) => clampPage(p + 1, pageCount)), [pageCount]);
+  const firstPage = useCallback(() => setCurrentPage(1), []);
+  const lastPage = useCallback(() => setCurrentPage(clampPage(Infinity, pageCount)), [pageCount]);
+  const retryPage = useCallback(() => {
+    setPageRender("idle");
+    setPageRenderToken((t) => t + 1);
+  }, []);
   const zoomIn = useCallback(() => { setFitMode("manual"); setScale((s) => snapZoom(s + 0.25)); }, []);
   const zoomOut = useCallback(() => { setFitMode("manual"); setScale((s) => snapZoom(s - 0.25)); }, []);
   const rotate = useCallback(() => setRotation((r) => (r + 90) % 360), []);
@@ -219,6 +285,8 @@ export function PdfViewer({
     enabled: isReady,
     onPrevPage: prevPage,
     onNextPage: nextPage,
+    onFirstPage: firstPage,
+    onLastPage: lastPage,
     onZoomIn: zoomIn,
     onZoomOut: zoomOut,
     onFitToggle: fitToggle,
@@ -259,9 +327,30 @@ export function PdfViewer({
           aria-label={`${labels.page} ${currentPage} ${labels.of} ${pageCount}`}
           role="img"
         />
-        {pageRendering && (
-          <div className="pointer-events-none absolute right-3 top-3 rounded-full bg-page/80 px-3 py-1 text-[10px] text-white/60" aria-live="polite">
+        {pageRender === "rendering" && (
+          <div className="pointer-events-none absolute right-3 top-3 rounded-full bg-page/80 px-3 py-1 text-[10px] text-white/60" aria-live="polite" data-testid="pdf-page-rendering">
             {labels.loadingPage}
+          </div>
+        )}
+        {pageRender === "error" && (
+          <div
+            className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-page/80 p-6 text-center"
+            role="alert"
+            aria-live="assertive"
+            data-testid="pdf-page-render-error"
+          >
+            <p className="max-w-md text-sm leading-6 text-white/85">{labels.renderError}</p>
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              <button type="button" onClick={retryPage} className="btn-primary h-10 px-4 text-xs" data-testid="pdf-retry-page">
+                {labels.retryPage}
+              </button>
+              <a href={url} target="_blank" rel="noopener noreferrer" className="btn-outline h-10 border-white/20 px-4 text-xs text-white">
+                {locale === "zh" ? "在新窗口打开" : "Open in browser"}
+              </a>
+              <button type="button" onClick={onDownload} className="btn-outline h-10 border-white/20 px-4 text-xs text-white">
+                {locale === "zh" ? "下载文件" : "Download"}
+              </button>
+            </div>
           </div>
         )}
 

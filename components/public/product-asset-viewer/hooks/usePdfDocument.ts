@@ -85,7 +85,10 @@ export function usePdfDocument(url: string | null, _locale: Locale) {
 
   const load = useCallback(async () => {
     if (!url) return;
-    // Invalidate previous load and clean up.
+    // Invalidate previous load and clean up. Increment the token FIRST so any
+    // in-flight promise from the previous load (including a still-pending
+    // `pdfjs.getDocument()` whose timeout has not fired yet) cannot mutate
+    // state once we move on.
     const token = ++loadToken.current;
     cleanupActive();
     const doc = activeDoc.current;
@@ -94,22 +97,34 @@ export function usePdfDocument(url: string | null, _locale: Locale) {
 
     setState({ status: "loading", errorKind: null, document: null, pageCount: 0 });
 
-    // We track whether a timeout has already fired so the catch block doesn't
-    // overwrite the "timeout" error kind with a generic "unknown".
+    // We track whether a timeout has already fired for THIS load token. When
+    // it fires we also bump `loadToken.current` again so any subsequent
+    // success/error from the in-flight loadingTask is ignored (prevents the
+    // race where `await loadingTask.promise` resolves AFTER the timeout
+    // already showed the user an error — the old code only guarded the
+    // catch branch, not the success branch).
     let timedOut = false;
 
     activeTimer.current = window.setTimeout(() => {
       timedOut = true;
-      const task = activeLoadingTask.current;
-      if (task) void task.destroy().catch(() => {});
+      // Invalidate this load token so any subsequent `setState` from the
+      // in-flight try/catch (both success AND error paths) is dropped.
+      // This is the fix for the timeout/success race: previously the success
+      // branch only checked `token !== loadToken.current`, but the timeout
+      // handler did NOT bump the token — so a late `loadingTask.promise`
+      // resolution would overwrite the timeout error with "ready".
       if (token === loadToken.current) {
-        setState({ status: "error", errorKind: "timeout", document: null, pageCount: 0 });
+        loadToken.current += 1;
       }
+      const task = activeLoadingTask.current;
+      activeLoadingTask.current = null;
+      if (task) void task.destroy().catch(() => {});
+      setState({ status: "error", errorKind: "timeout", document: null, pageCount: 0 });
     }, LOAD_TIMEOUT_MS);
 
     try {
       const pdfjs = await loadPdfjs();
-      if (token !== loadToken.current) return; // superseded
+      if (token !== loadToken.current) return; // superseded or timed out
 
       const loadingTask = pdfjs.getDocument({ url });
       activeLoadingTask.current = loadingTask;
@@ -122,8 +137,12 @@ export function usePdfDocument(url: string | null, _locale: Locale) {
         activeTimer.current = null;
       }
 
-      if (token !== loadToken.current) {
-        result.destroy();
+      // If the timeout already fired (or a new URL load replaced us), drop
+      // the result and destroy it. The `timedOut` flag guards against the
+      // race where the timeout bumped the token but we still got here via
+      // the original `await` resuming.
+      if (timedOut || token !== loadToken.current) {
+        void result.destroy().catch(() => {});
         return;
       }
       activeDoc.current = result;
@@ -134,10 +153,11 @@ export function usePdfDocument(url: string | null, _locale: Locale) {
         window.clearTimeout(activeTimer.current);
         activeTimer.current = null;
       }
-      if (token !== loadToken.current) return;
-      // If the timeout already fired, keep the "timeout" error — don't let
-      // the destroy() rejection overwrite it with "unknown".
+      // If the timeout already fired, the destroy() rejection would land
+      // here. Don't overwrite the "timeout" state. Also bail if a newer
+      // load has superseded us.
       if (timedOut) return;
+      if (token !== loadToken.current) return;
       const kind = mapPdfError(error);
       setState({ status: "error", errorKind: kind, document: null, pageCount: 0 });
     }
