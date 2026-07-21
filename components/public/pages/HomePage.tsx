@@ -25,7 +25,7 @@ const fallbackFeatures: Record<Locale, HomeFeatureItem[]> = {
   en: [{ icon: "flame", title: "B Fire Rating", description: "Refer to product details and published test documents." }, { icon: "leaf", title: "E0 Grade", description: "For indoor project and decorative applications." }, { icon: "truck", title: "Project Supply", description: "Bulk project supply and custom specifications." }, { icon: "globe", title: "Overseas Inquiry", description: "Multilingual inquiries and FOB/CIF export support." }],
 };
 
-export async function getHomeMetadata(locale: Locale): Promise<Metadata> { const settings = localizeSiteSettings(await fetchSiteSettings(), locale); const copy = getDictionary(locale).home; return buildLocalizedMetadata({ locale, path: "/", title: settings.metaTitle || `KZQ | ${copy.heroTitle}`, description: settings.metaDescription || copy.heroDescription }); }
+export async function getHomeMetadata(locale: Locale): Promise<Metadata> { const settings = localizeSiteSettings(await fetchSiteSettings(), locale); const copy = getDictionary(locale).home; return buildLocalizedMetadata({ locale, path: "/", title: settings.metaTitle || `KZQ | ${copy.heroTitle}`, description: settings.metaDescription || copy.heroDescription, absolute: true }); }
 export function generateMetadata() { return getHomeMetadata("zh"); }
 
 export async function HomePageContent(locale: Locale) {

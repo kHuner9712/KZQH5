@@ -19,13 +19,22 @@
 -- valid and historical dashboards continue to work. The new names are
 -- purely additive.
 --
+-- All 14 legacy event names from migration 20260714125149 are preserved:
+--   page_view, product_view, product_search, category_click,
+--   phone_click, wechat_copy, whatsapp_click, email_click,
+--   add_to_inquiry, inquiry_start, inquiry_success,
+--   catalog_download, certificate_view, project_view
+--
 -- This migration is idempotent — re-running it produces the same final
 -- constraint. It does NOT modify existing rows.
+--
+-- The constraint swap is wrapped in an explicit transaction so a
+-- failure between DROP and ADD cannot leave the table without a check
+-- constraint (which would allow arbitrary event_name values).
 -- ============================================================
 
--- Drop the legacy constraint and re-create it with the extended event set.
--- `if exists` guards against re-running on databases where the constraint
--- was already replaced.
+begin;
+
 alter table public.analytics_events
   drop constraint if exists analytics_events_event_name_check;
 
@@ -38,3 +47,5 @@ alter table public.analytics_events
     'catalog_copy_link', 'catalog_open_external', 'catalog_download',
     'certificate_view', 'project_view'
   ));
+
+commit;

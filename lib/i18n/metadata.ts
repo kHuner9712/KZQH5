@@ -20,28 +20,17 @@ export function localizedAlternates(path: string) {
  * "X | KZQ | KZQ" — a duplicate brand suffix.
  *
  * Stripping the trailing brand here lets the template append it exactly
- * once. The OG / Twitter titles below are NOT affected (they always use
- * the original title verbatim).
+ * once. This is the ONLY title transformation — we deliberately do NOT
+ * detect whether the title "contains KZQ" elsewhere, because product names
+ * like "KZQ WPC Wall Panel" would then incorrectly bypass the template
+ * and lose the brand suffix entirely.
+ *
+ * The home page is the single exception: it uses `{ absolute }` directly
+ * in its own metadata (see `app/(public)/page.tsx`) because its title is
+ * the full brand statement, not a page name that needs a suffix.
  */
 function stripTrailingBrand(title: string): string {
   return title.replace(/\s*\|\s*KZQ\s*$/i, "").trim();
-}
-
-/**
- * Returns true when a page-level title already mentions the brand "KZQ".
- *
- * When true, `buildLocalizedMetadata` returns the title as
- * `{ absolute: title }` so the root layout's `template: "%s | KZQ"` does
- * NOT append another "| KZQ" — the brand is already present and the
- * template would only create a duplicate.
- *
- * Examples:
- *   - "产品目录与色卡" → false → templated → "产品目录与色卡 | KZQ"
- *   - "About KZQ | Engineering Board Brand" → true → absolute (no template)
- *   - "KZQ | 工程级板材" → true → absolute (no template)
- */
-function titleContainsBrand(title: string): boolean {
-  return /\bKZQ\b/i.test(title);
 }
 
 export function buildLocalizedMetadata({
@@ -50,20 +39,31 @@ export function buildLocalizedMetadata({
   title,
   description,
   image,
+  absolute = false,
 }: {
   locale: Locale;
   path: string;
   title: string;
   description: string;
   image?: string | null;
+  /**
+   * When true, the title is returned as `{ absolute: title }` so the root
+   * layout's `template: "%s | KZQ"` does NOT append "| KZQ". Use this only
+   * for the home page, whose title is already the full brand statement
+   * (e.g. "KZQ | Engineering Board Brand"). Sub-pages should leave this
+   * false so the template appends the brand suffix exactly once.
+   */
+  absolute?: boolean;
 }): Metadata {
   const canonical = siteUrl(localePath(locale, path));
-  // The HTML <title> after template application. We strip any trailing
-  // "| KZQ" first so the template can append it exactly once. If the title
-  // already mentions KZQ anywhere, we bypass the template entirely by
-  // returning `{ absolute }` — otherwise the brand would appear twice.
+  // Strip any trailing "| KZQ" so the root layout's `template: "%s | KZQ"`
+  // appends the brand exactly once. We do NOT bypass the template based on
+  // whether the title mentions KZQ — that would be unpredictable for
+  // product names that happen to contain the brand.
   const cleaned = stripTrailingBrand(title);
-  const htmlTitle: string | { absolute: string } = titleContainsBrand(cleaned)
+  // Home page bypasses the template because its title is already a full
+  // brand statement (e.g. "KZQ | Engineering Board Brand").
+  const htmlTitle: string | { absolute: string } = absolute
     ? { absolute: cleaned }
     : cleaned;
   // OG / Twitter titles are the absolute, fully-formed title (no template

@@ -35,27 +35,27 @@ describe("buildLocalizedMetadata — title templating rules", () => {
     expect(m.title).toBe("产品目录与色卡");
   });
 
-  it("returns { absolute } when title already contains KZQ (bypasses template)", () => {
+  it("returns plain string (template applies) when title contains KZQ in middle", () => {
+    // A product name like "About KZQ Engineering Brand" should STILL go
+    // through the template — the brand suffix is appended exactly once.
+    // We do NOT bypass the template just because KZQ appears in the title.
     const m = buildLocalizedMetadata({
       locale: "en",
       path: "/about",
-      title: "About KZQ | Engineering Board Brand",
+      title: "About KZQ Engineering Brand",
       description: "desc",
     });
-    // Title contains KZQ → bypass template → final HTML title is the absolute
-    // string itself, no "| KZQ" suffix appended by the layout.
-    expect(typeof m.title).toBe("object");
-    expect((m.title as { absolute: string }).absolute).toBe(
-      "About KZQ | Engineering Board Brand",
-    );
+    expect(typeof m.title).toBe("string");
+    expect(m.title).toBe("About KZQ Engineering Brand");
   });
 
-  it("handles home page brand title 'KZQ | 工程级板材' as absolute", () => {
+  it("returns { absolute } only when absolute: true is passed (home page)", () => {
     const m = buildLocalizedMetadata({
       locale: "zh",
       path: "/",
       title: "KZQ | 工程级板材·B级防火·E0环保饰面板",
       description: "desc",
+      absolute: true,
     });
     expect(typeof m.title).toBe("object");
     expect((m.title as { absolute: string }).absolute).toBe(
@@ -85,18 +85,17 @@ describe("buildLocalizedMetadata — title templating rules", () => {
     expect(m.twitter?.title).toBe("产品目录与色卡");
   });
 
-  it("does NOT strip KZQ from the middle of a title", () => {
+  it("does NOT strip KZQ from the middle of a title (product names keep KZQ)", () => {
+    // Product name "KZQ WPC Wall Panel" should keep KZQ and still go
+    // through the template → final HTML title: "KZQ WPC Wall Panel | KZQ"
     const m = buildLocalizedMetadata({
       locale: "en",
-      path: "/about",
-      title: "About KZQ Engineering Brand",
+      path: "/products/kzq-wpc-wall-panel",
+      title: "KZQ WPC Wall Panel",
       description: "desc",
     });
-    // KZQ present but not at end → bypasses template (absolute), no stripping
-    expect(typeof m.title).toBe("object");
-    expect((m.title as { absolute: string }).absolute).toBe(
-      "About KZQ Engineering Brand",
-    );
+    expect(typeof m.title).toBe("string");
+    expect(m.title).toBe("KZQ WPC Wall Panel");
   });
 });
 
@@ -161,16 +160,31 @@ describe("buildLocalizedMetadata — pages required by user spec", () => {
     expect(m.title).toBe("测试与认证");
   });
 
-  it("home page title is absolute (no template applied)", () => {
+  it("home page title is absolute only when absolute: true is passed", () => {
     const m = buildLocalizedMetadata({
       locale: "zh",
       path: "/",
       title: "KZQ | 工程级板材·B级防火·E0环保饰面板",
       description: "desc",
+      absolute: true,
     });
     expect(typeof m.title).toBe("object");
     expect((m.title as { absolute: string }).absolute).toBe(
       "KZQ | 工程级板材·B级防火·E0环保饰面板",
     );
+  });
+
+  it("home page without absolute flag would get template applied (regression guard)", () => {
+    // If someone forgets absolute:true on the home page, the title goes
+    // through the template → "KZQ | ... | KZQ". This test documents that
+    // the absolute flag is the ONLY way to bypass the template.
+    const m = buildLocalizedMetadata({
+      locale: "zh",
+      path: "/",
+      title: "KZQ | 工程级板材",
+      description: "desc",
+    });
+    expect(typeof m.title).toBe("string");
+    expect(m.title).toBe("KZQ | 工程级板材");
   });
 });

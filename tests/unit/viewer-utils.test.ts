@@ -70,6 +70,20 @@ describe("validateAssetUrl", () => {
     expect(validateAssetUrl("//evil.example.com").ok).toBe(false);
     expect(validateAssetUrl("//evil.example.com:8443/x").ok).toBe(false);
   });
+  it("rejects triple-slash URLs that resolve to a foreign origin", () => {
+    // `///evil.example.com/x` starts with `/` so it enters the relative-path
+    // branch. WHATWG URL parses it as `//evil.example.com/x` relative to the
+    // base, which resolves to a foreign origin — the origin check rejects it.
+    const r = validateAssetUrl("///evil.example.com/file.pdf");
+    expect(r.ok).toBe(false);
+  });
+  it("rejects backslash tricks that try to escape the origin", () => {
+    // `/\/evil.example.com/x` — the URL parser normalizes backslashes to
+    // forward slashes inside the path, so this stays same-origin (a weird
+    // local path). But a bare `\\evil.example.com\x` (UNC-style) is rejected
+    // because it doesn't start with `/`, `./`, or `../` and isn't a valid URL.
+    expect(validateAssetUrl("\\\\evil.example.com\\file.pdf").ok).toBe(false);
+  });
   it("rejects vbscript: URLs", () => {
     const r = validateAssetUrl("vbscript:msgbox(1)");
     expect(r.ok).toBe(false);
