@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   validateAssetUrl,
   sanitizeFilename,
+  deriveExtension,
   isPdfAsset,
   isImageAsset,
   isSvgAsset,
@@ -39,8 +40,18 @@ describe("validateAssetUrl", () => {
     expect(validateAssetUrl("./test.pdf").ok).toBe(true);
     expect(validateAssetUrl("../test.pdf").ok).toBe(true);
   });
-  it("accepts http for local dev", () => {
+  it("accepts http only for localhost / loopback or when allowed for testing", () => {
     expect(validateAssetUrl("http://localhost:3000/test.pdf").ok).toBe(true);
+    expect(validateAssetUrl("http://127.0.0.1:3000/test.pdf").ok).toBe(true);
+    expect(validateAssetUrl("http://[::1]:3000/test.pdf").ok).toBe(true);
+    expect(validateAssetUrl("http://example.com/test.pdf", true).ok).toBe(true);
+  });
+  it("rejects public http URLs", () => {
+    const r = validateAssetUrl("http://example.com/test.pdf");
+    expect(r.ok).toBe(false);
+    expect(r.reason).toContain("insecure_http");
+    expect(validateAssetUrl("http://10.0.0.1/test.pdf").ok).toBe(false);
+    expect(validateAssetUrl("http://192.168.1.1/test.pdf").ok).toBe(false);
   });
   it("rejects javascript: URLs", () => {
     const r = validateAssetUrl("javascript:alert(1)");
@@ -58,6 +69,27 @@ describe("validateAssetUrl", () => {
   });
   it("rejects malformed URLs", () => {
     expect(validateAssetUrl("not a url at all").ok).toBe(false);
+  });
+  it("rejects blob: URLs", () => {
+    const r = validateAssetUrl("blob:https://example.com/uuid");
+    expect(r.ok).toBe(false);
+    expect(r.reason).toContain("unsupported_protocol");
+  });
+  it("rejects ftp: URLs", () => {
+    const r = validateAssetUrl("ftp://example.com/file.pdf");
+    expect(r.ok).toBe(false);
+    expect(r.reason).toContain("unsupported_protocol");
+  });
+  it("rejects ws/wss: URLs", () => {
+    expect(validateAssetUrl("ws://example.com/socket").ok).toBe(false);
+    expect(validateAssetUrl("wss://example.com/socket").ok).toBe(false);
+  });
+  it("does not allow public http even with port", () => {
+    expect(validateAssetUrl("http://example.com:8080/file.pdf").ok).toBe(false);
+  });
+  it("allows http on localhost with any port", () => {
+    expect(validateAssetUrl("http://localhost:5173/file.pdf").ok).toBe(true);
+    expect(validateAssetUrl("http://127.0.0.1:8080/file.pdf").ok).toBe(true);
   });
 });
 
@@ -88,6 +120,69 @@ describe("sanitizeFilename", () => {
   });
   it("strips leading/trailing dots", () => {
     expect(sanitizeFilename("...catalog.pdf...", "doc", ".pdf")).toBe("catalog.pdf");
+  });
+  it("does not add a lone dot when preferredExt is empty", () => {
+    expect(sanitizeFilename("catalog", "doc", "")).toBe("catalog");
+    expect(sanitizeFilename("catalog.png", "doc", "")).toBe("catalog.png");
+  });
+  it("forces .pdf extension for PDF targets", () => {
+    expect(sanitizeFilename("catalog.png", "doc", ".pdf")).toBe("catalog.pdf");
+    expect(sanitizeFilename("catalog", "doc", ".pdf")).toBe("catalog.pdf");
+  });
+  it("prevents double extensions", () => {
+    expect(sanitizeFilename("catalog.pdf", "doc", ".pdf")).toBe("catalog.pdf");
+  });
+  it("prevents double extensions for images", () => {
+    // Image filenames keep their original extension; preferredExt is only a
+    // hint and we never append a second extension (no "image.jpg.png").
+    expect(sanitizeFilename("image.jpg", "doc", ".png")).toBe("image.jpg");
+    expect(sanitizeFilename("image.png", "doc", ".png")).toBe("image.png");
+  });
+  it("preserves existing correct extension", () => {
+    expect(sanitizeFilename("report.pdf", "doc", ".pdf")).toBe("report.pdf");
+    expect(sanitizeFilename("photo.jpg", "doc", ".jpg")).toBe("photo.jpg");
+  });
+  it("strips directory traversal sequences", () => {
+    expect(sanitizeFilename("../etc/passwd", "doc", ".pdf")).toBe("etcpasswd.pdf");
+    expect(sanitizeFilename("..\\..\\secret", "doc", ".pdf")).toBe("secret.pdf");
+  });
+  it("strips trailing dots", () => {
+    expect(sanitizeFilename("catalog.", "doc", ".pdf")).toBe("catalog.pdf");
+    expect(sanitizeFilename("catalog...", "doc", "")).toBe("catalog");
+  });
+  it("handles preferredExt with leading dot", () => {
+    expect(sanitizeFilename("catalog", "doc", ".pdf")).toBe("catalog.pdf");
+  });
+  it("handles preferredExt without leading dot", () => {
+    expect(sanitizeFilename("catalog", "doc", "pdf")).toBe("catalog.pdf");
+  });
+  it("forces pdf extension even when current ext is image", () => {
+    expect(sanitizeFilename("scan.jpg", "doc", ".pdf")).toBe("scan.pdf");
+    expect(sanitizeFilename("scan.png", "doc", ".pdf")).toBe("scan.pdf");
+  });
+});
+
+describe("deriveExtension", () => {
+  it("derives from MIME type", () => {
+    expect(deriveExtension("application/pdf", null)).toBe(".pdf");
+    expect(deriveExtension("image/jpeg", null)).toBe(".jpg");
+    expect(deriveExtension("image/png", null)).toBe(".png");
+    expect(deriveExtension("image/webp", null)).toBe(".webp");
+    expect(deriveExtension("image/svg+xml", null)).toBe(".svg");
+  });
+  it("derives from URL when MIME is missing", () => {
+    expect(deriveExtension(null, "/doc.pdf")).toBe(".pdf");
+    expect(deriveExtension(null, "/photo.JPG")).toBe(".jpg");
+    expect(deriveExtension(null, "/image.jpeg")).toBe(".jpg");
+    expect(deriveExtension(null, "/pic.webp?x=1")).toBe(".webp");
+  });
+  it("returns empty string for unknown types", () => {
+    expect(deriveExtension("application/zip", "/file.zip")).toBe("");
+    expect(deriveExtension(null, "/noext")).toBe("");
+    expect(deriveExtension(null, null)).toBe("");
+  });
+  it("prefers MIME over URL", () => {
+    expect(deriveExtension("image/png", "/photo.jpg")).toBe(".png");
   });
 });
 

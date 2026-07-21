@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  ChevronLeft, ChevronRight, Download, ExternalLink, Maximize, Minimize,
+  ChevronLeft, ChevronRight, Maximize, Minimize,
   Minus, Plus, RotateCw, Scan, ScanLine,
 } from "lucide-react";
 import type { Locale } from "@/lib/i18n/config";
@@ -10,6 +10,7 @@ import {
   clampPage, clampZoom, snapZoom, ZOOM_MIN, ZOOM_MAX,
 } from "@/lib/client/viewer-utils";
 import { usePdfDocument, type PdfPageProxy, type PdfDocumentProxy } from "./hooks/usePdfDocument";
+import { useViewerKeyboard } from "./hooks/useViewerKeyboard";
 import { ViewerLoading } from "./ViewerLoading";
 import { ViewerError } from "./ViewerError";
 
@@ -18,13 +19,13 @@ const copy = {
     page: "页", of: "共", jumpTo: "跳转到页", prev: "上一页", next: "下一页",
     zoomIn: "放大", zoomOut: "缩小", rotate: "旋转", fitWidth: "适应宽度",
     fitPage: "适应页面", fullscreen: "全屏", exitFullscreen: "退出全屏",
-    download: "下载", open: "新窗口打开", loadingPage: "渲染页面…",
+    loadingPage: "渲染页面…",
   },
   en: {
     page: "Page", of: "of", jumpTo: "Jump to page", prev: "Previous", next: "Next",
     zoomIn: "Zoom in", zoomOut: "Zoom out", rotate: "Rotate", fitWidth: "Fit width",
     fitPage: "Fit page", fullscreen: "Fullscreen", exitFullscreen: "Exit fullscreen",
-    download: "Download", open: "Open in new window", loadingPage: "Rendering page…",
+    loadingPage: "Rendering page…",
   },
 } as const;
 
@@ -52,14 +53,17 @@ export function PdfViewer({
   const [fitMode, setFitMode] = useState<FitMode>("width");
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [pageRendering, setPageRendering] = useState(false);
+  // Container size state — updated by ResizeObserver. Changing this triggers
+  // a proper re-render (not a setState(v=>v) no-op) so fit calculations rerun.
+  const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
 
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const currentRender = useRef<{ cancel: () => void } | null>(null);
-  const containerWidth = useRef(0);
 
   const doc = state.document;
   const pageCount = state.pageCount;
+  const isReady = state.status === "ready" && Boolean(doc);
 
   // Reset page when a new document loads.
   useEffect(() => {
@@ -71,30 +75,32 @@ export function PdfViewer({
     }
   }, [state.status]);
 
-  // Track container width for fit calculations.
+  // Track container size for fit calculations. This replaces the old
+  // setFitMode((m) => m) no-op with a proper state update.
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
     const observer = new ResizeObserver((entries) => {
       const entry = entries[0];
       if (entry) {
-        containerWidth.current = entry.contentRect.width;
-        if (fitMode !== "manual") {
-          // Trigger re-fit by toggling a dep; we just re-run the render effect.
-          setFitMode((m) => m); // no-op set to retrigger
-        }
+        const { width, height } = entry.contentRect;
+        setContainerSize((prev) => {
+          // Only update when dimensions actually change (avoids loops).
+          if (Math.abs(prev.width - width) < 1 && Math.abs(prev.height - height) < 1) return prev;
+          return { width, height };
+        });
       }
     });
     observer.observe(el);
     return () => observer.disconnect();
-  }, [fitMode]);
+  }, []);
 
   // Compute the effective scale for fit modes.
   const computeFitScale = useCallback(
     (page: PdfPageProxy): number => {
       if (fitMode === "manual") return scale;
-      const containerW = containerWidth.current || 800;
-      const containerH = (containerRef.current?.clientHeight || 600) - 16;
+      const containerW = containerSize.width || 800;
+      const containerH = (containerSize.height || 600) - 16;
       const viewport = page.getViewport({ scale: 1, rotation });
       if (fitMode === "width") {
         return clampZoom(containerW / viewport.width);
@@ -102,12 +108,12 @@ export function PdfViewer({
       // fit page
       return clampZoom(Math.min(containerW / viewport.width, containerH / viewport.height));
     },
-    [fitMode, scale, rotation],
+    [fitMode, scale, rotation, containerSize.width, containerSize.height],
   );
 
   // Render the current page to canvas.
   useEffect(() => {
-    if (state.status !== "ready" || !doc) return;
+    if (!isReady || !doc) return;
     let cancelled = false;
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -123,14 +129,12 @@ export function PdfViewer({
         const ctx = canvas.getContext("2d");
         if (!ctx) return;
 
-        // HiDPI: use devicePixelRatio for crisp rendering, capped at 2.
         const dpr = Math.min(window.devicePixelRatio || 1, 2);
         canvas.width = Math.floor(viewport.width * dpr);
         canvas.height = Math.floor(viewport.height * dpr);
         canvas.style.width = `${Math.floor(viewport.width)}px`;
         canvas.style.height = `${Math.floor(viewport.height)}px`;
 
-        // Cancel any previous render.
         currentRender.current?.cancel();
 
         setPageRendering(true);
@@ -150,7 +154,6 @@ export function PdfViewer({
         }
       } catch (err) {
         if (!cancelled) setPageRendering(false);
-        // RenderingCancelledException is expected on rapid navigation; ignore.
         if (!/cancel/i.test(err instanceof Error ? err.message : String(err))) {
           // eslint-disable-next-line no-console
           console.error("[PdfViewer] render error:", err);
@@ -163,7 +166,7 @@ export function PdfViewer({
       cancelled = true;
       currentRender.current?.cancel();
     };
-  }, [doc, currentPage, rotation, fitMode, computeFitScale, state.status]);
+  }, [doc, currentPage, rotation, fitMode, computeFitScale, isReady, containerSize.width, containerSize.height]);
 
   // Fullscreen handling.
   const toggleFullscreen = useCallback(() => {
@@ -194,13 +197,34 @@ export function PdfViewer({
     const t = e.changedTouches[0];
     const dx = t.clientX - start.x;
     const dy = t.clientY - start.y;
-    // Horizontal swipe dominant and large enough.
     if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) {
       if (dx > 0) setCurrentPage((p) => clampPage(p - 1, pageCount));
       else setCurrentPage((p) => clampPage(p + 1, pageCount));
     }
     touchStart.current = null;
   }, [pageCount]);
+
+  // --- Action handlers (stable refs for keyboard hook) ---
+  const prevPage = useCallback(() => setCurrentPage((p) => clampPage(p - 1, pageCount)), [pageCount]);
+  const nextPage = useCallback(() => setCurrentPage((p) => clampPage(p + 1, pageCount)), [pageCount]);
+  const zoomIn = useCallback(() => { setFitMode("manual"); setScale((s) => snapZoom(s + 0.25)); }, []);
+  const zoomOut = useCallback(() => { setFitMode("manual"); setScale((s) => snapZoom(s - 0.25)); }, []);
+  const rotate = useCallback(() => setRotation((r) => (r + 90) % 360), []);
+  const fitToggle = useCallback(() => {
+    setFitMode((m) => (m === "width" ? "page" : m === "page" ? "manual" : "width"));
+  }, []);
+
+  // Wire up keyboard shortcuts (only when the document is ready).
+  useViewerKeyboard({
+    enabled: isReady,
+    onPrevPage: prevPage,
+    onNextPage: nextPage,
+    onZoomIn: zoomIn,
+    onZoomOut: zoomOut,
+    onFitToggle: fitToggle,
+    onRotate: rotate,
+    onClose,
+  });
 
   // --- State-driven UI ---
   if (state.status === "loading") return <ViewerLoading locale={locale} />;
@@ -210,6 +234,7 @@ export function PdfViewer({
         errorKind={state.errorKind}
         locale={locale}
         url={url}
+        urlValid
         isWeChat={isWeChat}
         onRetry={retry}
         onClose={onClose}
@@ -217,18 +242,10 @@ export function PdfViewer({
       />
     );
   }
-  if (state.status !== "ready" || !doc) return <ViewerLoading locale={locale} />;
-
-  const zoomIn = () => { setFitMode("manual"); setScale((s) => snapZoom(s + 0.25)); };
-  const zoomOut = () => { setFitMode("manual"); setScale((s) => snapZoom(s - 0.25)); };
-  const fitWidth = () => setFitMode("width");
-  const fitPage = () => setFitMode("page");
-  const rotate = () => setRotation((r) => (r + 90) % 360);
-  const prevPage = () => setCurrentPage((p) => clampPage(p - 1, pageCount));
-  const nextPage = () => setCurrentPage((p) => clampPage(p + 1, pageCount));
+  if (!isReady) return <ViewerLoading locale={locale} />;
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div className="relative flex min-h-0 flex-1 flex-col">
       {/* Canvas area */}
       <div
         ref={containerRef}
@@ -247,37 +264,38 @@ export function PdfViewer({
             {labels.loadingPage}
           </div>
         )}
-      </div>
 
-      {/* Floating zoom/rotate/fit controls */}
-      <div className="pointer-events-auto absolute bottom-16 left-1/2 flex -translate-x-1/2 items-center gap-0.5 rounded-full border border-white/15 bg-page/90 px-1.5 py-1 shadow-lg md:bottom-4">
-        <CtrlBtn label={labels.zoomOut} onClick={zoomOut} disabled={scale <= ZOOM_MIN}>
-          <Minus className="h-4 w-4" />
-        </CtrlBtn>
-        <span className="min-w-[3rem] text-center text-[11px] tabular-nums text-white/60">
-          {Math.round(scale * 100)}%
-        </span>
-        <CtrlBtn label={labels.zoomIn} onClick={zoomIn} disabled={scale >= ZOOM_MAX}>
-          <Plus className="h-4 w-4" />
-        </CtrlBtn>
-        <div className="mx-0.5 h-5 w-px bg-white/15" />
-        <CtrlBtn label={labels.fitWidth} onClick={fitWidth} active={fitMode === "width"}>
-          <ScanLine className="h-4 w-4" />
-        </CtrlBtn>
-        <CtrlBtn label={labels.fitPage} onClick={fitPage} active={fitMode === "page"}>
-          <Scan className="h-4 w-4" />
-        </CtrlBtn>
-        <CtrlBtn label={labels.rotate} onClick={rotate}>
-          <RotateCw className="h-4 w-4" />
-        </CtrlBtn>
-        <CtrlBtn label={isFullscreen ? labels.exitFullscreen : labels.fullscreen} onClick={toggleFullscreen}>
-          {isFullscreen ? <Minimize className="h-4 w-4" /> : <Maximize className="h-4 w-4" />}
-        </CtrlBtn>
+        {/* Floating zoom/rotate/fit controls — inside the canvas container so
+            they never overlap the bottom page navigation bar. */}
+        <div className="pointer-events-auto absolute bottom-3 left-1/2 flex -translate-x-1/2 items-center gap-0.5 rounded-full border border-white/15 bg-page/90 px-1.5 py-1 shadow-lg">
+          <CtrlBtn label={labels.zoomOut} onClick={zoomOut} disabled={scale <= ZOOM_MIN} data-testid="pdf-zoom-out">
+            <Minus className="h-4 w-4" />
+          </CtrlBtn>
+          <span className="min-w-[3rem] text-center text-[11px] tabular-nums text-white/60">
+            {Math.round(scale * 100)}%
+          </span>
+          <CtrlBtn label={labels.zoomIn} onClick={zoomIn} disabled={scale >= ZOOM_MAX} data-testid="pdf-zoom-in">
+            <Plus className="h-4 w-4" />
+          </CtrlBtn>
+          <div className="mx-0.5 h-5 w-px bg-white/15" />
+          <CtrlBtn label={labels.fitWidth} onClick={() => setFitMode("width")} active={fitMode === "width"} data-testid="pdf-fit-width">
+            <ScanLine className="h-4 w-4" />
+          </CtrlBtn>
+          <CtrlBtn label={labels.fitPage} onClick={() => setFitMode("page")} active={fitMode === "page"} data-testid="pdf-fit-page">
+            <Scan className="h-4 w-4" />
+          </CtrlBtn>
+          <CtrlBtn label={labels.rotate} onClick={rotate} data-testid="pdf-rotate">
+            <RotateCw className="h-4 w-4" />
+          </CtrlBtn>
+          <CtrlBtn label={isFullscreen ? labels.exitFullscreen : labels.fullscreen} onClick={toggleFullscreen} data-testid="pdf-fullscreen">
+            {isFullscreen ? <Minimize className="h-4 w-4" /> : <Maximize className="h-4 w-4" />}
+          </CtrlBtn>
+        </div>
       </div>
 
       {/* Bottom page navigation bar */}
       <div className="safe-bottom flex h-14 shrink-0 items-center justify-center gap-2 border-t border-white/10 bg-page/95 px-3">
-        <CtrlBtn label={labels.prev} onClick={prevPage} disabled={currentPage <= 1} large>
+        <CtrlBtn label={labels.prev} onClick={prevPage} disabled={currentPage <= 1} large data-testid="pdf-prev-page">
           <ChevronLeft className="h-5 w-5" />
         </CtrlBtn>
         <div className="flex items-center gap-1.5 text-xs text-white/70">
@@ -292,10 +310,11 @@ export function PdfViewer({
             }}
             className="h-9 w-14 rounded-md border border-white/15 bg-white/5 px-2 text-center text-sm text-white outline-none focus:border-gold/50"
             aria-label={labels.jumpTo}
+            data-testid="pdf-page-input"
           />
           <span className="text-white/40">/ {pageCount}</span>
         </div>
-        <CtrlBtn label={labels.next} onClick={nextPage} disabled={currentPage >= pageCount} large>
+        <CtrlBtn label={labels.next} onClick={nextPage} disabled={currentPage >= pageCount} large data-testid="pdf-next-page">
           <ChevronRight className="h-5 w-5" />
         </CtrlBtn>
       </div>
@@ -304,7 +323,7 @@ export function PdfViewer({
 }
 
 function CtrlBtn({
-  label, onClick, disabled, active, large, children,
+  label, onClick, disabled, active, large, children, ...rest
 }: {
   label: string;
   onClick: () => void;
@@ -312,7 +331,7 @@ function CtrlBtn({
   active?: boolean;
   large?: boolean;
   children: React.ReactNode;
-}) {
+} & Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, "onClick" | "type">) {
   return (
     <button
       type="button"
@@ -326,6 +345,7 @@ function CtrlBtn({
         active ? "bg-gold/20 text-gold-light" : "text-white/70 hover:bg-white/10",
         "disabled:opacity-30 disabled:hover:bg-transparent",
       ].join(" ")}
+      {...rest}
     >
       {children}
     </button>

@@ -55,11 +55,16 @@ export interface UrlValidation {
 }
 
 /**
- * Validates an asset file URL. Only https: and same-origin relative paths are
- * allowed. Rejects javascript:, data:, file:, and unknown protocols to prevent
- * XSS and open-redirect abuse.
+ * Validates an asset file URL.
+ *
+ * Production policy:
+ *   - https: always allowed.
+ *   - Same-origin relative paths (/, ./, ../) always allowed.
+ *   - http: ONLY allowed for localhost, 127.0.0.1, and [::1] (dev servers).
+ *     Any public HTTP URL is rejected.
+ *   - javascript:, data:, file:, and unknown protocols are always rejected.
  */
-export function validateAssetUrl(rawUrl: string): UrlValidation {
+export function validateAssetUrl(rawUrl: string, allowHttpForTesting: boolean = false): UrlValidation {
   const url = (rawUrl || "").trim();
   if (!url) return { ok: false, reason: "empty_url" };
 
@@ -76,9 +81,15 @@ export function validateAssetUrl(rawUrl: string): UrlValidation {
   }
 
   if (parsed.protocol === "https:") return { ok: true, resolved: url };
-  // Allow http: only in development; reject in production contexts at call
-  // sites if needed. We accept it here so local dev servers work.
-  if (parsed.protocol === "http:") return { ok: true, resolved: url };
+
+  if (parsed.protocol === "http:") {
+    // Allow http only for loopback / localhost dev servers.
+    const host = parsed.hostname.toLowerCase();
+    if (allowHttpForTesting || host === "localhost" || host === "127.0.0.1" || host === "[::1]") {
+      return { ok: true, resolved: url };
+    }
+    return { ok: false, reason: `insecure_http:${host}` };
+  }
 
   return { ok: false, reason: `unsupported_protocol:${parsed.protocol}` };
 }
@@ -94,10 +105,34 @@ const RESERVED_NAMES = new Set([
   "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
 ]);
 
+const MIME_TO_EXT: Record<string, string> = {
+  "application/pdf": ".pdf",
+  "image/jpeg": ".jpg",
+  "image/png": ".png",
+  "image/webp": ".webp",
+  "image/svg+xml": ".svg",
+  "image/gif": ".gif",
+};
+
+/** Derives a file extension (with leading dot) from MIME type or URL. */
+export function deriveExtension(mime: string | null | undefined, url: string | null | undefined): string {
+  if (mime) {
+    const ext = MIME_TO_EXT[mime.toLowerCase()];
+    if (ext) return ext;
+  }
+  if (url) {
+    const match = url.match(/\.(pdf|jpe?g|png|webp|svg|gif)(?:[?#].*)?$/i);
+    if (match) return match[1].toLowerCase() === "jpeg" ? ".jpg" : `.${match[1].toLowerCase()}`;
+  }
+  return "";
+}
+
 /**
  * Sanitizes a filename for download. Strips illegal characters, trims
  * whitespace/dots, ensures a sensible extension, and avoids Windows reserved
  * names. Falls back to `fallback` when the result is empty.
+ *
+ * When `preferredExt` is empty, no extension is appended.
  */
 export function sanitizeFilename(
   name: string,
@@ -118,10 +153,24 @@ export function sanitizeFilename(
   const stem = clean.replace(/\.[^.]+$/, "");
   if (RESERVED_NAMES.has(stem.toUpperCase())) clean = `${clean}-file`;
 
-  // Ensure extension.
-  const ext = preferredExt.startsWith(".") ? preferredExt : `.${preferredExt}`;
-  const hasExt = /\.[a-z0-9]{2,5}$/i.test(clean);
-  return hasExt ? clean : `${clean}${ext}`;
+  // Ensure extension — but only when preferredExt is non-empty.
+  const ext = preferredExt && !preferredExt.startsWith(".") ? `.${preferredExt}` : preferredExt || "";
+  if (!ext) return clean;
+
+  const currentExtMatch = clean.match(/\.[a-z0-9]{2,5}$/i);
+  const currentExt = currentExtMatch ? currentExtMatch[0].toLowerCase() : "";
+
+  // If the target is a PDF, force .pdf (replace existing if any)
+  if (ext.toLowerCase() === ".pdf") {
+    return currentExt ? clean.slice(0, -currentExt.length) + ext : `${clean}${ext}`;
+  }
+
+  // Double extension prevention: if clean already ends with ext, don't append
+  if (currentExt === ext.toLowerCase()) {
+    return clean;
+  }
+
+  return currentExt ? clean : `${clean}${ext}`;
 }
 
 // ---------------------------------------------------------------------------

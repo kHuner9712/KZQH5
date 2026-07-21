@@ -31,6 +31,8 @@ export interface ViewerErrorProps {
   errorKind: ViewerErrorKind;
   locale: Locale;
   url: string;
+  /** When false, open/download actions are hidden (invalid URL). */
+  urlValid: boolean;
   isWeChat: boolean;
   onRetry: () => void;
   onClose: () => void;
@@ -41,6 +43,7 @@ export function ViewerError({
   errorKind,
   locale,
   url,
+  urlValid,
   isWeChat,
   onRetry,
   onClose,
@@ -49,6 +52,7 @@ export function ViewerError({
   const [copied, setCopied] = useState(false);
   const labels = copy[locale];
   const message = viewerErrorMessage(errorKind, locale);
+  const canRetry = urlValid && errorKind !== "password" && errorKind !== "unsupported_mime";
 
   return (
     <div
@@ -66,49 +70,33 @@ export function ViewerError({
       )}
 
       <div className="flex flex-wrap items-center justify-center gap-2">
-        {errorKind !== "password" && errorKind !== "unsupported_mime" && (
-          <button
-            type="button"
-            onClick={onRetry}
-            className="btn-primary h-10 px-4 text-xs"
-          >
+        {canRetry && (
+          <button type="button" onClick={onRetry} className="btn-primary h-10 px-4 text-xs">
             <RotateCw className="h-3.5 w-3.5" />
             {labels.retry}
           </button>
         )}
-        <a
-          href={url}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="btn-outline h-10 border-white/20 px-4 text-xs text-white"
-        >
-          <ExternalLink className="h-3.5 w-3.5" />
-          {labels.open}
-        </a>
-        <button
-          type="button"
-          onClick={onDownload}
-          className="btn-outline h-10 border-white/20 px-4 text-xs text-white"
-        >
-          <Download className="h-3.5 w-3.5" />
-          {labels.download}
-        </button>
-        <button
-          type="button"
-          onClick={async () => {
-            if (await copyText(url)) setCopied(true);
-          }}
-          className="btn-outline h-10 border-white/20 px-4 text-xs text-white"
-        >
-          {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-          {copied ? labels.copied : labels.copyLink}
-        </button>
-        <button
-          type="button"
-          onClick={onClose}
-          className="btn-outline h-10 border-white/20 px-4 text-xs text-white"
-          aria-label={labels.close}
-        >
+        {urlValid && (
+          <>
+            <a href={url} target="_blank" rel="noopener noreferrer" className="btn-outline h-10 border-white/20 px-4 text-xs text-white">
+              <ExternalLink className="h-3.5 w-3.5" />
+              {labels.open}
+            </a>
+            <button type="button" onClick={onDownload} className="btn-outline h-10 border-white/20 px-4 text-xs text-white">
+              <Download className="h-3.5 w-3.5" />
+              {labels.download}
+            </button>
+            <button
+              type="button"
+              onClick={async () => { if (await copyText(url)) setCopied(true); }}
+              className="btn-outline h-10 border-white/20 px-4 text-xs text-white"
+            >
+              {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+              {copied ? labels.copied : labels.copyLink}
+            </button>
+          </>
+        )}
+        <button type="button" onClick={onClose} className="btn-outline h-10 border-white/20 px-4 text-xs text-white" aria-label={labels.close}>
           <X className="h-3.5 w-3.5" />
         </button>
       </div>

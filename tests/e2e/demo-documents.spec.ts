@@ -10,7 +10,6 @@ test.describe("Demo catalog center", () => {
     await page.goto("/documents");
     await expect(page.getByRole("heading", { level: 1, name: "产品目录与色卡" })).toBeVisible();
     await expect(page.locator('[data-testid^="catalog-topic-"]')).toHaveCount(21);
-    // 4 demo assets: 3 SVG + 1 test PDF.
     await expect(page.getByText("4 个已匹配文件")).toBeVisible();
 
     // Image (SVG) preview via ImageViewer — should render an <img>, not an iframe.
@@ -49,31 +48,50 @@ test.describe("Demo catalog center", () => {
     await expect(page.locator('[data-testid^="catalog-topic-"]')).toHaveCount(21);
     await page.getByTestId("catalog-topic-wpc-wall-panel").click();
     await expect(page.getByRole("dialog", { name: "WPC Wall Panel Catalog" })).toBeVisible();
-    await page.getByRole("button", { name: "Close" }).click();
+    await page.getByTestId("viewer-close").click();
     await expect(page.getByRole("dialog")).toHaveCount(0);
     await expectNoHorizontalOverflow(page);
   });
 
-  test("PDF viewer page navigation", async ({ page }) => {
+  test("PDF viewer page navigation and accessible names", async ({ page }) => {
+    // 1. Check Chinese routing and translations
     await page.goto("/documents");
     await page.getByTestId("catalog-topic-hd-spc-catalog").click();
-    const dialog = page.getByRole("dialog", { name: "HD / SPC 测试样本" });
+    let dialog = page.getByRole("dialog", { name: "HD / SPC 测试样本" });
     await expect(dialog).toBeVisible();
     await expect(dialog.locator("canvas")).toBeVisible({ timeout: 15_000 });
-    // The test PDF has 2 pages. Navigate to next page via the next button.
-    await dialog.getByRole("button", { name: "Next" }).click();
-    // Verify page input shows 2.
-    await expect(dialog.getByRole("spinbutton", { name: "Jump to page" })).toHaveValue("2");
-    // Go back to page 1.
-    await dialog.getByRole("button", { name: "Previous" }).click();
-    await expect(dialog.getByRole("spinbutton", { name: "Jump to page" })).toHaveValue("1");
+    
+    // Check accessible names in Chinese
+    await expect(dialog.getByTestId("pdf-next-page")).toHaveAttribute("aria-label", "下一页");
+    await expect(dialog.getByTestId("pdf-prev-page")).toHaveAttribute("aria-label", "上一页");
+    await expect(dialog.getByTestId("pdf-page-input")).toHaveAttribute("aria-label", "跳转到页");
+
+    await dialog.getByTestId("pdf-next-page").click();
+    await expect(dialog.getByTestId("pdf-page-input")).toHaveValue("2");
+    await dialog.getByTestId("pdf-prev-page").click();
+    await expect(dialog.getByTestId("pdf-page-input")).toHaveValue("1");
+    await page.keyboard.press("Escape");
+    await expect(dialog).toHaveCount(0);
+
+    // 2. Check English routing and translations
+    await page.goto("/en/documents");
+    await page.getByTestId("catalog-topic-hd-spc-catalog").click();
+    dialog = page.getByRole("dialog", { name: "HD / SPC Test Sample" });
+    await expect(dialog).toBeVisible();
+    await expect(dialog.locator("canvas")).toBeVisible({ timeout: 15_000 });
+
+    // Check accessible names in English
+    await expect(dialog.getByTestId("pdf-next-page")).toHaveAttribute("aria-label", "Next");
+    await expect(dialog.getByTestId("pdf-prev-page")).toHaveAttribute("aria-label", "Previous");
+    await expect(dialog.getByTestId("pdf-page-input")).toHaveAttribute("aria-label", "Jump to page");
+    await expect(dialog.getByTestId("pdf-zoom-in")).toHaveAttribute("aria-label", "Zoom in");
+
+    await dialog.getByTestId("pdf-zoom-in").click();
     await page.keyboard.press("Escape");
     await expect(dialog).toHaveCount(0);
   });
 
   test("WeChat UA does not block PDF preview", async ({ browser }) => {
-    // Simulate WeChat in-app browser. The viewer should still attempt to load
-    // the PDF (not block based on UA alone).
     const context = await browser.newContext({
       userAgent: "Mozilla/5.0 (Linux; Android 12) MicroMessenger/8.0.40",
       viewport: { width: 390, height: 844 },
@@ -83,7 +101,6 @@ test.describe("Demo catalog center", () => {
     await page.getByTestId("catalog-topic-hd-spc-catalog").click();
     const dialog = page.getByRole("dialog", { name: "HD / SPC 测试样本" });
     await expect(dialog).toBeVisible();
-    // PDF.js should still render the canvas in this Chromium-based WeChat UA.
     await expect(dialog.locator("canvas")).toBeVisible({ timeout: 15_000 });
     await context.close();
   });

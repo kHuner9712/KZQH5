@@ -9,19 +9,19 @@ import { copyText } from "@/lib/client/copy-text";
 import { trackAnalyticsEvent } from "@/lib/client/analytics";
 import { useDialogFocusTrap } from "@/lib/client/use-dialog-focus-trap";
 import {
-  canPreviewAsset, formatProductAssetSize, isImageAsset, isPdfAsset,
-  isWeChatBrowser, sanitizeFilename, validateAssetUrl,
+  canPreviewAsset, deriveExtension, formatProductAssetSize, isImageAsset, isPdfAsset,
+  isWeChatBrowser, validateAssetUrl,
 } from "@/lib/client/viewer-utils";
 import { PdfViewer } from "./PdfViewer";
 import { ImageViewer } from "./ImageViewer";
 import { ViewerError } from "./ViewerError";
+import { useViewerDownload } from "./hooks/useViewerDownload";
 
 export const productAssetTypeLabels = {
   zh: { catalog: "产品目录", datasheet: "技术资料", installation: "安装说明", certificate: "证书资料", packaging: "包装资料", other: "其他资料" },
   en: { catalog: "Catalog", datasheet: "Datasheet", installation: "Installation", certificate: "Certificate", packaging: "Packaging", other: "Other" },
 } as const;
 
-// Re-export for backward-compatible imports from ProductAssetList etc.
 export { canPreviewAsset as canPreviewProductAsset, formatProductAssetSize };
 
 const toolbarCopy = {
@@ -44,26 +44,42 @@ export function ProductAssetViewer({
   const labels = toolbarCopy[locale];
   const content = useMemo(() => localizeProductAsset(asset, locale), [asset, locale]);
 
+  const urlValidation = validateAssetUrl(asset.file_url);
+  const urlIsValid = urlValidation.ok;
+  const safeUrl = urlValidation.resolved || asset.file_url;
+
+  // Derive the proper file extension for downloads.
+  const downloadExt = useMemo(
+    () => deriveExtension(asset.mime_type, asset.file_url),
+    [asset.mime_type, asset.file_url],
+  );
+
+  // Use the shared download hook — no duplicate implementation.
+  const runDownload = useViewerDownload();
+
+  const download = useCallback(async () => {
+    trackAnalyticsEvent({ event_name: "catalog_download", locale, product_id: asset.product_id });
+    if (!urlIsValid) return;
+    const result = await runDownload(safeUrl, content.title, downloadExt);
+    if (result.status === "blocked") {
+      alert(locale === "zh" ? "弹出窗口被拦截，请允许弹窗后重试。" : "Popup blocked. Please allow popups and try again.");
+    } else if (result.status === "failed" || result.status === "invalid") {
+      alert(locale === "zh" ? "下载失败，请稍后重试。" : "Download failed. Please try again later.");
+    }
+  }, [urlIsValid, safeUrl, content.title, downloadExt, runDownload, locale, asset.product_id]);
+
   useDialogFocusTrap({ active: true, containerRef: dialogRef, onClose });
 
   useEffect(() => {
     const previouslyFocused = document.activeElement as HTMLElement | null;
     setIsWeChat(typeof navigator !== "undefined" && isWeChatBrowser(navigator.userAgent));
     document.body.style.overflow = "hidden";
-    // Analytics: all viewer interactions map to the existing `catalog_download`
-    // event (the DB enum does not yet have dedicated PDF events; see
-    // docs/CATALOG_CENTER.md for the mapping table).
     trackAnalyticsEvent({ event_name: "catalog_download", locale, product_id: asset.product_id });
     return () => {
       document.body.style.overflow = "";
       previouslyFocused?.focus();
     };
   }, [asset.product_id, locale]);
-
-  const urlValidation = validateAssetUrl(asset.file_url);
-  const safeUrl = urlValidation.resolved || asset.file_url;
-
-  const download = useViewerDownloadCallback(asset, content.title, safeUrl, locale);
 
   const handleCopy = useCallback(async () => {
     if (await copyText(safeUrl)) {
@@ -72,14 +88,15 @@ export function ProductAssetViewer({
     }
   }, [safeUrl, locale, asset.product_id]);
 
-  // URL validation failure → show error.
-  if (!urlValidation.ok) {
+  // URL validation failure → show error with open/download disabled.
+  if (!urlIsValid) {
     return (
       <ViewerShell ref={dialogRef} title={content.title} subtitle={labels.unsupported} onClose={onClose} locale={locale}>
         <ViewerError
           errorKind="unknown"
           locale={locale}
-          url={asset.file_url}
+          url={safeUrl}
+          urlValid={false}
           isWeChat={isWeChat}
           onRetry={onClose}
           onClose={onClose}
@@ -123,6 +140,7 @@ export function ProductAssetViewer({
           errorKind="unsupported_mime"
           locale={locale}
           url={safeUrl}
+          urlValid
           isWeChat={isWeChat}
           onRetry={onClose}
           onClose={onClose}
@@ -131,46 +149,6 @@ export function ProductAssetViewer({
       )}
     </ViewerShell>
   );
-}
-
-// --- Download helper hook ---
-function useViewerDownloadCallback(asset: ProductAsset, title: string, url: string, locale: Locale) {
-  return useCallback(async () => {
-    trackAnalyticsEvent({ event_name: "catalog_download", locale, product_id: asset.product_id });
-    const ext = isPdfAsset(asset) ? ".pdf" : isImageAsset(asset) ? "" : ".bin";
-    // Use the inline fetch-based download with fallback.
-    const validation = validateAssetUrl(url);
-    if (!validation.ok || !validation.resolved) {
-      window.open(url, "_blank", "noopener,noreferrer");
-      return;
-    }
-    try {
-      const response = await fetch(validation.resolved, { mode: "cors", credentials: "same-origin" });
-      if (response.ok) {
-        const blob = await response.blob();
-        const objectUrl = URL.createObjectURL(blob);
-        const link = document.createElement("a");
-        link.href = objectUrl;
-        link.download = sanitizeFilename(title, "document", ext);
-        link.rel = "noopener";
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        window.setTimeout(() => URL.revokeObjectURL(objectUrl), 10_000);
-        return;
-      }
-    } catch {
-      // fall through
-    }
-    // Fallback: anchor click or new window.
-    const link = document.createElement("a");
-    link.href = validation.resolved;
-    link.download = sanitizeFilename(title, "document", ext);
-    link.rel = "noopener noreferrer";
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  }, [asset, title, url, locale]);
 }
 
 // --- Dialog shell with toolbar ---
@@ -198,7 +176,6 @@ const ViewerShell = forwardRef<
       aria-modal="true"
       aria-label={title}
     >
-      {/* Top toolbar */}
       <div className="safe-top flex h-14 shrink-0 items-center gap-2 border-b border-white/10 bg-page/95 px-3">
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-semibold text-white">{title}</p>
@@ -210,11 +187,11 @@ const ViewerShell = forwardRef<
           onClick={onClose}
           className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white/10 text-white hover:bg-white/20"
           aria-label={closeLabel}
+          data-testid="viewer-close"
         >
           <X className="h-5 w-5" />
         </button>
       </div>
-      {/* Content */}
       <div className="relative flex min-h-0 flex-1 flex-col">{children}</div>
     </div>
   );
