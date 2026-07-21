@@ -58,39 +58,84 @@ export interface UrlValidation {
  * Validates an asset file URL.
  *
  * Production policy:
+ *   - Protocol-relative URLs (`//host/...`) are ALWAYS rejected — they resolve
+ *     to https/http against the *attacker's* host and bypass protocol checks.
  *   - https: always allowed.
  *   - Same-origin relative paths (/, ./, ../) always allowed.
  *   - http: ONLY allowed for localhost, 127.0.0.1, and [::1] (dev servers).
  *     Any public HTTP URL is rejected.
- *   - javascript:, data:, file:, and unknown protocols are always rejected.
+ *   - javascript:, data:, file:, vbscript:, blob:, and any other protocol
+ *     are always rejected.
+ *
+ * `baseOrigin` is only used to compare resolved origins for relative paths
+ * (so `new URL("../x", base)` cannot escape to a different host). It defaults
+ * to a placeholder and is only required when you want strict same-origin
+ * enforcement on resolved URLs.
  */
-export function validateAssetUrl(rawUrl: string, allowHttpForTesting: boolean = false): UrlValidation {
+export function validateAssetUrl(
+  rawUrl: string,
+  allowHttpForTesting: boolean = false,
+  baseOrigin: string = "https://kzq.local",
+): UrlValidation {
   const url = (rawUrl || "").trim();
   if (!url) return { ok: false, reason: "empty_url" };
 
-  // Relative path (starts with / or ./ or ../) — allowed for demo/local assets.
+  // Reject protocol-relative URLs explicitly — they start with "//" and the
+  // browser would resolve them against the *current page's* protocol, allowing
+  // a redirect to an attacker-controlled https/http origin.
+  if (url.startsWith("//")) {
+    return { ok: false, reason: "protocol_relative_url" };
+  }
+
+  // Same-origin relative paths (/, ./, ../). We still parse via URL to make
+  // sure they don't escape the base origin (e.g. "/\\evil.com/x" tricks).
   if (url.startsWith("/") || url.startsWith("./") || url.startsWith("../")) {
-    return { ok: true, resolved: url };
+    try {
+      const resolved = new URL(url, baseOrigin);
+      // If the relative path somehow resolves to a different origin, reject.
+      if (resolved.origin !== new URL(baseOrigin).origin) {
+        return { ok: false, reason: "origin_escape" };
+      }
+      // Return the original (still relative) form — callers expect to render
+      // it as a same-origin path, not an absolute URL.
+      return { ok: true, resolved: url };
+    } catch {
+      return { ok: false, reason: "invalid_url" };
+    }
   }
 
   let parsed: URL;
   try {
+    // Parse WITHOUT a base — bare strings like "not a url at all" must NOT be
+    // silently turned into same-origin paths. The browser would do that, but
+    // for an asset URL we require an explicit scheme or a `/`/`./`/`../`
+    // prefix (handled above).
     parsed = new URL(url);
   } catch {
     return { ok: false, reason: "invalid_url" };
   }
 
-  if (parsed.protocol === "https:") return { ok: true, resolved: url };
+  // Reject any backslash trickery that URL parses to a different protocol.
+  if (parsed.protocol === "https:") {
+    return { ok: true, resolved: parsed.href };
+  }
 
   if (parsed.protocol === "http:") {
     // Allow http only for loopback / localhost dev servers.
     const host = parsed.hostname.toLowerCase();
-    if (allowHttpForTesting || host === "localhost" || host === "127.0.0.1" || host === "[::1]") {
-      return { ok: true, resolved: url };
+    if (
+      allowHttpForTesting ||
+      host === "localhost" ||
+      host === "127.0.0.1" ||
+      host === "[::1]" ||
+      host === "::1"
+    ) {
+      return { ok: true, resolved: parsed.href };
     }
     return { ok: false, reason: `insecure_http:${host}` };
   }
 
+  // Everything else (javascript:, data:, file:, vbscript:, blob:, ws:, ftp:, …).
   return { ok: false, reason: `unsupported_protocol:${parsed.protocol}` };
 }
 

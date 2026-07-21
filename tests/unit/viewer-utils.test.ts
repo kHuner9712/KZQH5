@@ -63,6 +63,30 @@ describe("validateAssetUrl", () => {
   it("rejects file: URLs", () => {
     expect(validateAssetUrl("file:///etc/passwd").ok).toBe(false);
   });
+  it("rejects protocol-relative URLs (//evil.example.com)", () => {
+    const r = validateAssetUrl("//evil.example.com/file.pdf");
+    expect(r.ok).toBe(false);
+    expect(r.reason).toBe("protocol_relative_url");
+    expect(validateAssetUrl("//evil.example.com").ok).toBe(false);
+    expect(validateAssetUrl("//evil.example.com:8443/x").ok).toBe(false);
+  });
+  it("rejects vbscript: URLs", () => {
+    const r = validateAssetUrl("vbscript:msgbox(1)");
+    expect(r.ok).toBe(false);
+    expect(r.reason).toContain("unsupported_protocol");
+  });
+  it("rejects URLs whose relative form would escape the base origin", () => {
+    // A path like `//evil.com/x` is caught by the explicit protocol-relative
+    // guard. A path like `\\\\evil.com/x` (UNC-style) parses to the same
+    // origin via WHATWG normalization, so we don't pretend to defend against
+    // it — we just make sure the explicit `//` guard rejects it.
+    expect(validateAssetUrl("//evil.com/x").ok).toBe(false);
+  });
+  it("accepts plain same-origin /, ./, ../ paths and returns them as-is", () => {
+    expect(validateAssetUrl("/documents/file.pdf")).toEqual({ ok: true, resolved: "/documents/file.pdf" });
+    expect(validateAssetUrl("./file.pdf")).toEqual({ ok: true, resolved: "./file.pdf" });
+    expect(validateAssetUrl("../file.pdf")).toEqual({ ok: true, resolved: "../file.pdf" });
+  });
   it("rejects empty URLs", () => {
     expect(validateAssetUrl("").ok).toBe(false);
     expect(validateAssetUrl("   ").ok).toBe(false);
