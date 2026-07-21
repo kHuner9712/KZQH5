@@ -713,7 +713,7 @@ export const mockProducts: Product[] = rawProducts.map((p) => {
   return {
     ...p,
     seo_title_cn: geo?.seo_title_cn ?? null,
-    seo_title_en: geo?.seo_title_en ?? `${p.name_en || p.name_cn} | KZQ`,
+    seo_title_en: geo?.seo_title_en ?? p.name_en ?? p.name_cn,
     seo_description_cn: geo?.seo_description_cn ?? null,
     seo_description_en: geo?.seo_description_en ?? p.summary_en ?? p.description_en,
     geo_summary_cn: geo?.geo_summary_cn ?? null,

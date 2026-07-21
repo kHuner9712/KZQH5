@@ -52,7 +52,10 @@ const sectionIcons: Record<CatalogTopicSection, LucideIcon> = {
 
 export function getDocumentsMetadata(locale: Locale): Metadata {
   const copy = pageCopy[locale];
-  return buildLocalizedMetadata({ locale, path: "/documents", title: `${copy.title} | KZQ`, description: copy.description });
+  // Root layout applies the `| KZQ` template suffix automatically — pages
+  // must NOT append `| KZQ` themselves, otherwise the final title becomes
+  // "产品目录与色卡 | KZQ | KZQ".
+  return buildLocalizedMetadata({ locale, path: "/documents", title: copy.title, description: copy.description });
 }
 
 function topicContactUrl(locale: Locale, topic: CatalogTopic): string {
