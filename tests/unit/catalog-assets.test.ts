@@ -76,3 +76,48 @@ describe("catalog asset matching", () => {
     ]);
   });
 });
+
+describe("catalog topic uniqueness", () => {
+  it("an asset already bound to a topic id does not match other topics via alias", () => {
+    // Asset bound to WPC wall panel should NOT also match Wood Grain topic
+    // via alias matching, even if its title contains "WPC Wall Panel".
+    const boundAsset = asset({
+      id: "bound",
+      catalog_topic_id: "wpc-wall-panel",
+      title_cn: "WPC Wall Panel - Wood Grain",
+      title_en: "WPC Wall Panel - Wood Grain",
+    });
+    const woodGrain = catalogTopics.find((topic) => topic.id === "wood-grain")!;
+    expect(findCatalogTopicAsset(woodGrain, [boundAsset])).toBeNull();
+  });
+
+  it("an asset without a topic id matches at most one topic per call when titles are unique", () => {
+    // A title that uniquely matches only one topic's alias should not match
+    // other topics in the catalog manifest.
+    const unique = asset({
+      id: "unique",
+      catalog_topic_id: null,
+      title_cn: "碳晶墙板",
+      title_en: "Carbon Crystal Wall Panel Plus",
+    });
+    const carbonCrystal = catalogTopics.find((topic) => topic.id === "carbon-crystal-wall-panel")!;
+    const otherTopics = catalogTopics.filter((topic) => topic.id !== carbonCrystal.id);
+
+    expect(findCatalogTopicAsset(carbonCrystal, [unique])?.id).toBe("unique");
+    for (const topic of otherTopics) {
+      expect(findCatalogTopicAsset(topic, [unique])).toBeNull();
+    }
+  });
+
+  it("does not cross-match an asset title to an unrelated alias", () => {
+    // A pure solid-color catalog should not match cloth-grain topic
+    const solid = asset({
+      id: "solid",
+      catalog_topic_id: null,
+      title_cn: "纯色墙板饰面",
+      title_en: "WPC Wall Panel - Solid Color",
+    });
+    const clothGrain = catalogTopics.find((topic) => topic.id === "cloth-grain")!;
+    expect(findCatalogTopicAsset(clothGrain, [solid])).toBeNull();
+  });
+});

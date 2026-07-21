@@ -1,5 +1,3 @@
-import type { ProductAsset } from "@/types/database";
-
 export type CatalogTopicSection = "catalogs" | "systems" | "finishes";
 
 export interface CatalogTopic {
@@ -234,41 +232,12 @@ export const catalogTopics: CatalogTopic[] = [
   },
 ];
 
-function normalizeCatalogText(value: string): string {
-  return value
-    .normalize("NFKD")
-    .toLowerCase()
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9\u4e00-\u9fff]+/g, "");
-}
-
-export function findCatalogTopicAsset(
-  topic: CatalogTopic,
-  assets: ProductAsset[],
-): ProductAsset | null {
-  const aliases = [topic.titleCn, topic.titleEn, ...topic.aliases]
-    .map(normalizeCatalogText)
-    .filter(Boolean);
-
-  return (
-    assets.find((asset) => {
-      const values = [
-        asset.title_cn,
-        asset.title_en || "",
-        asset.description_cn || "",
-        asset.description_en || "",
-      ]
-        .map(normalizeCatalogText)
-        .filter(Boolean);
-
-      return values.some((value) =>
-        aliases.some(
-          (alias) =>
-            value === alias ||
-            (alias.length >= 5 && value.includes(alias)) ||
-            (value.length >= 5 && alias.includes(value)),
-        ),
-      );
-    }) || null
-  );
-}
+/**
+ * Note: Catalog asset matching (`findCatalogTopicAsset` / `findCatalogTopicAssets`)
+ * is implemented in `@/lib/catalog-assets`. That implementation is the single
+ * source of truth — it prefers exact `catalog_topic_id` matches and falls back
+ * to alias matching only for legacy rows without a topic id.
+ *
+ * A previous duplicate implementation here was removed because its fuzzy
+ * matching could assign the same asset to multiple topics.
+ */
