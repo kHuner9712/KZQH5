@@ -10,7 +10,7 @@ export async function getPublicSiteShellData(): Promise<{
   siteSettings: SiteSettings | null;
 }> {
   if (isDemoMode()) {
-    return { company: mockCompany, siteSettings: await fetchSiteSettings() };
+    return { company: sanitizeCompany(mockCompany), siteSettings: await fetchSiteSettings() };
   }
 
   try {
