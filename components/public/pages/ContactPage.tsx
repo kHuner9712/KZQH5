@@ -30,7 +30,7 @@ interface ContactSearchParams {
 
 export async function ContactPageContent(locale: Locale, searchParams: ContactSearchParams) {
   let company: CompanyProfile | null = null;
-  if (isDemoMode()) company = mockCompany;
+  if (isDemoMode()) company = sanitizeCompany(mockCompany);
   else { const { data, error } = await createPublicSupabaseClient().from("company_profile").select("*").limit(1).maybeSingle(); if (error) throw new Error("PUBLIC_DATA_UNAVAILABLE", { cause: error }); company = sanitizeCompany((data as CompanyProfile | null) || null); }
   const content = localizePage(await fetchPageContent("contact"), locale);
   const localizedCompany = localizeCompany(company, locale);

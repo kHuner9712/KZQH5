@@ -23,7 +23,7 @@ export function generateMetadata() { return getAboutMetadata("zh"); }
 
 export async function AboutPageContent(locale: Locale) {
   let company: CompanyProfile | null = null;
-  if (isDemoMode()) company = mockCompany; else { const { data, error } = await createPublicSupabaseClient().from("company_profile").select("*").limit(1).maybeSingle(); if (error) throw new Error("PUBLIC_DATA_UNAVAILABLE", { cause: error }); company = sanitizeCompany((data as CompanyProfile | null) || null); }
+  if (isDemoMode()) company = sanitizeCompany(mockCompany); else { const { data, error } = await createPublicSupabaseClient().from("company_profile").select("*").limit(1).maybeSingle(); if (error) throw new Error("PUBLIC_DATA_UNAVAILABLE", { cause: error }); company = sanitizeCompany((data as CompanyProfile | null) || null); }
   const content = localizePage(await fetchPageContent("about"), locale);
   const localizedCompany = localizeCompany(company, locale);
   const copy = getDictionary(locale).about;
