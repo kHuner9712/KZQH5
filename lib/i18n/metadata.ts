@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { siteUrl } from "@/lib/utils";
+import { isIndexingEnabled } from "@/lib/site-indexing";
 import { localeConfig, localePath, type Locale } from "./config";
 
 export function localizedAlternates(path: string) {
@@ -88,6 +89,8 @@ export function buildLocalizedMetadata({
       images: [{ url: shareImage, width: 1200, height: 630, alt: ogTitle }],
     },
     twitter: { card: "summary_large_image", title: ogTitle, description, images: [shareImage] },
-    robots: { index: true, follow: true },
+    robots: isIndexingEnabled()
+      ? { index: true, follow: true }
+      : { index: false, follow: false },
   };
 }

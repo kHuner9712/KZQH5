@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import packageJson from "@/package.json";
 import { isDemoMode } from "@/lib/demo";
+import { isIndexingEnabled } from "@/lib/site-indexing";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -23,6 +24,8 @@ export function GET() {
       version: packageJson.version,
       commit: commitSha(),
       demo: isDemoMode(),
+      // Boolean only — never expose the raw env value or any other detail.
+      indexingEnabled: isIndexingEnabled(),
       dataProvider: "supabase",
       runtime: "nodejs",
       timestamp: new Date().toISOString(),
