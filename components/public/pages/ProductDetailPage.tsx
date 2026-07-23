@@ -49,6 +49,7 @@ import type {
 import { AddToInquiryButton } from "@/components/public/inquiry-list/AddToInquiryButton";
 import { getPublishedProductAssets } from "@/lib/repositories/product-assets";
 import { ContextEventTracker } from "@/components/public/AnalyticsTracker";
+import { safePhone } from "@/lib/content/placeholder-detection";
 
 export const publicProductDetailRevalidate = 300;
 
@@ -181,6 +182,7 @@ export async function ProductDetailPageContent(locale: Locale, slug: string) {
   const copy = getDictionary(locale);
   const productUrl = siteUrl(localePath(locale, `/products/${product.slug}`));
   const assets = await getPublishedProductAssets(product.id);
+  const safePhoneNumber = safePhone(phone);
   const carousel = [
     ...(product.cover_image_url
       ? [{ url: product.cover_image_url, alt: content.name }]
@@ -375,9 +377,9 @@ export async function ProductDetailPageContent(locale: Locale, slug: string) {
         )}
       </ResponsiveContainer>
       <div className="safe-bottom fixed bottom-0 left-0 z-50 grid w-full grid-cols-3 gap-2 border-t border-white/10 bg-graphite/95 p-3 md:hidden">
-        {phone ? (
+        {safePhoneNumber ? (
           <a
-            href={`tel:${phone.replace(/[^+\d]/g, "")}`}
+            href={`tel:${safePhoneNumber.replace(/[^+\d]/g, "")}`}
             className="btn-outline h-12 border-white/20 px-2 text-xs text-white"
           >
             <Phone className="h-4 w-4" />

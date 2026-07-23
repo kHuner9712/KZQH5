@@ -3,6 +3,7 @@ import { Mail, MapPin, Phone } from "lucide-react";
 import { localePath, type Locale } from "@/lib/i18n/config";
 import { getDictionary } from "@/lib/i18n/dictionary";
 import { localizeCompany, localizeNavItem, localizeSiteSettings, navigationWithProjects } from "@/lib/i18n/content";
+import { placeholderContactNotice, safeAddress, safeEmail, safePhone } from "@/lib/content/placeholder-detection";
 import type { CompanyProfile, NavItem, SiteSettings } from "@/types/database";
 
 const fallbackNav: NavItem[] = [
@@ -38,9 +39,21 @@ export function Footer({ company, siteSettings, locale }: { company?: CompanyPro
         <div>
           <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/40">{copy.footer.contact}</p>
           <div className="mt-4 space-y-3 text-sm text-white/60">
-            {company?.phone && <p className="flex items-start gap-2.5"><Phone className="mt-0.5 h-4 w-4 shrink-0 text-gold" />{company.phone}</p>}
-            {company?.email && <p className="flex items-start gap-2.5"><Mail className="mt-0.5 h-4 w-4 shrink-0 text-gold" />{company.email}</p>}
-            {localizedCompany.address && <p className="flex items-start gap-2.5"><MapPin className="mt-0.5 h-4 w-4 shrink-0 text-gold" />{localizedCompany.address}</p>}
+            {(() => {
+              const phone = safePhone(company?.phone);
+              const email = safeEmail(company?.email);
+              const address = safeAddress(localizedCompany.address);
+              if (!phone && !email && !address) {
+                return <p className="text-xs leading-5 text-white/[0.45]">{placeholderContactNotice[locale]}</p>;
+              }
+              return (
+                <>
+                  {phone && <p className="flex items-start gap-2.5"><Phone className="mt-0.5 h-4 w-4 shrink-0 text-gold" />{phone}</p>}
+                  {email && <p className="flex items-start gap-2.5"><Mail className="mt-0.5 h-4 w-4 shrink-0 text-gold" />{email}</p>}
+                  {address && <p className="flex items-start gap-2.5"><MapPin className="mt-0.5 h-4 w-4 shrink-0 text-gold" />{address}</p>}
+                </>
+              );
+            })()}
           </div>
         </div>
       </div>
