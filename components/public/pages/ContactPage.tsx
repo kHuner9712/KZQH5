@@ -12,7 +12,7 @@ import type { Locale } from "@/lib/i18n/config";
 import { getDictionary } from "@/lib/i18n/dictionary";
 import { buildLocalizedMetadata } from "@/lib/i18n/metadata";
 import { mockCompany } from "@/lib/mock-data";
-import { placeholderContactNotice, safeAddress, safeEmail, safePhone, safeWhatsApp } from "@/lib/content/placeholder-detection";
+import { placeholderContactNotice, safeAddress, safeEmail, safePhone, safeWhatsApp, sanitizeCompany } from "@/lib/content/placeholder-detection";
 import { fetchPageContent } from "@/lib/queries/cms";
 import { createPublicSupabaseClient } from "@/lib/supabase/public";
 import type { CompanyProfile } from "@/types/database";
@@ -31,7 +31,7 @@ interface ContactSearchParams {
 export async function ContactPageContent(locale: Locale, searchParams: ContactSearchParams) {
   let company: CompanyProfile | null = null;
   if (isDemoMode()) company = mockCompany;
-  else { const { data, error } = await createPublicSupabaseClient().from("company_profile").select("*").limit(1).maybeSingle(); if (error) throw new Error("PUBLIC_DATA_UNAVAILABLE", { cause: error }); company = (data as CompanyProfile | null) || null; }
+  else { const { data, error } = await createPublicSupabaseClient().from("company_profile").select("*").limit(1).maybeSingle(); if (error) throw new Error("PUBLIC_DATA_UNAVAILABLE", { cause: error }); company = sanitizeCompany((data as CompanyProfile | null) || null); }
   const content = localizePage(await fetchPageContent("contact"), locale);
   const localizedCompany = localizeCompany(company, locale);
   const copy = getDictionary(locale).contact;

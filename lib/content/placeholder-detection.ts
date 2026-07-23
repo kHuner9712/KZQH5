@@ -169,3 +169,32 @@ export function safeWhatsApp(value: string | null | undefined): string | null {
 export function safeAddress(value: string | null | undefined): string | null {
   return isPlaceholderAddress(value) ? null : (value as string);
 }
+
+/**
+ * Returns a shallow copy of `company` with placeholder contact fields
+ * replaced by null. Use this immediately after fetching `company` from
+ * Supabase in a server component — Next.js RSC serialises the entire
+ * `company` object into the hydration stream, so even if the visible JSX
+ * uses `safePhone(company.phone)`, the raw object would still leak
+ * placeholder values (e.g. "+86 138-0000-0000") into the HTML source.
+ *
+ * Sanitising at the source ensures the RSC stream never contains
+ * placeholder contact data.
+ */
+export function sanitizeCompany<T extends {
+  phone?: string | null;
+  email?: string | null;
+  whatsapp?: string | null;
+  address_cn?: string | null;
+  address_en?: string | null;
+} | null | undefined>(company: T): T {
+  if (!company) return company;
+  return {
+    ...company,
+    phone: safePhone(company.phone),
+    email: safeEmail(company.email),
+    whatsapp: safeWhatsApp(company.whatsapp),
+    address_cn: safeAddress(company.address_cn),
+    address_en: safeAddress(company.address_en),
+  } as T;
+}

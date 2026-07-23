@@ -15,7 +15,7 @@ import { getMockFeaturedProducts, mockCategories, mockCertificates, mockCompany 
 import { fetchHomepageContent, fetchSiteSettings } from "@/lib/queries/cms";
 import { createPublicSupabaseClient } from "@/lib/supabase/public";
 import { serializeJsonLd, siteUrl } from "@/lib/utils";
-import { safeAddress, safeEmail, safePhone } from "@/lib/content/placeholder-detection";
+import { safeAddress, safeEmail, safePhone, sanitizeCompany } from "@/lib/content/placeholder-detection";
 import type { Category, Certificate, CompanyProfile, HomeFeatureItem, Product, Project } from "@/types/database";
 import { getFeaturedProjects } from "@/lib/repositories/projects";
 
@@ -32,7 +32,7 @@ export function generateMetadata() { return getHomeMetadata("zh"); }
 export async function HomePageContent(locale: Locale) {
   let featuredProducts: Product[] = []; let categories: Category[] = []; let certificates: Certificate[] = []; let company: CompanyProfile | null = null;
   if (isDemoMode()) { featuredProducts = getMockFeaturedProducts(8); categories = [...mockCategories].sort((a, b) => a.sort_order - b.sort_order); certificates = mockCertificates.filter((item) => item.is_published).sort((a, b) => a.sort_order - b.sort_order).slice(0, 3); company = mockCompany; }
-  else { const supabase = createPublicSupabaseClient(); const [productsResult, categoryResult, certificateResult, companyResult] = await Promise.all([supabase.from("products").select("*").eq("is_published", true).eq("is_featured", true).order("sort_order", { ascending: true }).limit(8), supabase.from("categories").select("*").eq("is_active", true).order("sort_order", { ascending: true }), supabase.from("certificates").select("*").eq("is_published", true).order("sort_order", { ascending: true }).limit(3), supabase.from("company_profile").select("*").limit(1).maybeSingle()]); const queryError = productsResult.error || categoryResult.error || certificateResult.error || companyResult.error; if (queryError) throw new Error("PUBLIC_DATA_UNAVAILABLE", { cause: queryError }); featuredProducts = (productsResult.data as Product[] | null) || []; categories = (categoryResult.data as Category[] | null) || []; certificates = (certificateResult.data as Certificate[] | null) || []; company = companyResult.data as CompanyProfile | null; }
+  else { const supabase = createPublicSupabaseClient(); const [productsResult, categoryResult, certificateResult, companyResult] = await Promise.all([supabase.from("products").select("*").eq("is_published", true).eq("is_featured", true).order("sort_order", { ascending: true }).limit(8), supabase.from("categories").select("*").eq("is_active", true).order("sort_order", { ascending: true }), supabase.from("certificates").select("*").eq("is_published", true).order("sort_order", { ascending: true }).limit(3), supabase.from("company_profile").select("*").limit(1).maybeSingle()]); const queryError = productsResult.error || categoryResult.error || certificateResult.error || companyResult.error; if (queryError) throw new Error("PUBLIC_DATA_UNAVAILABLE", { cause: queryError }); featuredProducts = (productsResult.data as Product[] | null) || []; categories = (categoryResult.data as Category[] | null) || []; certificates = (certificateResult.data as Certificate[] | null) || []; company = sanitizeCompany(companyResult.data as CompanyProfile | null); }
   let featuredProjects: Project[] = [];
   try {
     featuredProjects = await getFeaturedProjects(3);

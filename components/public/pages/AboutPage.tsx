@@ -9,7 +9,7 @@ import { localeConfig, localePath, type Locale } from "@/lib/i18n/config";
 import { getDictionary } from "@/lib/i18n/dictionary";
 import { buildLocalizedMetadata } from "@/lib/i18n/metadata";
 import { mockCompany } from "@/lib/mock-data";
-import { safeAddress, safeEmail, safePhone } from "@/lib/content/placeholder-detection";
+import { safeAddress, safeEmail, safePhone, sanitizeCompany } from "@/lib/content/placeholder-detection";
 import { fetchPageContent } from "@/lib/queries/cms";
 import { createPublicSupabaseClient } from "@/lib/supabase/public";
 import { serializeJsonLd, siteUrl } from "@/lib/utils";
@@ -23,7 +23,7 @@ export function generateMetadata() { return getAboutMetadata("zh"); }
 
 export async function AboutPageContent(locale: Locale) {
   let company: CompanyProfile | null = null;
-  if (isDemoMode()) company = mockCompany; else { const { data, error } = await createPublicSupabaseClient().from("company_profile").select("*").limit(1).maybeSingle(); if (error) throw new Error("PUBLIC_DATA_UNAVAILABLE", { cause: error }); company = (data as CompanyProfile | null) || null; }
+  if (isDemoMode()) company = mockCompany; else { const { data, error } = await createPublicSupabaseClient().from("company_profile").select("*").limit(1).maybeSingle(); if (error) throw new Error("PUBLIC_DATA_UNAVAILABLE", { cause: error }); company = sanitizeCompany((data as CompanyProfile | null) || null); }
   const content = localizePage(await fetchPageContent("about"), locale);
   const localizedCompany = localizeCompany(company, locale);
   const copy = getDictionary(locale).about;
