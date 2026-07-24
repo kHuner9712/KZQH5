@@ -9,12 +9,13 @@
 //   5. 服务端生成路径 {category}/{uuid}.{ext}（禁止客户端提供完整 Storage Path）
 //   6. 防 folder traversal（category 白名单 + 路径格式严格校验）
 //   7. 使用 service_role 上传 / 删除 private-assets bucket
+//   8. 记录 admin_storage_operations 审计（pending → completed | failed）
 //
 // 调用方：app/api/admin/storage/upload/route.ts（经 requireAdminWrite 鉴权）
 //         app/api/admin/storage/object/route.ts（经 requireAdminWrite 鉴权）
 // ============================================================
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/types/database";
 import type { AdminWriteErrorCode } from "@/lib/services/admin-write-boundary";
@@ -31,6 +32,9 @@ import {
 /** private-assets bucket 名（硬编码，不接受客户端指定）。 */
 export const PRIVATE_ASSETS_BUCKET = "private-assets";
 
+/** public-assets bucket 名（硬编码，不接受客户端指定）。 */
+export const PUBLIC_ASSETS_BUCKET = "public-assets";
+
 /** 允许的资源分类（来自客户端，但服务端白名单校验）。 */
 export const PRIVATE_ASSETS_ALLOWED_CATEGORIES = [
   "products",
@@ -38,6 +42,25 @@ export const PRIVATE_ASSETS_ALLOWED_CATEGORIES = [
   "catalogs",
 ] as const;
 export type PrivateAssetCategory = (typeof PRIVATE_ASSETS_ALLOWED_CATEGORIES)[number];
+
+/**
+ * public-assets bucket 允许的顶层分类白名单。
+ *
+ * 与 private-assets 不同，public-assets 历史上允许子目录（如 products/covers、
+ * projects/gallery、company/logo）。这里对「顶层分类」做白名单校验，子目录由
+ * sanitizeStoragePath 防止 path traversal。该白名单覆盖现有所有 ImageUpload /
+ * FileUpload 调用点使用的 folder 顶层值。
+ */
+export const PUBLIC_ASSETS_ALLOWED_TOP_CATEGORIES = [
+  "products",
+  "projects",
+  "certificates",
+  "company",
+  "site",
+  "documents",
+  "document-covers",
+] as const;
+export type PublicAssetTopCategory = (typeof PUBLIC_ASSETS_ALLOWED_TOP_CATEGORIES)[number];
 
 /**
  * private-assets bucket 的 MIME 白名单与大小上限。
@@ -89,6 +112,21 @@ export type StorageUploadResult =
 
 export type StorageDeleteResult =
   | { ok: true; path: string; bucket: string }
+  | { ok: false; code: AdminWriteErrorCode };
+
+/**
+ * public-assets 上传结果。比 private-assets 多一个 publicUrl：
+ * public-assets bucket 对外可读，构造公开 URL 供前台展示。
+ */
+export type PublicStorageUploadResult =
+  | {
+      ok: true;
+      path: string;
+      bucket: string;
+      mimeType: string;
+      size: number;
+      publicUrl: string;
+    }
   | { ok: false; code: AdminWriteErrorCode };
 
 function isAllowedCategory(value: string): value is PrivateAssetCategory {
@@ -158,11 +196,83 @@ function generatePrivateStoragePath(
 }
 
 /**
+ * 计算 SHA-256 十六进制摘要。用于 admin_storage_operations 审计记录，
+ * 让运维可以比对上传到 bucket 的对象完整性，而无需把文件内容写入审计表。
+ */
+function computeSha256Hex(bytes: Uint8Array): string {
+  return createHash("sha256").update(Buffer.from(bytes)).digest("hex");
+}
+
+/**
+ * 在 admin_storage_operations 中插入一条 pending 记录。
+ * 调用方在操作开始前调用，操作结束后调用 completeStorageAudit。
+ *
+ * 失败时静默 —— 审计写失败不得阻断业务操作（业务操作仍由 service_role 完成）。
+ */
+async function recordStorageAuditStarted(input: {
+  client: SupabaseClient<Database>;
+  actorId?: string | null;
+  actorRole?: string | null;
+  action: "storage.upload" | "storage.delete";
+  bucket: string;
+  objectPath: string;
+  mimeType?: string | null;
+  sizeBytes?: number | null;
+  sha256?: string | null;
+}): Promise<string | null> {
+  try {
+    const { data, error } = await input.client.rpc(
+      "record_storage_operation_started",
+      {
+        p_actor_id: input.actorId ?? null,
+        p_actor_role: input.actorRole ?? null,
+        p_action: input.action,
+        p_bucket: input.bucket,
+        p_object_path: input.objectPath,
+        p_mime_type: input.mimeType ?? null,
+        p_size_bytes: input.sizeBytes ?? null,
+        p_sha256: input.sha256 ?? null,
+      },
+    );
+    if (error) return null;
+    return typeof data === "string" ? data : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 将 pending 审计记录更新为 completed 或 failed。
+ * 失败时静默 —— 审计写失败不得阻断业务操作。
+ */
+async function completeStorageAudit(
+  client: SupabaseClient<Database>,
+  operationId: string | null,
+  success: boolean,
+  errorCode?: string,
+): Promise<void> {
+  if (!operationId) return;
+  try {
+    await client.rpc("complete_storage_operation", {
+      p_operation_id: operationId,
+      p_success: success,
+      p_error_code: errorCode ?? null,
+    });
+  } catch {
+    // swallow — never crash the business op because of audit
+  }
+}
+
+/**
  * 使用 service_role 将文件字节上传到 private-assets bucket。
  * 返回服务端生成的路径。客户端无法指定完整路径。
  */
 export async function uploadToPrivateAssets(
   input: UploadFileBytes,
+  options?: {
+    actorId?: string | null;
+    actorRole?: string | null;
+  },
 ): Promise<StorageUploadResult> {
   // 分类白名单 —— 防止 folder traversal / 任意目录写入
   if (!isAllowedCategory(input.category)) {
@@ -181,6 +291,19 @@ export async function uploadToPrivateAssets(
     return { ok: false, code: "ADMIN_WRITE_FAILED" };
   }
 
+  const sha256 = computeSha256Hex(input.bytes);
+  const auditId = await recordStorageAuditStarted({
+    client,
+    actorId: options?.actorId ?? null,
+    actorRole: options?.actorRole ?? null,
+    action: "storage.upload",
+    bucket: PRIVATE_ASSETS_BUCKET,
+    objectPath: path,
+    mimeType: validated.mimeType,
+    sizeBytes: input.size,
+    sha256,
+  });
+
   // 上传实际字节；upsert:false 防止覆盖既有资源
   const uploadBody = Buffer.from(input.bytes);
   const { error } = await client.storage
@@ -192,15 +315,131 @@ export async function uploadToPrivateAssets(
     });
 
   if (error) {
+    await completeStorageAudit(client, auditId, false, "ADMIN_WRITE_FAILED");
     return { ok: false, code: "ADMIN_WRITE_FAILED" };
   }
 
+  await completeStorageAudit(client, auditId, true);
   return {
     ok: true,
     path,
     bucket: PRIVATE_ASSETS_BUCKET,
     mimeType: validated.mimeType,
     size: input.size,
+  };
+}
+
+/**
+ * 校验 public-assets 的顶层分类是否在白名单内。
+ * 子目录（如 products/covers）由 sanitizeStoragePath 在路径生成阶段防御。
+ */
+function isAllowedPublicTopCategory(folder: string): boolean {
+  const top = folder.split("/")[0]?.trim();
+  if (!top) return false;
+  return (
+    PUBLIC_ASSETS_ALLOWED_TOP_CATEGORIES as readonly string[]
+  ).includes(top);
+}
+
+/**
+ * 服务端生成 public-assets 存储路径：{sanitized-folder}/{uuid}.{ext}。
+ * 与 private-assets 不同，folder 允许多段子目录（历史行为），但必须通过
+ * sanitizeStoragePath 防 path traversal，且顶层分类必须命中白名单。
+ */
+function generatePublicStoragePath(
+  folder: string,
+  ext: string,
+): string | null {
+  const safeFolder = sanitizeStoragePath(folder);
+  if (!safeFolder) return null;
+
+  const safeExt = ext.replace(/[^a-zA-Z0-9.]/g, "").toLowerCase();
+  const normalizedExt = safeExt.startsWith(".")
+    ? safeExt
+    : safeExt
+      ? `.${safeExt}`
+      : "";
+
+  return `${safeFolder}/${randomUUID()}${normalizedExt}`;
+}
+
+/**
+ * 直接构造 public-assets 的公开 URL。
+ * 不使用 Supabase 客户端的 getPublicUrl()，避免在服务端路由引入浏览器客户端。
+ */
+function buildPublicAssetsUrl(path: string): string {
+  const base = (process.env.NEXT_PUBLIC_SUPABASE_URL || "").replace(/\/+$/, "");
+  return `${base}/storage/v1/object/public/${PUBLIC_ASSETS_BUCKET}/${path}`;
+}
+
+/**
+ * 使用 service_role 将文件字节上传到 public-assets bucket。
+ * 与 private-assets 共享 MIME / 大小 / Magic Bytes 校验（同样的 MIME 类型）。
+ * 返回服务端生成的路径及公开 URL。客户端无法指定完整路径。
+ */
+export async function uploadToPublicAssets(
+  input: UploadFileBytes,
+  options?: {
+    actorId?: string | null;
+    actorRole?: string | null;
+  },
+): Promise<PublicStorageUploadResult> {
+  // 顶层分类白名单 —— 防止 folder traversal / 任意目录写入
+  if (!isAllowedPublicTopCategory(input.category)) {
+    return { ok: false, code: "ADMIN_WRITE_BAD_REQUEST" };
+  }
+
+  const validated = validateUploadFile(input);
+  if (!validated.ok) return validated;
+
+  const path = generatePublicStoragePath(input.category, validated.ext);
+  if (!path) {
+    return { ok: false, code: "ADMIN_WRITE_BAD_REQUEST" };
+  }
+
+  let client: SupabaseClient<Database>;
+  try {
+    client = createAdminClient();
+  } catch {
+    return { ok: false, code: "ADMIN_WRITE_FAILED" };
+  }
+
+  const sha256 = computeSha256Hex(input.bytes);
+  const auditId = await recordStorageAuditStarted({
+    client,
+    actorId: options?.actorId ?? null,
+    actorRole: options?.actorRole ?? null,
+    action: "storage.upload",
+    bucket: PUBLIC_ASSETS_BUCKET,
+    objectPath: path,
+    mimeType: validated.mimeType,
+    sizeBytes: input.size,
+    sha256,
+  });
+
+  // 上传实际字节；upsert:false 防止覆盖既有资源
+  const uploadBody = Buffer.from(input.bytes);
+  const { error } = await client.storage
+    .from(PUBLIC_ASSETS_BUCKET)
+    .upload(path, uploadBody, {
+      cacheControl: "3600",
+      upsert: false,
+      contentType: validated.mimeType,
+    });
+
+  if (error) {
+    await completeStorageAudit(client, auditId, false, "ADMIN_WRITE_FAILED");
+    return { ok: false, code: "ADMIN_WRITE_FAILED" };
+  }
+
+  await completeStorageAudit(client, auditId, true);
+  return {
+    ok: true,
+    path,
+    bucket: PUBLIC_ASSETS_BUCKET,
+    mimeType: validated.mimeType,
+    size: input.size,
+    publicUrl: buildPublicAssetsUrl(path),
   };
 }
 
@@ -253,6 +492,10 @@ export function validatePrivateAssetPath(
  */
 export async function deletePrivateAsset(
   rawPath: string,
+  options?: {
+    actorId?: string | null;
+    actorRole?: string | null;
+  },
 ): Promise<StorageDeleteResult> {
   const validated = validatePrivateAssetPath(rawPath);
   if (!validated.ok) return validated;
@@ -264,13 +507,24 @@ export async function deletePrivateAsset(
     return { ok: false, code: "ADMIN_WRITE_FAILED" };
   }
 
+  const auditId = await recordStorageAuditStarted({
+    client,
+    actorId: options?.actorId ?? null,
+    actorRole: options?.actorRole ?? null,
+    action: "storage.delete",
+    bucket: PRIVATE_ASSETS_BUCKET,
+    objectPath: validated.path,
+  });
+
   const { error } = await client.storage
     .from(PRIVATE_ASSETS_BUCKET)
     .remove([validated.path]);
 
   if (error) {
+    await completeStorageAudit(client, auditId, false, "ADMIN_WRITE_FAILED");
     return { ok: false, code: "ADMIN_WRITE_FAILED" };
   }
 
+  await completeStorageAudit(client, auditId, true);
   return { ok: true, path: validated.path, bucket: PRIVATE_ASSETS_BUCKET };
 }

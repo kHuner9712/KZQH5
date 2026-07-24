@@ -2,7 +2,7 @@
 
 import { useRef, useState } from "react";
 import { FileUp, Loader2 } from "lucide-react";
-import { uploadPublicFile } from "@/lib/supabase/storage";
+import { uploadViaServerApi } from "@/lib/services/admin-storage-fetch";
 
 export function FileUpload({
   folder,
@@ -25,13 +25,17 @@ export function FileUpload({
     if (!file) return;
     setUploading(true);
     setError("");
-    const result = await uploadPublicFile(file, folder);
+    const result = await uploadViaServerApi(file, folder);
     setUploading(false);
-    if (!result.url) {
-      setError(result.error || "上传失败");
+    if (!result.ok || !result.data.publicUrl) {
+      setError(result.ok ? "上传失败" : result.error);
       return;
     }
-    onUploaded({ url: result.url, size: file.size, mimeType: file.type });
+    onUploaded({
+      url: result.data.publicUrl,
+      size: result.data.size,
+      mimeType: result.data.mimeType,
+    });
     if (inputRef.current) inputRef.current.value = "";
   }
 

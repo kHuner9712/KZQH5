@@ -56,7 +56,10 @@ export async function DELETE(request: NextRequest) {
     return NextResponse.json({ success: true, demo: true });
   }
 
-  const result = await deletePrivateAsset(path);
+  const result = await deletePrivateAsset(path, {
+    actorId: guard.user.id,
+    actorRole: guard.profile.role ?? null,
+  });
   if (!result.ok) {
     return adminWriteError(result.code, statusForCode(result.code), {
       logCode: result.code,

@@ -759,6 +759,49 @@ export type Database = {
         };
         Returns: unknown;
       };
+      // Phase 14: per-provider outbox delivery state RPCs.
+      claim_inquiry_outbox_deliveries: {
+        Args: { p_limit?: number; p_stale_timeout_seconds?: number };
+        Returns: unknown;
+      };
+      mark_delivery_sent: {
+        Args: {
+          p_delivery_id: string;
+          p_lock_token: string;
+          p_provider_message_id?: string | null;
+        };
+        Returns: boolean;
+      };
+      fail_delivery_event: {
+        Args: {
+          p_delivery_id: string;
+          p_lock_token: string;
+          p_error_code?: string | null;
+        };
+        Returns: string;
+      };
+      // Phase 14: Storage operation audit RPCs.
+      record_storage_operation_started: {
+        Args: {
+          p_actor_id?: string | null;
+          p_actor_role?: string | null;
+          p_action?: string | null;
+          p_bucket?: string | null;
+          p_object_path?: string | null;
+          p_mime_type?: string | null;
+          p_size_bytes?: number | null;
+          p_sha256?: string | null;
+        };
+        Returns: string;
+      };
+      complete_storage_operation: {
+        Args: {
+          p_operation_id: string;
+          p_success: boolean;
+          p_error_code?: string | null;
+        };
+        Returns: boolean;
+      };
     };
     Enums: Record<string, never>;
   };

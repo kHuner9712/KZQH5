@@ -3,6 +3,7 @@ import {
   createNotificationAdapters,
   type NotificationAdapter,
   type NotificationRuntime,
+  type NotificationSendContext,
 } from "./notifications";
 import type { Inquiry } from "@/types/database";
 
@@ -111,14 +112,15 @@ async function loadInquiry(inquiryId: string): Promise<Inquiry | null> {
 async function sendForInquiry(
   inquiry: Inquiry,
   adapters: NotificationAdapter[],
-): Promise<string | null> {
+  context: NotificationSendContext,
+): Promise<{ errorCode: string | null; providerMessageId: string | null }> {
   const configured = adapters.filter((a) => a.configured);
   if (configured.length === 0) {
     // Hard fail — never silently mark as sent.
-    return NOTIFICATION_NOT_CONFIGURED_CODE;
+    return { errorCode: NOTIFICATION_NOT_CONFIGURED_CODE, providerMessageId: null };
   }
   const results = await Promise.allSettled(
-    configured.map((a) => a.send(inquiry)),
+    configured.map((a) => a.send(inquiry, context)),
   );
   // If any adapter rejects, throw with a coarse code. The caller maps this
   // to fail_inquiry_outbox_event which advances attempts and schedules retry.
@@ -127,9 +129,19 @@ async function sendForInquiry(
     const reason = firstFailure.reason;
     const code =
       reason instanceof Error ? reason.name : "NOTIFICATION_FAILED";
-    return code;
+    return { errorCode: code, providerMessageId: null };
   }
-  return null;
+  // Collect the first non-empty provider message id (if any). We record
+  // one on the parent outbox event; per-provider ids go on
+  // inquiry_outbox_deliveries (added in Phase 14 migration).
+  let providerMessageId: string | null = null;
+  for (const r of results) {
+    if (r.status === "fulfilled" && r.value?.providerMessageId) {
+      providerMessageId = r.value.providerMessageId;
+      break;
+    }
+  }
+  return { errorCode: null, providerMessageId };
 }
 
 /**
@@ -204,16 +216,31 @@ export async function processInquiryOutbox(
         continue;
       }
 
-      const sendError = await sendForInquiry(inquiry, adapters);
-      if (sendError !== null) {
+      // Build the idempotency context. eventId is stable across retries
+      // (so providers that support an idempotency key can suppress
+      // duplicates); lockToken changes per claim (so providers that
+      // store per-claim state can detect stale Workers). attempt is
+      // 1-based.
+      const context: NotificationSendContext = {
+        eventId: event.id,
+        lockToken: event.lock_token,
+        attempt: 1,
+      };
+
+      const { errorCode, providerMessageId } = await sendForInquiry(
+        inquiry,
+        adapters,
+        context,
+      );
+      if (errorCode !== null) {
         // Adapter reported a failure — advance attempts / schedule retry
-        // or dead-letter via the RPC. Use the outbox event id as the
-        // provider idempotency key when adapters support it.
+        // or dead-letter via the RPC. The outbox event id was already
+        // passed to the adapter as the idempotency key (when supported).
         const failResult = await failEvent(
           client,
           event.id,
           event.lock_token,
-          sendError,
+          errorCode,
         );
         failed += 1;
         if (failResult === "dead_letter") deadLettered += 1;
@@ -223,7 +250,12 @@ export async function processInquiryOutbox(
       // Send succeeded — mark as sent. If mark-sent fails (network blip),
       // the event stays in 'processing' and will be re-claimed after the
       // stale timeout, causing a duplicate send (at-least-once).
-      const ok = await markSent(client, event.id, event.lock_token, null);
+      const ok = await markSent(
+        client,
+        event.id,
+        event.lock_token,
+        providerMessageId,
+      );
       if (ok) {
         sent += 1;
       } else {
