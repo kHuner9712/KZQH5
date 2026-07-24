@@ -25,6 +25,7 @@ instead of maintaining their own conflicting lists.
 | 11 | `20260724130000_admin_transactional_write_rpcs.sql` | **Phase 2.** Add save_product_with_images() and save_project_with_relations() transactional RPCs. | pending | pending | pending | — | — | — | Drop functions. Admin CMS reverts to client-side inserts (non-atomic). |
 | 12 | `20260724150000_inquiry_idempotency_and_outbox.sql` | **Phase 5.** Add client_submission_id column; inquiry_outbox table; idempotent create_inquiry_with_items(3-arg); outbox claim/mark/fail RPCs. | pending | pending | pending | — | — | — | Drop outbox table + column. Idempotency and reliable notifications lost. Old 2-arg RPC signature is dropped by this migration — rollback requires restoring the old function. |
 | 13 | `20260724160000_schema_verification_rpc.sql` | **Phase 7.** Add verify_schema_readiness() read-only RPC for release checks. | pending | pending | pending | — | — | — | Drop function. Release readiness script falls back to direct REST probing (less reliable). |
+| 14 | `20260724170000_storage_bucket_hardening.sql` | **Phase 4.** Set allowed_mime_types (PDF/JPEG/PNG/WebP, no SVG) and file_size_limit (50MB) on public-assets and private-assets storage buckets. | pending | pending | pending | — | — | — | Re-configure buckets via dashboard (allows SVG and removes size limit). Safe to keep. |
 
 ## Migration execution order
 
