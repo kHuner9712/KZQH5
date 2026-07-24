@@ -98,7 +98,7 @@ describe("admin product write API (Phase 2)", () => {
       ok: true,
       client: {},
       user: { id: "u1" },
-      profile: { id: "u1" },
+      profile: { id: "u1", role: "admin" },
     });
     const { POST, PATCH } = await import("@/app/api/admin/products/route");
 
@@ -136,7 +136,7 @@ describe("admin product write API (Phase 2)", () => {
       ok: true,
       client: {},
       user: { id: "u1" },
-      profile: { id: "u1" },
+      profile: { id: "u1", role: "admin" },
     });
     const { POST } = await import("@/app/api/admin/products/route");
 
@@ -160,7 +160,7 @@ describe("admin product write API (Phase 2)", () => {
       ok: true,
       client: {},
       user: { id: "u1" },
-      profile: { id: "u1" },
+      profile: { id: "u1", role: "admin" },
     });
     const { POST } = await import("@/app/api/admin/products/route");
 
@@ -186,7 +186,7 @@ describe("admin product write API (Phase 2)", () => {
       ok: true,
       client: {},
       user: { id: "u1" },
-      profile: { id: "u1" },
+      profile: { id: "u1", role: "admin" },
     });
     saveProductViaRpc.mockResolvedValue({ ok: false, code: "ADMIN_WRITE_CONFLICT" });
     const { POST } = await import("@/app/api/admin/products/route");
@@ -211,7 +211,7 @@ describe("admin product write API (Phase 2)", () => {
       ok: true,
       client: {},
       user: { id: "u1" },
-      profile: { id: "u1" },
+      profile: { id: "u1", role: "admin" },
     });
     saveProductViaRpc.mockResolvedValue({ ok: false, code: "ADMIN_WRITE_FAILED" });
     const { POST } = await import("@/app/api/admin/products/route");
@@ -237,7 +237,7 @@ describe("admin product write API (Phase 2)", () => {
       ok: true,
       client: {},
       user: { id: "u1" },
-      profile: { id: "u1" },
+      profile: { id: "u1", role: "admin" },
     });
     saveProductViaRpc.mockResolvedValue({ ok: true, id: "new-product-id" });
     const { POST } = await import("@/app/api/admin/products/route");
@@ -258,6 +258,7 @@ describe("admin product write API (Phase 2)", () => {
     expect(body.success).toBe(true);
     expect(body.id).toBe("new-product-id");
     // RPC was called with the images array so the transaction covers them.
+    // Phase 13: actor info is passed through (from server-verified session).
     expect(saveProductViaRpc).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
@@ -265,6 +266,7 @@ describe("admin product write API (Phase 2)", () => {
           expect.objectContaining({ image_url: "/img/test.jpg" }),
         ]),
       }),
+      expect.objectContaining({ id: "u1" }),
     );
   });
 
@@ -273,7 +275,7 @@ describe("admin product write API (Phase 2)", () => {
       ok: true,
       client: {},
       user: { id: "u1" },
-      profile: { id: "u1" },
+      profile: { id: "u1", role: "admin" },
     });
     const { PATCH } = await import("@/app/api/admin/products/route");
 
@@ -293,7 +295,7 @@ describe("admin product write API (Phase 2)", () => {
       ok: true,
       client: {},
       user: { id: "u1" },
-      profile: { id: "u1" },
+      profile: { id: "u1", role: "admin" },
     });
     const { DELETE } = await import("@/app/api/admin/products/[id]/route");
 
@@ -311,7 +313,7 @@ describe("admin product write API (Phase 2)", () => {
       ok: true,
       client: {},
       user: { id: "u1" },
-      profile: { id: "u1" },
+      profile: { id: "u1", role: "admin" },
     });
     bulkDeleteProducts.mockResolvedValue({ ok: true, count: 1 });
     const { DELETE } = await import("@/app/api/admin/products/[id]/route");
@@ -329,5 +331,171 @@ describe("admin product write API (Phase 2)", () => {
     const body = await res.json();
     expect(body.success).toBe(true);
     expect(body.count).toBe(1);
+  });
+
+  // ------------------------------------------------------------
+  // Phase 13: RBAC behavior tests (replace structural assertions).
+  // These exercise the actual route handler, not just the helper.
+  // ------------------------------------------------------------
+
+  it("rejects editor role for product create (RBAC)", async () => {
+    getVerifiedAdmin.mockResolvedValue({
+      ok: true,
+      client: {},
+      user: { id: "u-editor" },
+      profile: { id: "u-editor", role: "editor" },
+    });
+    const { POST } = await import("@/app/api/admin/products/route");
+
+    const res = await POST(
+      jsonRequest("https://kzq.test/api/admin/products", "POST", {
+        name_cn: "editor 尝试创建",
+        slug: "editor-create-attempt",
+        is_published: false,
+        is_featured: false,
+        sort_order: 0,
+      }),
+    );
+
+    expect(res.status).toBe(403);
+    const body = await res.json();
+    expect(body.error).toBe("ADMIN_WRITE_FORBIDDEN_ROLE");
+    expect(saveProductViaRpc).not.toHaveBeenCalled();
+  });
+
+  it("rejects editor role for product delete (RBAC)", async () => {
+    getVerifiedAdmin.mockResolvedValue({
+      ok: true,
+      client: {},
+      user: { id: "u-editor" },
+      profile: { id: "u-editor", role: "editor" },
+    });
+    const { DELETE } = await import("@/app/api/admin/products/[id]/route");
+
+    const res = await DELETE(
+      jsonRequest(
+        "https://kzq.test/api/admin/products/11111111-1111-4111-8111-111111111111",
+        "DELETE",
+        { id: "11111111-1111-4111-8111-111111111111" },
+      ),
+      { params: Promise.resolve({ id: "11111111-1111-4111-8111-111111111111" }) },
+    );
+
+    expect(res.status).toBe(403);
+    expect(bulkDeleteProducts).not.toHaveBeenCalled();
+  });
+
+  it("rejects editor role for bulk publish (RBAC)", async () => {
+    getVerifiedAdmin.mockResolvedValue({
+      ok: true,
+      client: {},
+      user: { id: "u-editor" },
+      profile: { id: "u-editor", role: "editor" },
+    });
+    const { PATCH } = await import("@/app/api/admin/products/route");
+
+    const res = await PATCH(
+      jsonRequest("https://kzq.test/api/admin/products", "PATCH", {
+        ids: ["11111111-1111-4111-8111-111111111111"],
+        is_published: true,
+      }),
+    );
+
+    expect(res.status).toBe(403);
+    expect(bulkUpdateProducts).not.toHaveBeenCalled();
+  });
+
+  it("rejects unknown role for product create (RBAC deny-by-default)", async () => {
+    getVerifiedAdmin.mockResolvedValue({
+      ok: true,
+      client: {},
+      user: { id: "u-unknown" },
+      profile: { id: "u-unknown", role: "unknown-role" },
+    });
+    const { POST } = await import("@/app/api/admin/products/route");
+
+    const res = await POST(
+      jsonRequest("https://kzq.test/api/admin/products", "POST", {
+        name_cn: "unknown role",
+        slug: "unknown-role",
+        is_published: false,
+        is_featured: false,
+        sort_order: 0,
+      }),
+    );
+
+    expect(res.status).toBe(403);
+    expect(saveProductViaRpc).not.toHaveBeenCalled();
+  });
+
+  it("rejects null role for product create (RBAC deny-by-default)", async () => {
+    getVerifiedAdmin.mockResolvedValue({
+      ok: true,
+      client: {},
+      user: { id: "u-null" },
+      profile: { id: "u-null", role: null },
+    });
+    const { POST } = await import("@/app/api/admin/products/route");
+
+    const res = await POST(
+      jsonRequest("https://kzq.test/api/admin/products", "POST", {
+        name_cn: "null role",
+        slug: "null-role",
+        is_published: false,
+        is_featured: false,
+        sort_order: 0,
+      }),
+    );
+
+    expect(res.status).toBe(403);
+    expect(saveProductViaRpc).not.toHaveBeenCalled();
+  });
+
+  it("allows admin role for product create (RBAC)", async () => {
+    getVerifiedAdmin.mockResolvedValue({
+      ok: true,
+      client: {},
+      user: { id: "u-admin" },
+      profile: { id: "u-admin", role: "admin" },
+    });
+    saveProductViaRpc.mockResolvedValue({ ok: true, id: "new-id" });
+    const { POST } = await import("@/app/api/admin/products/route");
+
+    const res = await POST(
+      jsonRequest("https://kzq.test/api/admin/products", "POST", {
+        name_cn: "admin 创建",
+        slug: "admin-create",
+        is_published: false,
+        is_featured: false,
+        sort_order: 0,
+      }),
+    );
+
+    expect(res.status).toBe(200);
+    expect(saveProductViaRpc).toHaveBeenCalled();
+  });
+
+  it("allows super_admin role for product create (RBAC)", async () => {
+    getVerifiedAdmin.mockResolvedValue({
+      ok: true,
+      client: {},
+      user: { id: "u-super" },
+      profile: { id: "u-super", role: "super_admin" },
+    });
+    saveProductViaRpc.mockResolvedValue({ ok: true, id: "new-id" });
+    const { POST } = await import("@/app/api/admin/products/route");
+
+    const res = await POST(
+      jsonRequest("https://kzq.test/api/admin/products", "POST", {
+        name_cn: "super_admin 创建",
+        slug: "super-admin-create",
+        is_published: false,
+        is_featured: false,
+        sort_order: 0,
+      }),
+    );
+
+    expect(res.status).toBe(200);
+    expect(saveProductViaRpc).toHaveBeenCalled();
   });
 });

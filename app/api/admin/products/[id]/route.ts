@@ -12,7 +12,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { revalidatePath } from "next/cache";
 import { isDemoMode } from "@/lib/demo";
 import { requireAdminWrite, adminWriteError } from "@/lib/services/admin-write-boundary";
-import { logAdminAction } from "@/lib/services/admin-audit";
 import { bulkDeleteProducts } from "@/lib/services/admin-product-write";
 import { isUuid } from "@/lib/validation/admin-write";
 
@@ -29,7 +28,10 @@ export async function DELETE(
 
   const guard = await requireAdminWrite<{ id?: string; ids?: string[] }>(
     request,
-    MAX_BODY,
+    {
+      maxBytes: MAX_BODY,
+      minimumRole: "admin",
+    },
   );
   if (!guard.ok) return guard.response;
 
@@ -52,23 +54,17 @@ export async function DELETE(
     return NextResponse.json({ success: true, demo: true, count: ids.length });
   }
 
-  const result = await bulkDeleteProducts(guard.client, ids);
+  const result = await bulkDeleteProducts(guard.client, ids, {
+    id: guard.user.id,
+    email: guard.user.email,
+    role: guard.profile.role,
+  });
   if (!result.ok) {
     const status = result.code === "ADMIN_WRITE_BAD_REQUEST" ? 400 : 500;
     return adminWriteError(result.code, status, { logCode: result.code });
   }
 
-  // Phase 3: audit log (best-effort, never blocks the response).
-  void logAdminAction(guard.client, {
-    id: guard.user.id,
-    email: guard.user.email,
-    role: guard.profile.role,
-  }, {
-    action: "product.delete",
-    targetType: "product",
-    targetId: ids.join(","),
-    summary: `Deleted ${ids.length} product(s)`,
-  });
+  // Phase 13: audit is now atomic with the business write via RPC.
 
   revalidatePath("/admin", "layout");
   revalidatePath("/products", "page");
