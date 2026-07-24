@@ -1,0 +1,48 @@
+# Phase 11: Dependabot configuration for automated dependency updates.
+#
+# Updates are grouped to reduce PR noise. Each ecosystem gets a single
+# weekly PR. Auto-merge is NOT enabled — all updates require human review
+# and must pass CI before merging.
+
+version: 2
+
+updates:
+  # npm dependencies (production + dev)
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "Asia/Shanghai"
+    open-pull-requests-limit: 5
+    groups:
+      # Group all minor/patch updates together to reduce PR count.
+      minor-and-patch:
+        update-types:
+          - "minor"
+          - "patch"
+    # Major version bumps get individual PRs for careful review.
+    commit-message:
+      prefix: "deps"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "automated"
+
+  # GitHub Actions versions
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "Asia/Shanghai"
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "ci"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "github-actions"
+      - "automated"

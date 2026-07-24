@@ -1,0 +1,30 @@
+# Phase 11: Code ownership rules.
+#
+# GitHub requires at least one reviewer for owned paths. This ensures
+# the right people are automatically requested on PRs touching critical
+# areas (security, database migrations, CI/CD, deployment).
+
+# Default owner — all files not matched below.
+* @kHuner9712
+
+# Security-critical code
+/lib/services/http-security.ts    @kHuner9712
+/lib/services/admin-auth.ts       @kHuner9712
+/lib/services/admin-write-boundary.ts @kHuner9712
+/lib/services/admin-audit.ts      @kHuner9712
+/lib/validation/                  @kHuner9712
+/lib/supabase/                    @kHuner9712
+
+# Database migrations — never modify historical migrations
+/supabase/migrations/             @kHuner9712
+/supabase/schema.sql              @kHuner9712
+/supabase/policies.sql            @kHuner9712
+
+# CI/CD configuration
+/.github/workflows/               @kHuner9712
+/.github/dependabot.yml           @kHuner9712
+
+# Deployment configuration
+/next.config.mjs                  @kHuner9712
+/DEPLOYMENT.md                    @kHuner9712
+/docs/EDGEONE_STAGING_RUNBOOK.md  @kHuner9712
