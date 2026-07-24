@@ -12,9 +12,10 @@ permissions:
 # Pinned actions (SHA-pinned for supply-chain security).
 # Update by verifying the new SHA against the upstream release
 # notes and bumping both the SHA and the version comment.
+# SHA verified via GitHub API (refs/tags/<tag>) on 2026-07-24.
 # ============================================================
-# - actions/checkout@v4.2.2 → 11bd71901bbe5b1630ceea73d27597364c9af683
-# - actions/setup-node@v4.0.2 → 60edb5dd545a775178f52524783378180d0b1d56
+# - actions/checkout@v4.2.2      → 11bd71901bbe5b1630ceea73d27597364c9af683
+# - actions/setup-node@v4.4.0    → 49933ea5288caeca8642d1e84afbd3f7d6820020
 # - actions/upload-artifact@v4.4.3 → b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882
 
 jobs:
@@ -22,19 +23,20 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - name: Show tool versions
-        run: |
-          node --version
-          npm --version
       # actions/checkout@v4.2.2
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           persist-credentials: false
-      # actions/setup-node@v4.0.2
-      - uses: actions/setup-node@60edb5dd545a775178f52524783378180d0b1d56
+      # actions/setup-node@v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 20
           cache: npm
+      - name: Show tool versions (after setup-node)
+        run: |
+          node --version
+          npm --version
+          which node
       - run: npm ci
       - run: npm run typecheck
       - run: npm run lint
@@ -42,13 +44,7 @@ jobs:
       - run: npm run build
         env:
           NEXT_PUBLIC_DEMO_MODE: "true"
-      - name: Audit production deps (high+ critical)
-        # continue-on-error: the audit runs and reports, but does not
-        # block the rest of CI. The remaining High advisory is an upstream
-        # Next.js 14 framework vulnerability (GHSA-955p-x3mx-jcvp etc.)
-        # that requires upgrading to Next 16+ — beyond PR #13's Next 15
-        # scope. Tracked as a known upstream issue in the delivery report.
-        continue-on-error: true
+      - name: Audit production deps (high+ critical, blocking)
         run: npm audit --omit=dev --audit-level=high
       - name: Check for whitespace / conflict markers
         run: git diff --check
@@ -74,19 +70,20 @@ jobs:
       DATABASE_TEST_URL: postgresql://postgres:postgres@localhost:5432/kzq_fresh_test
       DATABASE_UPGRADE_TEST_URL: postgresql://postgres:postgres@localhost:5432/kzq_upgrade_test
     steps:
-      - name: Show tool versions
-        run: |
-          node --version
-          npm --version
       # actions/checkout@v4.2.2
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           persist-credentials: false
-      # actions/setup-node@v4.0.2
-      - uses: actions/setup-node@60edb5dd545a775178f52524783378180d0b1d56
+      # actions/setup-node@v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 20
           cache: npm
+      - name: Show tool versions (after setup-node)
+        run: |
+          node --version
+          npm --version
+          which node
       - run: npm ci
       - name: Wait for PostgreSQL and create test databases
         run: |
@@ -111,19 +108,20 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - name: Show tool versions
-        run: |
-          node --version
-          npm --version
       # actions/checkout@v4.2.2
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           persist-credentials: false
-      # actions/setup-node@v4.0.2
-      - uses: actions/setup-node@60edb5dd545a775178f52524783378180d0b1d56
+      # actions/setup-node@v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 20
           cache: npm
+      - name: Show tool versions (after setup-node)
+        run: |
+          node --version
+          npm --version
+          which node
       - run: npm ci
       - run: npx playwright install --with-deps chromium
       - run: npm run build:demo
