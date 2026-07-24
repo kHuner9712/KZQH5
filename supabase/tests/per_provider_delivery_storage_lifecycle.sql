@@ -1014,10 +1014,23 @@ begin
 end $$;
 
 -- S.14: RLS — anon CANNOT read storage_cleanup_queue.
+-- The table REVOKEs ALL from anon/authenticated, so SELECT raises
+-- insufficient_privilege rather than returning an empty set. We treat
+-- both the raised error and an empty result as acceptable proofs of
+-- denial; any other outcome (rows returned without error) is a failure.
 set local role anon;
 do $$
+declare
+  v_count integer;
 begin
-  if exists (select 1 from public.storage_cleanup_queue) then
+  begin
+    select count(*) into v_count from public.storage_cleanup_queue;
+  exception
+    when insufficient_privilege or others then
+      -- Expected: anon has no SELECT privilege on storage_cleanup_queue.
+      null;
+  end;
+  if v_count is not null and v_count > 0 then
     raise exception 'S.14: anon must NOT be able to read storage_cleanup_queue';
   end if;
 end $$;
@@ -1025,8 +1038,17 @@ end $$;
 -- S.15: RLS — authenticated CANNOT read storage_cleanup_queue.
 set local role authenticated;
 do $$
+declare
+  v_count integer;
 begin
-  if exists (select 1 from public.storage_cleanup_queue) then
+  begin
+    select count(*) into v_count from public.storage_cleanup_queue;
+  exception
+    when insufficient_privilege or others then
+      -- Expected: authenticated has no SELECT privilege on storage_cleanup_queue.
+      null;
+  end;
+  if v_count is not null and v_count > 0 then
     raise exception 'S.15: authenticated must NOT be able to read storage_cleanup_queue';
   end if;
 end $$;
