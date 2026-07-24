@@ -2,19 +2,36 @@ name: CI
 
 on:
   push:
-    branches: [main, "codex/**"]
+    branches: [main, "codex/**", "review/**"]
   pull_request:
 
 permissions:
   contents: read
 
+# ============================================================
+# Pinned actions (SHA-pinned for supply-chain security).
+# Update by verifying the new SHA against the upstream release
+# notes and bumping both the SHA and the version comment.
+# ============================================================
+# - actions/checkout@v4.2.2 → 11bd71901bbe5b1630ceea73d27597364c9af683
+# - actions/setup-node@v4.0.2 → 60edb5dd545a775178f52524783378180d0b1d56
+# - actions/upload-artifact@v4.4.3 → b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882
+
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Show tool versions
+        run: |
+          node --version
+          npm --version
+      # actions/checkout@v4.2.2
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      # actions/setup-node@v4.0.2
+      - uses: actions/setup-node@60edb5dd545a775178f52524783378180d0b1d56
         with:
           node-version: 20
           cache: npm
@@ -25,13 +42,85 @@ jobs:
       - run: npm run build
         env:
           NEXT_PUBLIC_DEMO_MODE: "true"
+      - name: Audit production deps (high+ critical)
+        # continue-on-error: the audit runs and reports, but does not
+        # block the rest of CI. The remaining High advisory is an upstream
+        # Next.js 14 framework vulnerability (GHSA-955p-x3mx-jcvp etc.)
+        # that requires upgrading to Next 16+ — beyond PR #13's Next 15
+        # scope. Tracked as a known upstream issue in the delivery report.
+        continue-on-error: true
+        run: npm audit --omit=dev --audit-level=high
+      - name: Check for whitespace / conflict markers
+        run: git diff --check
+
+  database:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: kzq_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_TEST_URL: postgresql://postgres:postgres@localhost:5432/kzq_fresh_test
+      DATABASE_UPGRADE_TEST_URL: postgresql://postgres:postgres@localhost:5432/kzq_upgrade_test
+    steps:
+      - name: Show tool versions
+        run: |
+          node --version
+          npm --version
+      # actions/checkout@v4.2.2
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      # actions/setup-node@v4.0.2
+      - uses: actions/setup-node@60edb5dd545a775178f52524783378180d0b1d56
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Wait for PostgreSQL and create test databases
+        run: |
+          until pg_isready -h localhost -p 5432 -U postgres; do
+            echo "waiting for postgres..."
+            sleep 2
+          done
+          # verify-database.mjs requires two separate databases:
+          # one for fresh install, one for incremental upgrade.
+          psql -h localhost -U postgres -c "DROP DATABASE IF EXISTS kzq_fresh_test;"
+          psql -h localhost -U postgres -c "DROP DATABASE IF EXISTS kzq_upgrade_test;"
+          psql -h localhost -U postgres -c "CREATE DATABASE kzq_fresh_test;"
+          psql -h localhost -U postgres -c "CREATE DATABASE kzq_upgrade_test;"
+        env:
+          PGPASSWORD: postgres
+      - name: Database tests (fresh install + incremental upgrade)
+        run: npm run test:database
+      - name: Show migration diff check
+        run: git diff --check
 
   demo-e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Show tool versions
+        run: |
+          node --version
+          npm --version
+      # actions/checkout@v4.2.2
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      # actions/setup-node@v4.0.2
+      - uses: actions/setup-node@60edb5dd545a775178f52524783378180d0b1d56
         with:
           node-version: 20
           cache: npm
@@ -42,3 +131,13 @@ jobs:
         env:
           CI: "true"
           NEXT_PUBLIC_DEMO_MODE: "true"
+      - name: Upload Playwright artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+            playwright/.cache/
+          retention-days: 7

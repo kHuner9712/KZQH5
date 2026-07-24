@@ -101,31 +101,48 @@ describe("Phase 11: CI governance — staging secrets are environment-scoped", (
   });
 });
 
-describe("Phase 11: CI governance — third-party Actions SHA pinning", () => {
-  it("documents that actions/checkout and actions/setup-node use version tags (not SHAs)", () => {
-    // This is a KNOWN finding, not a failure. SHA-pinning third-party
-    // Actions is a security best practice, but:
-    //   1. actions/checkout and actions/setup-node are first-party
-    //      GitHub Actions with high trust.
-    //   2. SHA-pinning them requires updating the SHA on every version
-    //      bump, which adds maintenance burden.
-    //   3. The task forbids modifying remote repo settings.
-    //
-    // This test DOCUMENTS the current state so it is visible in the
-    // test output and delivery report. It is recorded as a manual todo.
-    const ciContent = readWorkflow(CI_YML);
-    const stagingContent = readWorkflow(STAGING_YML);
+describe("Phase 13: CI governance — first-party Actions are SHA-pinned", () => {
+  // Phase 13 hardening: third-party / first-party GitHub Actions must be
+  // pinned to a 40-char commit SHA (with a version comment beside each use).
+  // This prevents a compromised tag from silently rerouting CI to a
+  // malicious action version.
+  //
+  // We verify the SHA pattern against `uses:` lines specifically so that
+  // inline version comments (e.g. `# actions/checkout@v4.2.2`) do not
+  // produce false positives. The test fails if a `uses:` line still
+  // references the moving tag form (actions/checkout@v4).
+  const shaPattern = (action: string) =>
+    new RegExp(`uses:\\s+${action}@[0-9a-f]{40}\\b`);
 
-    // Both workflows use actions/checkout@v4 and actions/setup-node@v4
-    expect(ciContent).toMatch(/actions\/checkout@v4/);
-    expect(ciContent).toMatch(/actions\/setup-node@v4/);
-    expect(stagingContent).toMatch(/actions\/checkout@v4/);
-    expect(stagingContent).toMatch(/actions\/setup-node@v4/);
+  const movingTagPattern = (action: string) =>
+    new RegExp(`uses:\\s+${action}@v\\d+\\b`);
 
-    // Neither uses SHA-pinned versions (this is the finding to document)
-    const shaPattern = /actions\/checkout@[0-9a-f]{40}/;
-    expect(shaPattern.test(ciContent)).toBe(false);
-    expect(shaPattern.test(stagingContent)).toBe(false);
+  it("ci.yml pins actions/checkout by SHA", () => {
+    const content = readWorkflow(CI_YML);
+    expect(shaPattern("actions/checkout").test(content)).toBe(true);
+    expect(movingTagPattern("actions/checkout").test(content)).toBe(false);
+  });
+
+  it("ci.yml pins actions/setup-node by SHA", () => {
+    const content = readWorkflow(CI_YML);
+    expect(shaPattern("actions/setup-node").test(content)).toBe(true);
+    expect(movingTagPattern("actions/setup-node").test(content)).toBe(false);
+  });
+
+  it("ci.yml pins actions/upload-artifact by SHA (when used)", () => {
+    const content = readWorkflow(CI_YML);
+    if (/uses:\s+actions\/upload-artifact/.test(content)) {
+      expect(shaPattern("actions/upload-artifact").test(content)).toBe(true);
+      expect(movingTagPattern("actions/upload-artifact").test(content)).toBe(false);
+    }
+  });
+
+  it("staging-validation.yml pins actions/checkout and actions/setup-node by SHA", () => {
+    const content = readWorkflow(STAGING_YML);
+    expect(shaPattern("actions/checkout").test(content)).toBe(true);
+    expect(movingTagPattern("actions/checkout").test(content)).toBe(false);
+    expect(shaPattern("actions/setup-node").test(content)).toBe(true);
+    expect(movingTagPattern("actions/setup-node").test(content)).toBe(false);
   });
 });
 

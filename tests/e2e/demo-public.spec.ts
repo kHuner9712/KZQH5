@@ -119,8 +119,15 @@ test.describe("Demo public acceptance", () => {
     const productLink = page
       .locator('article a[href^="/en/products/"]')
       .first();
-    await productLink.click();
-    await expect(page).toHaveURL(/\/en\/products\/[^/?]+$/);
+    // Wait for the link to be ready before clicking. Next 15 + React 19
+    // hydration can introduce a brief window where the link is in the DOM
+    // but not yet interactive.
+    await expect(productLink).toBeVisible();
+    await expect(productLink).toBeEnabled();
+    await Promise.all([
+      page.waitForURL(/\/en\/products\/[^/?]+$/),
+      productLink.click(),
+    ]);
     await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
     await page
       .getByRole("button", { name: /Add to inquiry/ })
@@ -152,7 +159,11 @@ test.describe("Demo public acceptance", () => {
       "Mobile layout assertion",
     );
     await page.goto("/products");
-    await page.locator('article a[href^="/products/"]').first().click();
+    await page.waitForLoadState("networkidle");
+    const productCard = page.locator('article a[href^="/products/"]').first();
+    await expect(productCard).toBeVisible();
+    await productCard.click();
+    await expect(page).toHaveURL(/\/products\/[^/?]+$/, { timeout: 10000 });
     await expect(page.locator('nav[aria-label="移动端导航"]')).toHaveCount(0);
     const fixedCta = page.locator("div.fixed.bottom-0").last();
     await expect(fixedCta).toBeVisible();

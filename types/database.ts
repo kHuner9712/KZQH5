@@ -662,16 +662,20 @@ export type Database = {
         Returns: unknown;
       };
       claim_inquiry_outbox_batch: {
-        Args: { p_limit?: number };
+        Args: { p_limit?: number; p_stale_timeout_seconds?: number };
         Returns: unknown;
       };
       mark_inquiry_outbox_sent: {
-        Args: { p_ids: string[] };
-        Returns: void;
+        Args: { p_event_id: string; p_lock_token: string; p_provider_message_id?: string | null };
+        Returns: boolean;
       };
       fail_inquiry_outbox_event: {
-        Args: { p_id: string; p_error_code?: string | null };
-        Returns: void;
+        Args: { p_event_id: string; p_lock_token: string; p_error_code?: string | null };
+        Returns: string;
+      };
+      get_inquiry_outbox_status: {
+        Args: Record<string, never>;
+        Returns: unknown;
       };
       verify_schema_readiness: {
         Args: Record<string, never>;
@@ -709,6 +713,51 @@ export type Database = {
           p_expected_updated_at?: string | null;
         };
         Returns: string;
+      };
+      // Phase 13: transactional business write + audit log RPCs.
+      // Actor info (id/email/role) is provided by the server-verified admin
+      // session, NEVER from the request body.
+      save_product_with_images_and_audit: {
+        Args: {
+          p_id: string | null;
+          p_product: Record<string, unknown>;
+          p_images?: Record<string, unknown>[];
+          p_expected_updated_at?: string | null;
+          p_actor_id?: string | null;
+          p_actor_email?: string | null;
+          p_actor_role?: string | null;
+        };
+        Returns: string;
+      };
+      bulk_update_products_with_audit: {
+        Args: {
+          p_ids: string[];
+          p_patch: Record<string, unknown>;
+          p_actor_id?: string | null;
+          p_actor_email?: string | null;
+          p_actor_role?: string | null;
+        };
+        Returns: number;
+      };
+      bulk_delete_products_with_audit: {
+        Args: {
+          p_ids: string[];
+          p_actor_id?: string | null;
+          p_actor_email?: string | null;
+          p_actor_role?: string | null;
+        };
+        Returns: number;
+      };
+      update_inquiry_with_audit: {
+        Args: {
+          p_id: string;
+          p_patch: Record<string, unknown>;
+          p_expected_updated_at: string;
+          p_actor_id?: string | null;
+          p_actor_email?: string | null;
+          p_actor_role?: string | null;
+        };
+        Returns: unknown;
       };
     };
     Enums: Record<string, never>;

@@ -16,14 +16,28 @@ on:
 permissions:
   contents: read
 
+# ============================================================
+# Pinned actions (SHA-pinned for supply-chain security).
+# - actions/checkout@v4.2.2 → 11bd71901bbe5b1630ceea73d27597364c9af683
+# - actions/setup-node@v4.0.2 → 60edb5dd545a775178f52524783378180d0b1d56
+# ============================================================
+
 jobs:
   read-only:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: staging
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Show tool versions
+        run: |
+          node --version
+          npm --version
+      # actions/checkout@v4.2.2
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      # actions/setup-node@v4.0.2
+      - uses: actions/setup-node@60edb5dd545a775178f52524783378180d0b1d56
         with:
           node-version: 20
           cache: npm
@@ -68,8 +82,16 @@ jobs:
     timeout-minutes: 30
     environment: staging
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Show tool versions
+        run: |
+          node --version
+          npm --version
+      # actions/checkout@v4.2.2
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      # actions/setup-node@v4.0.2
+      - uses: actions/setup-node@60edb5dd545a775178f52524783378180d0b1d56
         with:
           node-version: 20
           cache: npm

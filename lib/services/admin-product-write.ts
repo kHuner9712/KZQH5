@@ -85,8 +85,9 @@ export function validateProductPayload(input: unknown): ValidationResult<{
       : validateUuid("id", body.id);
   if (!idResult.ok) return idResult;
 
-  // Phase 3: expected_updated_at — optional ISO timestamp for optimistic locking.
-  // If present, must be a valid ISO string. Only meaningful for updates (id != null).
+  // Phase 3: expected_updated_at — REQUIRED for updates, ignored for creates.
+  // This enforces optimistic locking: the caller MUST prove they saw a recent
+  // version of the record before modifying it. Missing on update => 400.
   let expectedUpdatedAt: string | null = null;
   if (body.expected_updated_at != null && body.expected_updated_at !== "") {
     if (typeof body.expected_updated_at !== "string") {
@@ -97,6 +98,10 @@ export function validateProductPayload(input: unknown): ValidationResult<{
       return fail([{ field: "expected_updated_at", reason: "invalid-timestamp" }]);
     }
     expectedUpdatedAt = ts;
+  }
+  // Enforce: updates (id != null) MUST provide expected_updated_at.
+  if (idResult.value !== null && !expectedUpdatedAt) {
+    return fail([{ field: "expected_updated_at", reason: "required-for-update" }]);
   }
 
   // core required + optional fields
@@ -225,6 +230,8 @@ function validateImages(raw: unknown): ValidationResult<ProductImageInput[]> {
  * Persist a validated product payload via the transactional RPC.
  * The RPC handles insert-or-update based on whether id is null.
  * Phase 3: passes expected_updated_at for optimistic locking on updates.
+ * Phase 13: uses save_product_with_images_and_audit for atomic audit.
+ *           Actor info comes from the server-verified admin session.
  */
 export async function saveProductViaRpc(
   client: SupabaseClient<Database>,
@@ -234,12 +241,16 @@ export async function saveProductViaRpc(
     images: ProductImageInput[];
     expected_updated_at?: string | null;
   },
+  actor?: { id: string; email?: string; role?: string | null },
 ): Promise<ProductSaveResult> {
-  const { data, error } = await client.rpc("save_product_with_images", {
+  const { data, error } = await client.rpc("save_product_with_images_and_audit", {
     p_id: payload.id,
     p_product: payload.product,
     p_images: payload.images as unknown as Record<string, unknown>[],
     p_expected_updated_at: payload.expected_updated_at ?? null,
+    p_actor_id: actor?.id ?? null,
+    p_actor_email: actor?.email ?? null,
+    p_actor_role: actor?.role ?? null,
   });
 
   if (error) {
@@ -255,31 +266,42 @@ export async function saveProductViaRpc(
 /**
  * Bulk update a boolean / status field across many product ids.
  * Used by the admin list page for bulk publish / feature / delete.
+ * Phase 13: uses bulk_update_products_with_audit for atomic audit.
  */
 export async function bulkUpdateProducts(
   client: SupabaseClient<Database>,
   ids: string[],
   patch: Record<string, unknown>,
+  actor?: { id: string; email?: string; role?: string | null },
 ): Promise<{ ok: true; count: number } | { ok: false; code: "ADMIN_WRITE_BAD_REQUEST" | "ADMIN_WRITE_FAILED" }> {
   if (ids.length === 0) return { ok: false, code: "ADMIN_WRITE_BAD_REQUEST" };
   if (ids.length > 500) return { ok: false, code: "ADMIN_WRITE_BAD_REQUEST" };
-  const { error } = await client
-    .from("products")
-    .update(patch)
-    .in("id", ids);
+  const { data, error } = await client.rpc("bulk_update_products_with_audit", {
+    p_ids: ids,
+    p_patch: patch,
+    p_actor_id: actor?.id ?? null,
+    p_actor_email: actor?.email ?? null,
+    p_actor_role: actor?.role ?? null,
+  });
   if (error) return { ok: false, code: "ADMIN_WRITE_FAILED" };
-  return { ok: true, count: ids.length };
+  return { ok: true, count: typeof data === "number" ? data : ids.length };
 }
 
 export async function bulkDeleteProducts(
   client: SupabaseClient<Database>,
   ids: string[],
+  actor?: { id: string; email?: string; role?: string | null },
 ): Promise<{ ok: true; count: number } | { ok: false; code: "ADMIN_WRITE_BAD_REQUEST" | "ADMIN_WRITE_FAILED" }> {
   if (ids.length === 0) return { ok: false, code: "ADMIN_WRITE_BAD_REQUEST" };
   if (ids.length > 500) return { ok: false, code: "ADMIN_WRITE_BAD_REQUEST" };
-  const { error } = await client.from("products").delete().in("id", ids);
+  const { data, error } = await client.rpc("bulk_delete_products_with_audit", {
+    p_ids: ids,
+    p_actor_id: actor?.id ?? null,
+    p_actor_email: actor?.email ?? null,
+    p_actor_role: actor?.role ?? null,
+  });
   if (error) return { ok: false, code: "ADMIN_WRITE_FAILED" };
-  return { ok: true, count: ids.length };
+  return { ok: true, count: typeof data === "number" ? data : ids.length };
 }
 
 function classifyPgError(code: string | undefined): "ADMIN_WRITE_BAD_REQUEST" | "ADMIN_WRITE_CONFLICT" | "ADMIN_WRITE_FAILED" {

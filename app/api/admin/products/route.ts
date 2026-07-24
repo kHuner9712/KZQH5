@@ -21,7 +21,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { revalidatePath } from "next/cache";
 import { isDemoMode } from "@/lib/demo";
 import { requireAdminWrite, adminWriteError } from "@/lib/services/admin-write-boundary";
-import { logAdminAction } from "@/lib/services/admin-audit";
 import {
   bulkUpdateProducts,
   saveProductViaRpc,
@@ -38,7 +37,10 @@ function failStatus(code: "ADMIN_WRITE_BAD_REQUEST" | "ADMIN_WRITE_CONFLICT" | "
 }
 
 export async function POST(request: NextRequest) {
-  const guard = await requireAdminWrite<unknown>(request, MAX_BODY);
+  const guard = await requireAdminWrite<unknown>(request, {
+    maxBytes: MAX_BODY,
+    minimumRole: "admin",
+  });
   if (!guard.ok) return guard.response;
 
   const validated = validateProductPayload(guard.body);
@@ -57,24 +59,17 @@ export async function POST(request: NextRequest) {
     });
   }
 
-  const result = await saveProductViaRpc(guard.client, validated.value);
+  const result = await saveProductViaRpc(guard.client, validated.value, {
+    id: guard.user.id,
+    email: guard.user.email,
+    role: guard.profile.role,
+  });
   if (!result.ok) {
     return adminWriteError(result.code, failStatus(result.code), { logCode: result.code });
   }
 
-  // Phase 3: audit log (best-effort, never blocks the response).
-  void logAdminAction(guard.client, {
-    id: guard.user.id,
-    email: guard.user.email,
-    role: guard.profile.role,
-  }, {
-    action: validated.value.id ? "product.update" : "product.create",
-    targetType: "product",
-    targetId: result.id,
-    summary: validated.value.id
-      ? `Updated product "${validated.value.product.name_cn ?? result.id}"`
-      : `Created product "${validated.value.product.name_cn ?? result.id}"`,
-  });
+  // Phase 13: audit is now atomic with the business write via RPC.
+  // No fire-and-forget logAdminAction call needed.
 
   revalidatePath("/admin", "layout");
   revalidatePath("/products", "page");
@@ -83,7 +78,10 @@ export async function POST(request: NextRequest) {
 }
 
 export async function PATCH(request: NextRequest) {
-  const guard = await requireAdminWrite<unknown>(request, MAX_BODY);
+  const guard = await requireAdminWrite<unknown>(request, {
+    maxBytes: MAX_BODY,
+    minimumRole: "admin",
+  });
   if (!guard.ok) return guard.response;
 
   const body = guard.body as Record<string, unknown>;
@@ -129,22 +127,16 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({ success: true, demo: true, count: ids.length });
   }
 
-  const result = await bulkUpdateProducts(guard.client, ids, patch);
+  const result = await bulkUpdateProducts(guard.client, ids, patch, {
+    id: guard.user.id,
+    email: guard.user.email,
+    role: guard.profile.role,
+  });
   if (!result.ok) {
     return adminWriteError(result.code, failStatus(result.code), { logCode: result.code });
   }
 
-  // Phase 3: audit log (best-effort, never blocks the response).
-  void logAdminAction(guard.client, {
-    id: guard.user.id,
-    email: guard.user.email,
-    role: guard.profile.role,
-  }, {
-    action: "product.bulk_update",
-    targetType: "product",
-    targetId: ids.join(","),
-    summary: `Bulk updated ${ids.length} product(s): ${Object.keys(patch).join(", ")}`,
-  });
+  // Phase 13: audit is now atomic with the business write via RPC.
 
   revalidatePath("/admin", "layout");
   revalidatePath("/products", "page");
