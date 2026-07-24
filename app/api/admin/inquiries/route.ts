@@ -5,7 +5,7 @@ import { listInquiries, updateInquiry } from "@/lib/repositories/inquiries";
 import { getVerifiedAdmin } from "@/lib/services/admin-auth";
 import { inquiryFiltersFromSearchParams } from "@/lib/services/inquiries/admin-filters";
 import {
-  isSameOrigin,
+  isSameSiteRequest,
   readJsonBody,
   UUID_PATTERN,
 } from "@/lib/services/http-security";
@@ -39,7 +39,7 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  if (!isSameOrigin(request)) {
+  if (!isSameSiteRequest(request)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 

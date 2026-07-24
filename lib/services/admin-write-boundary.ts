@@ -3,7 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/types/database";
 import { getVerifiedAdmin } from "@/lib/services/admin-auth";
 import {
-  isSameOrigin,
+  isSameSiteRequest,
   readJsonBody,
 } from "@/lib/services/http-security";
 
@@ -36,7 +36,7 @@ export type RequireAdminWriteResult<T> =
 /**
  * Centralized pre-flight check for every admin write endpoint:
  *   1. Verify the admin session + profile (service_role client).
- *   2. Fail-closed same-origin check (Origin missing -> rejected).
+ *   2. Phase 6: Combined CSRF defense (Origin + Sec-Fetch-Site).
  *   3. Enforce application/json Content-Type.
  *   4. Enforce a maximum request body size.
  *   5. Parse the JSON body.
@@ -57,7 +57,9 @@ export async function requireAdminWrite<T = unknown>(
     };
   }
 
-  if (!isSameOrigin(request)) {
+  // Phase 6: Combined Origin + Sec-Fetch-Site check (replaces isSameOrigin).
+  // isSameSiteRequest checks both headers for defense-in-depth.
+  if (!isSameSiteRequest(request)) {
     return {
       ok: false,
       response: adminWriteError("ADMIN_WRITE_FORBIDDEN_ORIGIN", 403),

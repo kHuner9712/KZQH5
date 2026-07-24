@@ -7,6 +7,7 @@ import { InquiryProductUnavailableError } from "@/lib/services/inquiries/submiss
 import { validateInquiryInput } from "@/lib/services/inquiries/validation";
 import {
   ephemeralRateKey,
+  isSameSiteRequest,
   readJsonBody,
   UUID_PATTERN,
 } from "@/lib/services/http-security";
@@ -46,6 +47,16 @@ function requestLocale(request: NextRequest, body?: InquiryInput): Locale {
 
 export async function POST(request: NextRequest) {
   const earlyLocale = requestLocale(request);
+
+  // Phase 6: CSRF defense — reject cross-site inquiry submission.
+  // Prevents attackers from submitting fake inquiries from a different site.
+  if (!isSameSiteRequest(request)) {
+    return NextResponse.json(
+      { success: false, error: messages[earlyLocale].server },
+      { status: 403 },
+    );
+  }
+
   const rateKey = ephemeralRateKey(request);
   const rate = await getInquiryRateLimiter().check(rateKey);
   if (!rate.allowed) {
