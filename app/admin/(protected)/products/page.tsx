@@ -3,6 +3,11 @@
 import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 import { createBrowserSupabaseClient } from "@/lib/supabase/client";
+import {
+  bulkUpdateProductsApi,
+  deleteProductsApi,
+  saveProduct,
+} from "@/lib/services/admin-fetch";
 import { useToast } from "@/components/admin/Toast";
 import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/admin/Modal";
@@ -208,12 +213,11 @@ export default function AdminProductsPage() {
     products.length > 0 && products.every((p) => selected.has(p.id));
 
   async function togglePublish(p: Product) {
-    const { error } = await supabase
-      .from("products")
-      .update({ is_published: !p.is_published })
-      .eq("id", p.id);
-    if (error) {
-      show(error.message, "error");
+    const result = await bulkUpdateProductsApi([p.id], {
+      is_published: !p.is_published,
+    });
+    if (!result.ok) {
+      show("操作失败，请稍后重试", "error");
       return;
     }
     show(p.is_published ? "已下架" : "已发布", "success");
@@ -223,12 +227,11 @@ export default function AdminProductsPage() {
   }
 
   async function toggleFeatured(p: Product) {
-    const { error } = await supabase
-      .from("products")
-      .update({ is_featured: !p.is_featured })
-      .eq("id", p.id);
-    if (error) {
-      show(error.message, "error");
+    const result = await bulkUpdateProductsApi([p.id], {
+      is_featured: !p.is_featured,
+    });
+    if (!result.ok) {
+      show("操作失败，请稍后重试", "error");
       return;
     }
     show(p.is_featured ? "已取消主推" : "已设为主推", "success");
@@ -239,9 +242,9 @@ export default function AdminProductsPage() {
 
   async function handleDelete(p: Product) {
     if (!confirm(`确定删除产品「${p.name_cn}」？\n该操作不可恢复。`)) return;
-    const { error } = await supabase.from("products").delete().eq("id", p.id);
-    if (error) {
-      show(error.message, "error");
+    const result = await deleteProductsApi(p.id);
+    if (!result.ok) {
+      show("删除失败，请稍后重试", "error");
       return;
     }
     show("产品已删除", "success");
@@ -269,32 +272,26 @@ export default function AdminProductsPage() {
     delete newPayload.product_images;
     delete newPayload.category;
     delete newPayload.subcategory;
+    delete newPayload.search_document;
     newPayload.name_cn = `${src.name_cn} 副本`;
     newPayload.slug = `${src.slug}-copy-${Date.now().toString().slice(-6)}`;
     newPayload.is_published = false;
     newPayload.is_featured = false;
 
-    const { data: created, error } = await supabase
-      .from("products")
-      .insert(newPayload)
-      .select("id")
-      .single();
-    if (error || !created) {
-      show(error?.message || "复制失败", "error");
-      return;
-    }
-    const newId = (created as { id: string }).id;
+    // Phase 2: copy via the transactional API (product + images atomically).
     const imgList = (imgs as ProductImage[] | null) || [];
-    if (imgList.length > 0) {
-      const imgPayload = imgList.map((img, i) => ({
-        product_id: newId,
-        image_url: img.image_url,
+    const result = await saveProduct({
+      product: newPayload,
+      images: imgList.map((img, i) => ({
+        image_url: img.image_url || "",
         alt_cn: img.alt_cn || null,
         alt_en: img.alt_en || null,
         sort_order: i,
-      }));
-      const { error: imgError } = await supabase.from("product_images").insert(imgPayload);
-      if (imgError) show(`图片复制失败：${imgError.message}`, "error");
+      })),
+    });
+    if (!result.ok) {
+      show("复制失败，请稍后重试", "error");
+      return;
     }
     show("已复制产品", "success");
     load();
@@ -302,13 +299,11 @@ export default function AdminProductsPage() {
 
   async function bulkUpdate(field: "is_published" | "is_featured", value: boolean) {
     if (selected.size === 0) return;
-    const payload: Record<string, boolean> = { [field]: value };
-    const { error } = await supabase
-      .from("products")
-      .update(payload)
-      .in("id", [...selected]);
-    if (error) {
-      show(error.message, "error");
+    const result = await bulkUpdateProductsApi([...selected], {
+      [field]: value,
+    } as { is_published?: boolean; is_featured?: boolean });
+    if (!result.ok) {
+      show("批量操作失败，请稍后重试", "error");
       return;
     }
     show(`已更新 ${selected.size} 个产品`, "success");
@@ -319,9 +314,12 @@ export default function AdminProductsPage() {
   async function bulkDelete() {
     if (selected.size === 0) return;
     if (!confirm(`确定删除选中的 ${selected.size} 个产品？\n该操作不可恢复。`)) return;
-    const { error } = await supabase.from("products").delete().in("id", [...selected]);
-    if (error) {
-      show(error.message, "error");
+    // Delete via the first selected id's endpoint; the API accepts a batch.
+    const firstId = [...selected][0];
+    const rest = [...selected].slice(1);
+    const result = await deleteProductsApi(firstId, rest.length ? rest : undefined);
+    if (!result.ok) {
+      show("批量删除失败，请稍后重试", "error");
       return;
     }
     show(`已删除 ${selected.size} 个产品`, "success");
@@ -336,17 +334,13 @@ export default function AdminProductsPage() {
       return;
     }
     setBulkSaving(true);
-    const payload: Record<string, string | null> = {
+    const result = await bulkUpdateProductsApi([...selected], {
       category_id: bulkCat,
       subcategory_id: bulkSub || null,
-    };
-    const { error } = await supabase
-      .from("products")
-      .update(payload)
-      .in("id", [...selected]);
+    });
     setBulkSaving(false);
-    if (error) {
-      show(error.message, "error");
+    if (!result.ok) {
+      show("批量修改类目失败，请稍后重试", "error");
       return;
     }
     show(`已修改 ${selected.size} 个产品的类目`, "success");

@@ -596,6 +596,33 @@ export type Database = {
         Args: { p_start: string; p_end: string };
         Returns: unknown;
       };
+      get_admin_dashboard_snapshot: {
+        Args: Record<string, never>;
+        Returns: {
+          total_products: number;
+          published_products: number;
+          total_certificates: number;
+          total_inquiries: number;
+          unread_inquiries: number;
+        };
+      };
+      save_product_with_images: {
+        Args: {
+          p_id: string | null;
+          p_product: Record<string, unknown>;
+          p_images?: Record<string, unknown>[];
+        };
+        Returns: string;
+      };
+      save_project_with_relations: {
+        Args: {
+          p_id: string | null;
+          p_project: Record<string, unknown>;
+          p_images?: Record<string, unknown>[];
+          p_products?: Record<string, unknown>[];
+        };
+        Returns: string;
+      };
     };
     Enums: Record<string, never>;
   };

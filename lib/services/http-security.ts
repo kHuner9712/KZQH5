@@ -44,8 +44,13 @@ export function isJsonRequest(request: Pick<NextRequest, "headers">): boolean {
 }
 
 export function isSameOrigin(request: NextRequest): boolean {
+  // Fail-closed: a missing Origin header is NOT treated as same-origin.
+  // Browser fetch() always sends Origin on cross-origin and same-origin
+  // credentialed requests, so a missing Origin on a state-changing request
+  // is suspicious and must be rejected. Trusted non-browser callers (server
+  // internal, release scripts) must use an explicit allowMissingOrigin path.
   const origin = request.headers.get("origin");
-  if (!origin) return true;
+  if (!origin) return false;
   const host =
     request.headers.get("x-forwarded-host") || request.headers.get("host");
   const protocol =
@@ -57,6 +62,18 @@ export function isSameOrigin(request: NextRequest): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * Same as {@link isSameOrigin} but permits a missing Origin header. Use ONLY
+ * for read-only endpoints that must remain callable by trusted non-browser
+ * clients (server-internal health checks, release-readiness scripts). Never
+ * use for state-changing (POST/PATCH/DELETE) admin write endpoints.
+ */
+export function isSameOriginOrTrustedReader(request: NextRequest): boolean {
+  const origin = request.headers.get("origin");
+  if (!origin) return true;
+  return isSameOrigin(request);
 }
 
 export async function readJsonBody<T>(
