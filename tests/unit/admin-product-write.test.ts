@@ -61,10 +61,36 @@ describe("validateProductPayload (Phase 2 field validation)", () => {
     const result = validateProduct({
       ...validBase(),
       id: "22222222-2222-4222-8222-222222222222",
+      // Phase 3: expected_updated_at is REQUIRED for updates (optimistic lock).
+      expected_updated_at: "2026-07-24T00:00:00.000Z",
     });
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.value.id).toBe("22222222-2222-4222-8222-222222222222");
+      expect(result.value.expected_updated_at).toBe("2026-07-24T00:00:00.000Z");
+    }
+  });
+
+  it("rejects an update without expected_updated_at (optimistic lock required)", () => {
+    const result = validateProduct({
+      ...validBase(),
+      id: "22222222-2222-4222-8222-222222222222",
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.errors.some((e) => e.field === "expected_updated_at")).toBe(true);
+    }
+  });
+
+  it("rejects an update with an invalid expected_updated_at", () => {
+    const result = validateProduct({
+      ...validBase(),
+      id: "22222222-2222-4222-8222-222222222222",
+      expected_updated_at: "not-a-timestamp",
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.errors.some((e) => e.field === "expected_updated_at")).toBe(true);
     }
   });
 

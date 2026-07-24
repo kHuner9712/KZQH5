@@ -74,14 +74,20 @@ describe("Phase 3/5: Transaction, optimistic lock, audit", () => {
       expect(result.code).toBe("ADMIN_WRITE_FAILED");
     }
     // The RPC was called exactly once — the transaction boundary is the RPC.
+    // Phase 13: the RPC is now save_product_with_images_and_audit (atomic
+    // business write + audit). Actor info comes from the server-verified
+    // session, never from the request body.
     expect(client.rpc).toHaveBeenCalledTimes(1);
     expect(client.rpc).toHaveBeenCalledWith(
-      "save_product_with_images",
+      "save_product_with_images_and_audit",
       expect.objectContaining({
         p_product: expect.objectContaining({ name_cn: "test" }),
         p_images: expect.arrayContaining([
           expect.objectContaining({ image_url: "/bad.jpg" }),
         ]),
+        p_actor_id: null,
+        p_actor_email: null,
+        p_actor_role: null,
       }),
     );
   });
