@@ -14,10 +14,42 @@ export interface NotificationConfig {
   resendTo?: string;
 }
 
+/**
+ * Context passed to NotificationAdapter.send so providers that
+ * support an idempotency key can use the outbox event id for it.
+ *
+ * - eventId: the inquiry_outbox.id (stable across retries)
+ * - lockToken: the per-claim lock_token (changes on each claim)
+ * - attempt: 1-based attempt number for this delivery
+ *
+ * Adapters that do NOT support idempotency keys (e.g. WeCom webhook)
+ * should document that duplicate sends are still possible.
+ */
+export interface NotificationSendContext {
+  eventId: string;
+  lockToken: string;
+  attempt: number;
+}
+
+/**
+ * Result of NotificationAdapter.send.
+ *
+ * providerMessageId is captured when the provider returns one
+ * (e.g. Resend message id) and recorded on the outbox event via
+ * mark_inquiry_outbox_sent. Adapters that don't expose a message id
+ * (e.g. WeCom webhook) return undefined.
+ */
+export interface NotificationSendResult {
+  providerMessageId?: string;
+}
+
 export interface NotificationAdapter {
   name: "wecom" | "email";
   configured: boolean;
-  send(inquiry: Inquiry): Promise<void>;
+  send(
+    inquiry: Inquiry,
+    context?: NotificationSendContext,
+  ): Promise<NotificationSendResult>;
 }
 
 const defaultRuntime: NotificationRuntime = {
@@ -30,6 +62,19 @@ async function postJson(
   init: RequestInit,
   runtime: NotificationRuntime,
 ): Promise<void> {
+  await postJsonWithResponse(url, init, runtime);
+}
+
+/**
+ * Same contract as postJson, but returns the parsed JSON body so the
+ * caller can extract a provider message id (e.g. Resend's `id` field).
+ * Throws the same errors as postJson on non-2xx / non-JSON responses.
+ */
+async function postJsonWithResponse(
+  url: string,
+  init: RequestInit,
+  runtime: NotificationRuntime,
+): Promise<Record<string, unknown> | null> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), runtime.timeoutMs);
   try {
@@ -43,12 +88,11 @@ async function postJson(
     if (text && !contentType.toLowerCase().includes("application/json")) {
       throw new Error("Non-JSON response");
     }
-    if (text) {
-      try {
-        JSON.parse(text);
-      } catch {
-        throw new Error("Invalid JSON response");
-      }
+    if (!text) return null;
+    try {
+      return JSON.parse(text) as Record<string, unknown>;
+    } catch {
+      throw new Error("Invalid JSON response");
     }
   } finally {
     clearTimeout(timer);
@@ -115,8 +159,11 @@ export function createNotificationAdapters(
   const wecom: NotificationAdapter = {
     name: "wecom",
     configured: Boolean(config.wecomWebhookUrl),
+    // WeCom webhook does NOT support an idempotency key, so duplicate
+    // sends are possible if the parent outbox event is retried
+    // (at-least-once). Documented as a known limitation.
     async send(inquiry) {
-      if (!config.wecomWebhookUrl) return;
+      if (!config.wecomWebhookUrl) return {};
       await postJson(
         config.wecomWebhookUrl,
         {
@@ -132,6 +179,8 @@ export function createNotificationAdapters(
         },
         runtime,
       );
+      // WeCom webhook does not return a message id.
+      return {};
     },
   };
 
@@ -140,11 +189,11 @@ export function createNotificationAdapters(
     configured: Boolean(
       config.resendApiKey && config.resendFrom && config.resendTo,
     ),
-    async send(inquiry) {
+    async send(inquiry, context) {
       if (!config.resendApiKey || !config.resendFrom || !config.resendTo)
-        return;
+        return {};
       const content = lines(inquiry);
-      await postJson(
+      const response = await postJsonWithResponse(
         "https://api.resend.com/emails",
         {
           method: "POST",
@@ -161,11 +210,20 @@ export function createNotificationAdapters(
             subject: `[KZQ] 新询盘 - ${inquiry.name}`,
             text: content.join("\n"),
             html: `<h2>KZQ 新询盘</h2>${content.map((line) => `<p>${escapeHtml(line)}</p>`).join("")}`,
+            // Resend supports an `idempotency_key` for duplicate
+            // suppression. Use the outbox event id when available.
+            ...(context?.eventId
+              ? { idempotency_key: `kzq-outbox-${context.eventId}` }
+              : {}),
           }),
           cache: "no-store",
         },
         runtime,
       );
+      // Resend returns { id: "re_xxx" } on success.
+      const providerMessageId =
+        typeof response?.id === "string" ? response.id : undefined;
+      return providerMessageId ? { providerMessageId } : {};
     },
   };
 

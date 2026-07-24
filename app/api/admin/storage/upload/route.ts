@@ -20,7 +20,12 @@ import {
   requireAdminWrite,
 } from "@/lib/services/admin-write-boundary";
 import type { AdminWriteErrorCode } from "@/lib/services/admin-write-boundary";
-import { uploadToPrivateAssets } from "@/lib/services/storage-upload";
+import {
+  PRIVATE_ASSETS_BUCKET,
+  PUBLIC_ASSETS_BUCKET,
+  uploadToPrivateAssets,
+  uploadToPublicAssets,
+} from "@/lib/services/storage-upload";
 
 // 20MB 文件（PDF 上限）+ multipart 框架开销。按类型的实际限制在 storage-upload 内执行。
 const MAX_REQUEST_BYTES = 21 * 1024 * 1024;
@@ -75,6 +80,7 @@ export async function POST(request: NextRequest) {
 
   const category = form.get("category");
   const file = form.get("file");
+  const publicField = form.get("public");
   if (
     typeof category !== "string" ||
     category.length === 0 ||
@@ -83,12 +89,21 @@ export async function POST(request: NextRequest) {
     return adminWriteError("ADMIN_WRITE_BAD_REQUEST", 400);
   }
 
+  // public="true" → 上传到 public-assets（可公开读取）；否则默认 private-assets。
+  const isPublic = publicField === "true";
+
   if (isDemoMode()) {
+    const demoPath = `demo/${category}/${Date.now()}`;
     return NextResponse.json({
       success: true,
       demo: true,
-      path: `demo/${category}/${Date.now()}`,
-      bucket: "private-assets",
+      path: demoPath,
+      bucket: isPublic ? PUBLIC_ASSETS_BUCKET : PRIVATE_ASSETS_BUCKET,
+      ...(isPublic
+        ? {
+            publicUrl: `${(process.env.NEXT_PUBLIC_SUPABASE_URL || "").replace(/\/+$/, "")}/storage/v1/object/public/${PUBLIC_ASSETS_BUCKET}/${demoPath}`,
+          }
+        : {}),
     });
   }
 
@@ -101,12 +116,42 @@ export async function POST(request: NextRequest) {
     return adminWriteError("ADMIN_WRITE_BAD_REQUEST", 400);
   }
 
+  if (isPublic) {
+    const result = await uploadToPublicAssets({
+      bytes,
+      mimeType: file.type,
+      size: bytes.length,
+      filename: file.name,
+      category,
+    }, {
+      actorId: guard.user.id,
+      actorRole: guard.profile.role ?? null,
+    });
+    if (!result.ok) {
+      return adminWriteError(result.code, statusForCode(result.code), {
+        logCode: result.code,
+      });
+    }
+
+    return NextResponse.json({
+      success: true,
+      path: result.path,
+      bucket: result.bucket,
+      mimeType: result.mimeType,
+      size: result.size,
+      publicUrl: result.publicUrl,
+    });
+  }
+
   const result = await uploadToPrivateAssets({
     bytes,
     mimeType: file.type,
     size: bytes.length,
     filename: file.name,
     category,
+  }, {
+    actorId: guard.user.id,
+    actorRole: guard.profile.role ?? null,
   });
   if (!result.ok) {
     return adminWriteError(result.code, statusForCode(result.code), {

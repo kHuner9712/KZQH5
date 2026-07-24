@@ -25,39 +25,29 @@ function readRoot(rel: string): string {
   return readFileSync(join(ROOT, rel), "utf8");
 }
 
-describe("Phase 4: Storage boundary — bucket allowlist", () => {
-  const STORAGE_TS = "lib/supabase/storage.ts";
-
-  it("upload functions only reference the allowlisted 'public-assets' bucket", () => {
-    const content = readRoot(STORAGE_TS);
-    // Every .from("...") call in storage.ts must use "public-assets".
-    // This prevents an accidental upload to a private or unhardened bucket.
-    const bucketRefs = [...content.matchAll(/\.from\(["']([^"']+)["']\)/g)];
-    expect(bucketRefs.length, "expected at least one bucket reference").toBeGreaterThan(0);
-    for (const match of bucketRefs) {
-      const bucket = match[1];
-      expect(
-        bucket,
-        `storage.ts references bucket "${bucket}" — only "public-assets" is allowlisted`,
-      ).toBe("public-assets");
-    }
+describe("Phase 4: Storage boundary — no direct browser storage uploads", () => {
+  it("the browser-side storage upload module has been removed", () => {
+    // Client components must not call createBrowserSupabaseClient().storage.upload()
+    // directly. The old lib/supabase/storage.ts module has been deleted; uploads
+    // now go through the trusted server API (/api/admin/storage/*).
+    expect(existsSync(join(ROOT, "lib/supabase/storage.ts"))).toBe(false);
   });
 
-  it("does not reference non-allowlisted bucket names", () => {
-    const content = readRoot(STORAGE_TS);
-    // No reference to arbitrary or user-controlled bucket names.
-    // The bucket is hardcoded, not derived from user input.
-    expect(content).not.toMatch(/\.from\(["']private-assets["']\)/);
-    expect(content).not.toMatch(/\.from\(["']tmp["']\)/);
-    expect(content).not.toMatch(/\.from\(["']uploads["']\)/);
+  it("the server-API client wrapper exists", () => {
+    expect(existsSync(join(ROOT, "lib/services/admin-storage-fetch.ts"))).toBe(true);
   });
 
-  it("upload functions call validateFileUpload before any storage operation", () => {
-    const content = readRoot(STORAGE_TS);
-    // Both uploadPublicImage and uploadPublicImage must validate BEFORE upload.
-    // We check that validateFileForUpload is called before .storage.from().upload().
-    expect(content).toMatch(/validateFileForUpload/);
-    expect(content).toMatch(/validateFileUpload/);
+  it("the client wrapper does not call Supabase storage directly", () => {
+    const content = readRoot("lib/services/admin-storage-fetch.ts");
+    // No direct .storage.from(...) calls — uploads/deletes go through fetch()
+    // to the server, which owns the allowlisted bucket selection.
+    expect(content).not.toMatch(/\.storage\.from\(/);
+  });
+
+  it("the client wrapper uploads/deletes via the trusted server endpoints", () => {
+    const content = readRoot("lib/services/admin-storage-fetch.ts");
+    expect(content).toMatch(/\/api\/admin\/storage\/upload/);
+    expect(content).toMatch(/\/api\/admin\/storage\/object/);
   });
 });
 

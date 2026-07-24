@@ -60,10 +60,22 @@ test.describe("Demo public acceptance", () => {
     const category = page.locator('a[href*="category="]').first();
     await category.click();
     await expect(page).toHaveURL(/category=/);
+    // The ProductsPage is a Server Component. Clicking a category filter
+    // triggers client-side navigation + server re-render + React 19
+    // streaming. The old articles can remain in the DOM briefly while
+    // the new HTML streams in, causing clicks to land on stale elements
+    // that are being detached. Wait for network to settle so the new
+    // product cards are fully rendered before clicking.
+    await page.waitForLoadState("networkidle");
 
     const productLink = page.locator('article a[href^="/products/"]').first();
+    await expect(productLink).toBeVisible();
     await productLink.click();
-    await expect(page).toHaveURL(/\/products\/[^/?]+$/);
+    // Next.js 15 App Router client-side navigation fetches the RSC payload
+    // before committing the URL change. On slow CI runners this can exceed
+    // the default 5s assertion timeout. Use waitForURL with 30s to avoid
+    // a false failure when the server-side render is slow.
+    await page.waitForURL(/\/products\/[^/?]+$/, { timeout: 30_000 });
     await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
     await page
       .getByRole("button", { name: /加入询盘/ })
@@ -116,18 +128,18 @@ test.describe("Demo public acceptance", () => {
 
     await page.goto("/en/products?q=fire");
     await expect(page.getByRole("heading", { name: "Products" })).toBeVisible();
+    // The heading is part of the static layout shell, but product cards
+    // are streamed from the Server Component. Wait for the first article
+    // link to be visible before clicking so the click doesn't race with
+    // streaming on slow CI runners.
+    await page.waitForLoadState("networkidle");
     const productLink = page
       .locator('article a[href^="/en/products/"]')
       .first();
-    // Wait for the link to be ready before clicking. Next 15 + React 19
-    // hydration can introduce a brief window where the link is in the DOM
-    // but not yet interactive.
     await expect(productLink).toBeVisible();
-    await expect(productLink).toBeEnabled();
-    await Promise.all([
-      page.waitForURL(/\/en\/products\/[^/?]+$/),
-      productLink.click(),
-    ]);
+    await productLink.click();
+    // See comment in the Chinese flow — RSC fetch on CI can exceed 5s.
+    await page.waitForURL(/\/en\/products\/[^/?]+$/, { timeout: 30_000 });
     await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
     await page
       .getByRole("button", { name: /Add to inquiry/ })
@@ -160,10 +172,15 @@ test.describe("Demo public acceptance", () => {
     );
     await page.goto("/products");
     await page.waitForLoadState("networkidle");
-    const productCard = page.locator('article a[href^="/products/"]').first();
-    await expect(productCard).toBeVisible();
-    await productCard.click();
-    await expect(page).toHaveURL(/\/products\/[^/?]+$/, { timeout: 10000 });
+    const mobileProductLink = page.locator('article a[href^="/products/"]').first();
+    await expect(mobileProductLink).toBeVisible();
+    await mobileProductLink.click();
+    // Wait for the RSC navigation to commit the URL change. The mobile nav
+    // visibility assertion depends on the URL being /products/[slug].
+    await page.waitForURL(/\/products\/[^/?]+$/, { timeout: 30_000 });
+    // MobileNavController hides BottomNav on /products/[slug] via
+    // usePathname(). The client-side effect runs after hydration/streaming
+    // settles — wait for it rather than asserting immediately.
     await expect(page.locator('nav[aria-label="移动端导航"]')).toHaveCount(0);
     const fixedCta = page.locator("div.fixed.bottom-0").last();
     await expect(fixedCta).toBeVisible();

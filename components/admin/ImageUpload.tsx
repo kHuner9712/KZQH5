@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { uploadPublicImage } from "@/lib/supabase/storage";
+import { uploadViaServerApi, deleteViaServerApi } from "@/lib/services/admin-storage-fetch";
 import { cn } from "@/lib/utils";
 import { Upload, X, Image as ImageIcon, Loader2 } from "lucide-react";
 
@@ -47,14 +47,14 @@ export function ImageUpload({
 
     setError(null);
     setUploading(true);
-    const { url, error: uploadError } = await uploadPublicImage(file, folder);
+    const result = await uploadViaServerApi(file, folder);
     setUploading(false);
 
-    if (uploadError || !url) {
-      setError(uploadError || "上传失败");
+    if (!result.ok || !result.data.publicUrl) {
+      setError(result.ok ? "上传失败" : result.error);
       return;
     }
-    onChange(url);
+    onChange(result.data.publicUrl);
     // 重置 input 以便相同文件可再次选择
     if (inputRef.current) inputRef.current.value = "";
   }
