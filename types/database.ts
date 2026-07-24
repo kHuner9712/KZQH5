@@ -610,6 +610,10 @@ export type Database = {
         Args: { p_id: string; p_error_code?: string | null };
         Returns: void;
       };
+      verify_schema_readiness: {
+        Args: Record<string, never>;
+        Returns: unknown;
+      };
       get_analytics_summary: {
         Args: { p_start: string; p_end: string };
         Returns: unknown;
