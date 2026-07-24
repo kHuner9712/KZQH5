@@ -49,5 +49,16 @@ revoke all on table public.admin_audit_log
 -- Grant ALL to service_role so SECURITY INVOKER functions invoked
 -- by the trusted server API (which uses the service_role key) can
 -- INSERT/SELECT/UPDATE audit rows. service_role bypasses RLS, so
--- this is the only privilege grant required.
+-- this is the only table-level privilege grant required.
 grant all on table public.admin_audit_log to service_role;
+
+-- The table uses `bigserial` (id bigserial primary key), which
+-- creates an implicit sequence `admin_audit_log_id_seq`. INSERT
+-- into the table requires USAGE (and UPDATE for nextval after a
+-- rollback) on the sequence. Without this GRANT, service_role
+-- gets `permission denied for sequence admin_audit_log_id_seq`
+-- even though the table-level INSERT is allowed.
+-- USAGE is the minimum required; SELECT allows currval/lastval
+-- inspection; UPDATE allows setval. Grant all three to match the
+-- `grant all on table` semantics above.
+grant select, usage, update on sequence public.admin_audit_log_id_seq to service_role;
