@@ -27,6 +27,9 @@ function asset(overrides: Partial<ProductAsset> = {}): ProductAsset {
     file_url: "/test.pdf", cover_image_url: null, file_size: null,
     mime_type: "application/pdf", published_at: null, content_hash: null,
     is_published: true, sort_order: 0, created_at: "", updated_at: "",
+    access_level: "public",
+    source_type: null,
+    authorization_status: "confirmed",
     ...overrides,
   };
 }

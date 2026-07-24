@@ -166,6 +166,35 @@ export type ProductAssetType =
   | "packaging"
   | "other";
 
+/**
+ * Phase 12: Catalog asset access level.
+ *   public     : visible to all visitors (anon)
+ *   registered : visible to authenticated users only
+ *   partner    : visible to admin/partner roles only
+ */
+export type ProductAssetAccessLevel = "public" | "registered" | "partner";
+
+/**
+ * Phase 12: Catalog asset source provenance.
+ *   official       : obtained from the manufacturer's official channel
+ *   self-produced  : produced by KZQ internally
+ *   licensed       : obtained under a licensing agreement
+ *   public-domain  : public domain material
+ */
+export type ProductAssetSourceType =
+  | "official"
+  | "self-produced"
+  | "licensed"
+  | "public-domain";
+
+/**
+ * Phase 12: Catalog asset authorization status.
+ *   confirmed : the right to use this asset has been verified
+ *   pending   : authorization has not yet been confirmed (default)
+ *   restricted: asset is restricted and should not be publicly displayed
+ */
+export type ProductAssetAuthorizationStatus = "confirmed" | "pending" | "restricted";
+
 export interface ProductAsset {
   id: string;
   product_id: string | null;
