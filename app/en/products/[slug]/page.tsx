@@ -1,4 +1,10 @@
 import { ProductDetailPageContent, getProductMetadata } from "@/components/public/pages/ProductDetailPage";
 export const revalidate = 300;
-export function generateMetadata({ params }: { params: { slug: string } }) { return getProductMetadata("en", params.slug); }
-export default function EnglishProductDetailPage({ params }: { params: { slug: string } }) { return ProductDetailPageContent("en", params.slug); }
+export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }) {
+  const { slug } = await params;
+  return getProductMetadata("en", slug);
+}
+export default async function EnglishProductDetailPage({ params }: { params: Promise<{ slug: string }> }) {
+  const { slug } = await params;
+  return ProductDetailPageContent("en", slug);
+}

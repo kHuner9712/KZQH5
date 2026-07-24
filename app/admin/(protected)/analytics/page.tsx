@@ -29,13 +29,14 @@ function decodeSearchTerm(value: string) {
   try { return decodeURIComponent(value.replace(/\+/g, " ")); } catch { return value; }
 }
 
-export default async function AnalyticsPage({ searchParams }: { searchParams: SearchParams }) {
+export default async function AnalyticsPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
+  const resolvedSearchParams = await searchParams;
   const admin = await getVerifiedAdmin();
   if (!admin.ok) {
     const stage = admin.reason === "session-missing" || admin.reason === "session-verification-failed" ? "session" : "profile";
     redirect(`/admin/login?error=admin_guard&stage=${stage}`);
   }
-  const range = dateRange(searchParams);
+  const range = dateRange(resolvedSearchParams);
   let summary;
   try {
     summary = await getAnalyticsSummary(admin.client, range.start, range.end);
@@ -50,8 +51,8 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: Se
     { label: "询盘成功", value: summary.inquiry_successes, icon: Send },
   ];
   return <div className="space-y-6">
-    <div className="flex flex-wrap items-end justify-between gap-4"><div><h1 className="flex items-center gap-2 text-xl font-bold text-graphite"><BarChart3 className="h-5 w-5" />访问统计</h1><p className="mt-1 text-sm text-gray-500">第一方匿名事件 · {range.label}</p></div><div className="flex flex-wrap gap-2">{[7, 30, 90].map((days) => <Link key={days} href={`/admin/analytics?range=${days}`} className={`inline-flex h-10 items-center rounded-lg border px-3 text-xs ${searchParams.range === String(days) || (!searchParams.range && days === 30) ? "border-steel bg-steel text-white" : "border-gray-200 bg-white text-gray-600"}`}>{days} 天</Link>)}</div></div>
-    <form className="grid gap-3 rounded-2xl bg-white p-4 ring-1 ring-gray-100 sm:grid-cols-[1fr_1fr_auto]"><label className="text-xs text-gray-500">开始日期<input name="from" type="date" defaultValue={searchParams.from} className="mt-1 h-10 w-full rounded-lg border border-gray-200 px-3 text-sm" /></label><label className="text-xs text-gray-500">结束日期<input name="to" type="date" defaultValue={searchParams.to} className="mt-1 h-10 w-full rounded-lg border border-gray-200 px-3 text-sm" /></label><input type="hidden" name="range" value="custom" /><button className="h-10 self-end rounded-lg bg-steel px-5 text-sm text-white">应用范围</button></form>
+    <div className="flex flex-wrap items-end justify-between gap-4"><div><h1 className="flex items-center gap-2 text-xl font-bold text-graphite"><BarChart3 className="h-5 w-5" />访问统计</h1><p className="mt-1 text-sm text-gray-500">第一方匿名事件 · {range.label}</p></div><div className="flex flex-wrap gap-2">{[7, 30, 90].map((days) => <Link key={days} href={`/admin/analytics?range=${days}`} className={`inline-flex h-10 items-center rounded-lg border px-3 text-xs ${resolvedSearchParams.range === String(days) || (!resolvedSearchParams.range && days === 30) ? "border-steel bg-steel text-white" : "border-gray-200 bg-white text-gray-600"}`}>{days} 天</Link>)}</div></div>
+    <form className="grid gap-3 rounded-2xl bg-white p-4 ring-1 ring-gray-100 sm:grid-cols-[1fr_1fr_auto]"><label className="text-xs text-gray-500">开始日期<input name="from" type="date" defaultValue={resolvedSearchParams.from} className="mt-1 h-10 w-full rounded-lg border border-gray-200 px-3 text-sm" /></label><label className="text-xs text-gray-500">结束日期<input name="to" type="date" defaultValue={resolvedSearchParams.to} className="mt-1 h-10 w-full rounded-lg border border-gray-200 px-3 text-sm" /></label><input type="hidden" name="range" value="custom" /><button className="h-10 self-end rounded-lg bg-steel px-5 text-sm text-white">应用范围</button></form>
     <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">{cards.map(({ label, value, icon: Icon }) => <div key={label} className="rounded-2xl bg-white p-5 ring-1 ring-gray-100"><Icon className="h-5 w-5 text-steel" /><p className="mt-3 text-2xl font-bold text-graphite">{value}</p><p className="text-xs text-gray-500">{label}</p></div>)}</div>
     <div className="grid gap-6 xl:grid-cols-2">
       <StatsTable title="热门产品" headers={["产品", "浏览"]} rows={summary.popular_products.map((row) => [row.name, row.count])} />

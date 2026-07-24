@@ -6,7 +6,7 @@ import {
   type AdminDataFailureCause,
 } from "@/lib/services/admin-data-error";
 
-type DashboardClient = ReturnType<typeof createServerSupabaseClient>;
+type DashboardClient = Awaited<ReturnType<typeof createServerSupabaseClient>>;
 
 /**
  * Fixed error thrown when the dashboard snapshot RPC fails or returns a

@@ -53,9 +53,9 @@ export async function getVerifiedAdmin(): Promise<AdminVerificationResult> {
   // Read both `user` and `error` to distinguish between "no session"
   // (session-missing) and "session verification failed" (e.g. JWT expired
   // or cookie tampered — session-verification-failed).
-  let sessionClient: ReturnType<typeof createServerSupabaseClient>;
+  let sessionClient: Awaited<ReturnType<typeof createServerSupabaseClient>>;
   try {
-    sessionClient = createServerSupabaseClient();
+    sessionClient = await createServerSupabaseClient();
   } catch {
     return { ok: false, reason: "session-verification-failed" };
   }
