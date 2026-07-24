@@ -802,6 +802,62 @@ export type Database = {
         };
         Returns: boolean;
       };
+      // Phase 14: per-provider outbox lifecycle RPCs (20260725110000).
+      find_uninitialized_outbox_events: {
+        Args: { p_limit?: number };
+        Returns: unknown;
+      };
+      initialize_inquiry_outbox_deliveries: {
+        Args: {
+          p_outbox_event_id: string;
+          p_providers: string[];
+        };
+        Returns: unknown;
+      };
+      mark_inquiry_outbox_not_configured: {
+        Args: { p_event_id: string; p_lock_token: string };
+        Returns: boolean;
+      };
+      // Phase 14: Storage cleanup queue + reference check RPCs.
+      check_storage_object_referenced: {
+        Args: { p_bucket: string; p_object_path: string };
+        Returns: boolean;
+      };
+      enqueue_storage_cleanup: {
+        Args: {
+          p_bucket: string;
+          p_object_path: string;
+          p_reason: string;
+          p_source_type?: string | null;
+          p_source_id?: string | null;
+        };
+        Returns: string | null;
+      };
+      claim_storage_cleanup: {
+        Args: { p_limit?: number; p_stale_timeout_seconds?: number };
+        Returns: unknown;
+      };
+      complete_storage_cleanup: {
+        Args: {
+          p_cleanup_id: string;
+          p_lock_token: string;
+          p_success: boolean;
+          p_error_code?: string | null;
+        };
+        Returns: string;
+      };
+      // Phase 14: Catalog asset publish RPC (private→public transition).
+      publish_catalog_asset: {
+        Args: {
+          p_asset_id: string;
+          p_public_file_url: string;
+          p_public_cover_image_url?: string | null;
+          p_actor_id?: string | null;
+          p_actor_email?: string | null;
+          p_actor_role?: string | null;
+        };
+        Returns: unknown;
+      };
     };
     Enums: Record<string, never>;
   };

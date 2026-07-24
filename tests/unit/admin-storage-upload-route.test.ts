@@ -23,12 +23,14 @@ import { NextRequest } from "next/server";
 const getVerifiedAdmin = vi.fn();
 const uploadToPrivateAssets = vi.fn();
 const deletePrivateAsset = vi.fn();
+const isReferencedStorageObject = vi.fn();
 const isDemoMode = vi.fn(() => false);
 
 vi.mock("@/lib/services/admin-auth", () => ({ getVerifiedAdmin }));
 vi.mock("@/lib/services/storage-upload", () => ({
   uploadToPrivateAssets,
   deletePrivateAsset,
+  isReferencedStorageObject,
   validatePrivateAssetPath: vi.fn((raw: string) => {
     // Lightweight stand-in mirroring the real validator's contract.
     if (typeof raw !== "string" || raw.length === 0) {
@@ -301,11 +303,19 @@ describe("Phase 13: Storage delete route — path traversal prevention", () => {
   beforeEach(() => {
     getVerifiedAdmin.mockReset();
     deletePrivateAsset.mockReset();
+    isReferencedStorageObject.mockReset();
     isDemoMode.mockReturnValue(false);
   });
 
   it("rejects path traversal in delete (../etc/passwd)", async () => {
     getVerifiedAdmin.mockResolvedValue(makeAdminContext());
+    // Reference check passes (not referenced) so the route reaches the
+    // delete service, which performs the path traversal validation.
+    isReferencedStorageObject.mockResolvedValue({
+      ok: true,
+      referenced: false,
+    });
+    // deletePrivateAsset performs the path validation and rejects "../".
     deletePrivateAsset.mockResolvedValue({
       ok: false,
       code: "ADMIN_WRITE_BAD_REQUEST",
@@ -314,6 +324,7 @@ describe("Phase 13: Storage delete route — path traversal prevention", () => {
 
     const res = await DELETE(
       jsonRequest("https://kzq.test/api/admin/storage/object", "DELETE", {
+        bucket: "private-assets",
         path: "../../etc/passwd",
       }),
     );
