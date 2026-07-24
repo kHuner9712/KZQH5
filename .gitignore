@@ -18,9 +18,14 @@
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+/debug.log
 /artifacts/
 /playwright-report/
 /test-results/
+
+# local tooling & temp
+.workbuddy/
+supabase/.temp/
 
 # local env files
 .env
