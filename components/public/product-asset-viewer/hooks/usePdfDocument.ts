@@ -30,26 +30,20 @@ interface PdfjsModule {
   getDocument(params: { url: string }): PdfLoadingTask;
 }
 
-// Cache the dynamic import. On failure, reset to null so the next attempt
-// can retry (otherwise a rejected promise would be cached forever).
-let pdfjsPromise: Promise<PdfjsModule> | null = null;
-async function loadPdfjs(): Promise<PdfjsModule> {
-  if (!pdfjsPromise) {
-    pdfjsPromise = (async () => {
-      // Static import — Next.js 14's webpack cannot resolve dynamic import()
-      // of `pdfjs-dist` (it stubs it out as a missing module in production
-      // builds). Using a static import bundles the library correctly, and
-      // the surrounding `usePdfDocument` hook is only mounted when a user
-      // opens a PDF, so the cost is paid lazily via the component chunk.
-      const mod = (await import("pdfjs-dist/build/pdf.mjs")) as PdfjsModule;
-      mod.GlobalWorkerOptions.workerSrc = WORKER_SRC;
-      return mod;
-    })();
-    // Reset on failure so retries are possible.
-    pdfjsPromise.catch(() => { pdfjsPromise = null; });
-  }
-  return pdfjsPromise;
-}
+// Static import — Next.js's webpack cannot reliably resolve dynamic
+// import() of `pdfjs-dist` in production builds (it stubs it out as a
+// missing module). A static import bundles the library correctly. The
+// surrounding `usePdfDocument` hook is only mounted when a user opens a
+// PDF, so the cost is paid lazily via the component chunk.
+//
+// The `transpilePackages: ["pdfjs-dist"]` in next.config.mjs ensures
+// webpack can transpile the ESM source. The webpack fallback config
+// empties Node built-ins (fs, http, etc.) that pdfjs-dist references
+// but are never used in the browser.
+import * as pdfjsLib from "pdfjs-dist/build/pdf.mjs";
+
+const pdfjs = pdfjsLib as unknown as PdfjsModule;
+pdfjs.GlobalWorkerOptions.workerSrc = WORKER_SRC;
 
 export interface PdfDocumentState {
   status: "idle" | "loading" | "ready" | "error";
@@ -123,7 +117,9 @@ export function usePdfDocument(url: string | null, _locale: Locale) {
     }, LOAD_TIMEOUT_MS);
 
     try {
-      const pdfjs = await loadPdfjs();
+      // pdfjs is statically imported (module-level const), so there is no
+      // async loading step. The token check is still needed in case the
+      // timeout already fired while we were setting up.
       if (token !== loadToken.current) return; // superseded or timed out
 
       const loadingTask = pdfjs.getDocument({ url });
