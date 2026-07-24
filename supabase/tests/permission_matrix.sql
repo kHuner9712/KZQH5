@@ -71,9 +71,9 @@ insert into public.certificates (id, name_cn, is_published) values
 insert into public.projects (id, slug, title_cn, is_published) values
   ('00000000-0000-4000-8000-000000000026', 'regression-public-project', '[REGRESSION TEST] public project', true),
   ('00000000-0000-4000-8000-000000000027', 'regression-hidden-project', '[REGRESSION TEST] hidden project', false);
-insert into public.product_assets (id, product_id, asset_type, title_cn, file_url, is_published) values
-  ('00000000-0000-4000-8000-000000000028', '00000000-0000-4000-8000-000000000022', 'catalog', '[REGRESSION TEST] public asset', '/regression-public.pdf', true),
-  ('00000000-0000-4000-8000-000000000029', '00000000-0000-4000-8000-000000000022', 'catalog', '[REGRESSION TEST] hidden asset', '/regression-hidden.pdf', false);
+insert into public.product_assets (id, product_id, asset_type, title_cn, file_url, is_published, access_level, authorization_status) values
+  ('00000000-0000-4000-8000-000000000028', '00000000-0000-4000-8000-000000000022', 'catalog', '[REGRESSION TEST] public asset', '/regression-public.pdf', true, 'public', 'confirmed'),
+  ('00000000-0000-4000-8000-000000000029', '00000000-0000-4000-8000-000000000022', 'catalog', '[REGRESSION TEST] hidden asset', '/regression-hidden.pdf', false, 'public', 'confirmed');
 set local role anon;
 do $$
 declare

@@ -167,12 +167,16 @@ export type ProductAssetType =
   | "other";
 
 /**
- * Phase 12: Catalog asset access level.
- *   public     : visible to all visitors (anon)
- *   registered : visible to authenticated users only
- *   partner    : visible to admin/partner roles only
+ * Phase 12 (corrected): Catalog asset access level.
+ *   public  : visible to anon once authorization_status='confirmed'
+ *   private : visible only via service_role (admin RBAC at app layer)
+ *
+ * The 'registered'/'partner' values were removed because the project has
+ * no complete customer authorization system. 'authenticated' Supabase Auth
+ * role is NOT equivalent to a vetted customer/partner and must not grant
+ * private access. See migration 20260724200000_catalog_authorization_tighten.sql.
  */
-export type ProductAssetAccessLevel = "public" | "registered" | "partner";
+export type ProductAssetAccessLevel = "public" | "private";
 
 /**
  * Phase 12: Catalog asset source provenance.
