@@ -12,6 +12,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { revalidatePath } from "next/cache";
 import { isDemoMode } from "@/lib/demo";
 import { requireAdminWrite, adminWriteError } from "@/lib/services/admin-write-boundary";
+import { logAdminAction } from "@/lib/services/admin-audit";
 import { bulkDeleteProducts } from "@/lib/services/admin-product-write";
 import { isUuid } from "@/lib/validation/admin-write";
 
@@ -56,6 +57,18 @@ export async function DELETE(
     const status = result.code === "ADMIN_WRITE_BAD_REQUEST" ? 400 : 500;
     return adminWriteError(result.code, status, { logCode: result.code });
   }
+
+  // Phase 3: audit log (best-effort, never blocks the response).
+  void logAdminAction(guard.client, {
+    id: guard.user.id,
+    email: guard.user.email,
+    role: guard.profile.role,
+  }, {
+    action: "product.delete",
+    targetType: "product",
+    targetId: ids.join(","),
+    summary: `Deleted ${ids.length} product(s)`,
+  });
 
   revalidatePath("/admin", "layout");
   revalidatePath("/products", "page");

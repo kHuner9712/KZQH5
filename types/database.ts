@@ -7,6 +7,30 @@ export interface AdminProfile {
   email: string | null;
   role: string | null;
   created_at: string;
+  updated_at: string;
+}
+
+/**
+ * Phase 3: Admin role values enforced by the admin_profiles_role_check
+ * CHECK constraint. Existing rows default to 'admin'.
+ */
+export type AdminRole = "super_admin" | "admin" | "editor";
+
+/**
+ * Phase 3: Audit log entry written by logAdminAction().
+ * RLS denies all access to anon/authenticated; only service_role can
+ * insert and query.
+ */
+export interface AdminAuditLog {
+  id: number;
+  actor_id: string | null;
+  actor_email: string | null;
+  actor_role: string | null;
+  action: string;
+  target_type: string;
+  target_id: string | null;
+  summary: string | null;
+  created_at: string;
 }
 
 export interface Category {
@@ -477,6 +501,12 @@ export type Database = {
         Update: SupabaseUpdate<AdminProfile>;
         Relationships: [];
       };
+      admin_audit_log: {
+        Row: SupabaseRow<AdminAuditLog>;
+        Insert: SupabaseInsert<AdminAuditLog>;
+        Update: SupabaseUpdate<AdminAuditLog>;
+        Relationships: [];
+      };
       categories: {
         Row: SupabaseRow<Category>;
         Insert: SupabaseInsert<Category>;
@@ -633,6 +663,7 @@ export type Database = {
           p_id: string | null;
           p_product: Record<string, unknown>;
           p_images?: Record<string, unknown>[];
+          p_expected_updated_at?: string | null;
         };
         Returns: string;
       };
@@ -642,6 +673,7 @@ export type Database = {
           p_project: Record<string, unknown>;
           p_images?: Record<string, unknown>[];
           p_products?: Record<string, unknown>[];
+          p_expected_updated_at?: string | null;
         };
         Returns: string;
       };

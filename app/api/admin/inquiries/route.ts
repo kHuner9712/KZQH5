@@ -3,6 +3,7 @@ import { revalidatePath } from "next/cache";
 import { isDemoMode } from "@/lib/demo";
 import { listInquiries, updateInquiry } from "@/lib/repositories/inquiries";
 import { getVerifiedAdmin } from "@/lib/services/admin-auth";
+import { logAdminAction } from "@/lib/services/admin-audit";
 import { inquiryFiltersFromSearchParams } from "@/lib/services/inquiries/admin-filters";
 import {
   isSameSiteRequest,
@@ -49,6 +50,7 @@ export async function PATCH(request: NextRequest) {
     is_read?: boolean;
     notes?: string;
     assignee?: string;
+    expected_updated_at?: string | null;
   };
   const parsed = await readJsonBody<typeof body>(request, 16 * 1024);
   if (!parsed.ok) {
@@ -66,6 +68,19 @@ export async function PATCH(request: NextRequest) {
   }
   if (body.status && !validStatuses.has(body.status)) {
     return NextResponse.json({ error: "状态无效" }, { status: 400 });
+  }
+
+  // Phase 3: validate expected_updated_at if present (optimistic locking).
+  let expectedUpdatedAt: string | null = null;
+  if (body.expected_updated_at != null && body.expected_updated_at !== "") {
+    if (typeof body.expected_updated_at !== "string") {
+      return NextResponse.json({ error: "expected_updated_at 格式不正确" }, { status: 400 });
+    }
+    const ts = body.expected_updated_at.trim();
+    if (Number.isNaN(Date.parse(ts))) {
+      return NextResponse.json({ error: "expected_updated_at 格式不正确" }, { status: 400 });
+    }
+    expectedUpdatedAt = ts;
   }
 
   const patch: {
@@ -98,11 +113,32 @@ export async function PATCH(request: NextRequest) {
   }
 
   try {
-    const inquiry = await updateInquiry(admin.client, body.id, patch);
+    const inquiry = await updateInquiry(admin.client, body.id, patch, expectedUpdatedAt);
+
+    // Phase 3: audit log (best-effort, never blocks the response).
+    void logAdminAction(admin.client, {
+      id: admin.user.id,
+      email: admin.user.email,
+      role: admin.profile.role,
+    }, {
+      action: "inquiry.update",
+      targetType: "inquiry",
+      targetId: body.id,
+      summary: `Updated inquiry ${body.id}: ${Object.keys(patch).join(", ")}`,
+    });
+
     revalidatePath("/admin");
     revalidatePath("/admin/inquiries");
     return NextResponse.json({ success: true, inquiry });
   } catch (error) {
+    // Phase 3: detect optimistic lock conflict (stale updated_at).
+    const errorCode = (error as Error & { code?: string }).code;
+    if (errorCode === "40P01" || errorCode === "40001" || errorCode === "23505") {
+      return NextResponse.json(
+        { error: "该询盘已被其他人更新，请刷新后重试" },
+        { status: 409 },
+      );
+    }
     console.error(
       "Admin inquiry update failed:",
       error instanceof Error ? error.message : "unknown error",

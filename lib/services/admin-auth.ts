@@ -91,6 +91,7 @@ export async function getVerifiedAdmin(): Promise<AdminVerificationResult> {
   }
 
   // Stage 3: query admin_profiles for the verified user id.
+  // Phase 3: now selects role + updated_at for RBAC and audit logging.
   // Distinguish between a query error (profile-query-failed) and a
   // missing profile row (profile-missing).
   let profile: AdminProfile | null = null;
@@ -98,7 +99,7 @@ export async function getVerifiedAdmin(): Promise<AdminVerificationResult> {
   try {
     const { data, error } = await adminClient
       .from("admin_profiles")
-      .select("id, email")
+      .select("id, email, role, created_at, updated_at")
       .eq("id", user.id)
       .maybeSingle();
     if (error) {

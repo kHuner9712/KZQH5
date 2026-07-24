@@ -12,7 +12,9 @@
  *   * The product jsonb handed to the RPC contains ONLY whitelisted columns.
  *   * On any failure a fixed AdminWriteErrorCode is thrown / returned; the
  *     underlying database error is never forwarded.
- *   * Optimistic-lock `updated_at` is checked before update (Phase 3).
+ *   * Phase 3: optimistic-lock `updated_at` is checked by the RPC when
+ *     `expected_updated_at` is provided. A stale version raises 40P01 which
+ *     is classified as ADMIN_WRITE_CONFLICT (HTTP 409).
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -54,6 +56,7 @@ export interface ProductWritePayload {
   id?: string;
   product: Record<string, unknown>;
   images: ProductImageInput[];
+  expected_updated_at?: string | null;
 }
 
 export type ProductSaveResult =
@@ -68,6 +71,7 @@ export function validateProductPayload(input: unknown): ValidationResult<{
   id: string | null;
   product: Record<string, unknown>;
   images: ProductImageInput[];
+  expected_updated_at: string | null;
 }> {
   if (!input || typeof input !== "object" || Array.isArray(input)) {
     return fail([{ field: "body", reason: "not-object" }]);
@@ -80,6 +84,20 @@ export function validateProductPayload(input: unknown): ValidationResult<{
       ? ok<string | null>(null)
       : validateUuid("id", body.id);
   if (!idResult.ok) return idResult;
+
+  // Phase 3: expected_updated_at — optional ISO timestamp for optimistic locking.
+  // If present, must be a valid ISO string. Only meaningful for updates (id != null).
+  let expectedUpdatedAt: string | null = null;
+  if (body.expected_updated_at != null && body.expected_updated_at !== "") {
+    if (typeof body.expected_updated_at !== "string") {
+      return fail([{ field: "expected_updated_at", reason: "not-string" }]);
+    }
+    const ts = body.expected_updated_at.trim();
+    if (Number.isNaN(Date.parse(ts))) {
+      return fail([{ field: "expected_updated_at", reason: "invalid-timestamp" }]);
+    }
+    expectedUpdatedAt = ts;
+  }
 
   // core required + optional fields
   const fields = {
@@ -161,7 +179,12 @@ export function validateProductPayload(input: unknown): ValidationResult<{
   const imagesResult = validateImages(body.images);
   if (!imagesResult.ok) return imagesResult;
 
-  return ok({ id: idResult.value, product, images: imagesResult.value });
+  return ok({
+    id: idResult.value,
+    product,
+    images: imagesResult.value,
+    expected_updated_at: expectedUpdatedAt,
+  });
 }
 
 function validateImages(raw: unknown): ValidationResult<ProductImageInput[]> {
@@ -201,15 +224,22 @@ function validateImages(raw: unknown): ValidationResult<ProductImageInput[]> {
 /**
  * Persist a validated product payload via the transactional RPC.
  * The RPC handles insert-or-update based on whether id is null.
+ * Phase 3: passes expected_updated_at for optimistic locking on updates.
  */
 export async function saveProductViaRpc(
   client: SupabaseClient<Database>,
-  payload: { id: string | null; product: Record<string, unknown>; images: ProductImageInput[] },
+  payload: {
+    id: string | null;
+    product: Record<string, unknown>;
+    images: ProductImageInput[];
+    expected_updated_at?: string | null;
+  },
 ): Promise<ProductSaveResult> {
   const { data, error } = await client.rpc("save_product_with_images", {
     p_id: payload.id,
     p_product: payload.product,
     p_images: payload.images as unknown as Record<string, unknown>[],
+    p_expected_updated_at: payload.expected_updated_at ?? null,
   });
 
   if (error) {

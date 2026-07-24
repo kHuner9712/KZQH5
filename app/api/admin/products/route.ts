@@ -21,6 +21,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { revalidatePath } from "next/cache";
 import { isDemoMode } from "@/lib/demo";
 import { requireAdminWrite, adminWriteError } from "@/lib/services/admin-write-boundary";
+import { logAdminAction } from "@/lib/services/admin-audit";
 import {
   bulkUpdateProducts,
   saveProductViaRpc,
@@ -60,6 +61,20 @@ export async function POST(request: NextRequest) {
   if (!result.ok) {
     return adminWriteError(result.code, failStatus(result.code), { logCode: result.code });
   }
+
+  // Phase 3: audit log (best-effort, never blocks the response).
+  void logAdminAction(guard.client, {
+    id: guard.user.id,
+    email: guard.user.email,
+    role: guard.profile.role,
+  }, {
+    action: validated.value.id ? "product.update" : "product.create",
+    targetType: "product",
+    targetId: result.id,
+    summary: validated.value.id
+      ? `Updated product "${validated.value.product.name_cn ?? result.id}"`
+      : `Created product "${validated.value.product.name_cn ?? result.id}"`,
+  });
 
   revalidatePath("/admin", "layout");
   revalidatePath("/products", "page");
@@ -118,6 +133,18 @@ export async function PATCH(request: NextRequest) {
   if (!result.ok) {
     return adminWriteError(result.code, failStatus(result.code), { logCode: result.code });
   }
+
+  // Phase 3: audit log (best-effort, never blocks the response).
+  void logAdminAction(guard.client, {
+    id: guard.user.id,
+    email: guard.user.email,
+    role: guard.profile.role,
+  }, {
+    action: "product.bulk_update",
+    targetType: "product",
+    targetId: ids.join(","),
+    summary: `Bulk updated ${ids.length} product(s): ${Object.keys(patch).join(", ")}`,
+  });
 
   revalidatePath("/admin", "layout");
   revalidatePath("/products", "page");

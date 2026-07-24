@@ -183,17 +183,57 @@ export async function countUnreadInquiries(client: InquiryClient): Promise<numbe
   return count;
 }
 
+/**
+ * Phase 3: Update an inquiry with optional optimistic locking.
+ *
+ * When `expectedUpdatedAt` is provided, the UPDATE only succeeds if the
+ * row's `updated_at` matches. If zero rows are updated (stale version or
+ * row missing), an error with code 'PGRST116' (no rows returned by .single())
+ * or a check is performed to distinguish conflict from not-found.
+ *
+ * Throws an Error with `code` property set to '40P01' for stale version
+ * (conflict) so the caller can map it to HTTP 409.
+ */
 export async function updateInquiry(
   client: InquiryClient,
   id: string,
-  patch: Partial<Pick<Inquiry, "status" | "is_read" | "read_at" | "notes" | "assignee">>
+  patch: Partial<Pick<Inquiry, "status" | "is_read" | "read_at" | "notes" | "assignee">>,
+  expectedUpdatedAt?: string | null,
 ): Promise<Inquiry> {
-  const { data, error } = await client
+  let query = client
     .from("inquiries")
     .update(patch)
-    .eq("id", id)
-    .select("*")
-    .single();
-  if (error || !data) throw error || new Error("Inquiry update returned no row");
+    .eq("id", id);
+
+  // Phase 3: optimistic lock — only update if updated_at matches.
+  if (expectedUpdatedAt) {
+    query = query.eq("updated_at", expectedUpdatedAt);
+  }
+
+  const { data, error } = await query.select("*").maybeSingle();
+
+  if (error) {
+    throw error;
+  }
+
+  // Phase 3: if no row was updated and optimistic lock was active,
+  // check whether the row exists to distinguish conflict from not-found.
+  if (!data) {
+    if (expectedUpdatedAt) {
+      const { data: existsRow } = await client
+        .from("inquiries")
+        .select("id")
+        .eq("id", id)
+        .maybeSingle();
+      if (existsRow) {
+        // Row exists but updated_at mismatch → conflict
+        const conflictError = new Error("Inquiry updated by another transaction");
+        (conflictError as Error & { code?: string }).code = "40P01";
+        throw conflictError;
+      }
+    }
+    throw new Error("Inquiry update returned no row");
+  }
+
   return data;
 }
