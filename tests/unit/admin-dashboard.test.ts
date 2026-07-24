@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import type { AdminDashboardQueries } from "@/lib/repositories/admin-dashboard";
-import { DashboardQueryError } from "@/lib/repositories/admin-dashboard";
+import {
+  DashboardSnapshotError,
+  parseDashboardSnapshot,
+} from "@/lib/repositories/admin-dashboard";
 import { loadAdminDashboard } from "@/lib/services/admin-dashboard";
 import type { Inquiry } from "@/types/database";
 
@@ -15,15 +18,30 @@ const realInquiry = {
   country: null,
 } as Inquiry;
 
+function snapshot(
+  overrides: Partial<{
+    totalProducts: number;
+    publishedProducts: number;
+    totalCertificates: number;
+    totalInquiries: number;
+    unreadInquiries: number;
+  }> = {},
+) {
+  return {
+    totalProducts: 3,
+    publishedProducts: 2,
+    totalCertificates: 1,
+    totalInquiries: 2,
+    unreadInquiries: 1,
+    ...overrides,
+  };
+}
+
 function makeQueries(
   overrides: Partial<AdminDashboardQueries> = {},
 ): AdminDashboardQueries {
   return {
-    totalProducts: vi.fn().mockResolvedValue(3),
-    publishedProducts: vi.fn().mockResolvedValue(2),
-    totalCertificates: vi.fn().mockResolvedValue(1),
-    totalInquiries: vi.fn().mockResolvedValue(2),
-    unreadInquiries: vi.fn().mockResolvedValue(1),
+    getSnapshot: vi.fn().mockResolvedValue(snapshot()),
     recentInquiries: vi.fn().mockResolvedValue([realInquiry]),
     ...overrides,
   };
@@ -46,7 +64,7 @@ describe("admin dashboard integrity", () => {
   it("keeps a two-row inquiry total consistent with the recent list", async () => {
     const result = await loadAdminDashboard(
       makeQueries({
-        totalInquiries: vi.fn().mockResolvedValue(2),
+        getSnapshot: vi.fn().mockResolvedValue(snapshot({ totalInquiries: 2 })),
         recentInquiries: vi.fn().mockResolvedValue([
           realInquiry,
           { ...realInquiry, id: "22222222-2222-4222-8222-222222222222" },
@@ -60,31 +78,52 @@ describe("admin dashboard integrity", () => {
     });
   });
 
-  it("returns an explicit error state instead of zero on query failure", async () => {
+  it("returns an explicit error state instead of zero on snapshot failure", async () => {
     const log = vi.fn();
     const result = await loadAdminDashboard(
       makeQueries({
-        totalProducts: vi
+        getSnapshot: vi
           .fn()
-          .mockRejectedValue(new DashboardQueryError("products.total")),
+          .mockRejectedValue(new DashboardSnapshotError("permission")),
       }),
       log,
     );
 
     expect(result).toEqual({ ok: false });
     expect(log).toHaveBeenCalledWith("Admin dashboard data read failed", {
-      queries: ["products.total"],
+      queries: ["dashboard.snapshot:permission"],
+    });
+  });
+
+  it("returns an explicit error state when recent inquiries fail", async () => {
+    const log = vi.fn();
+    const result = await loadAdminDashboard(
+      makeQueries({
+        recentInquiries: vi
+          .fn()
+          .mockRejectedValue(new DashboardSnapshotError("count-unavailable")),
+      }),
+      log,
+    );
+
+    expect(result).toEqual({ ok: false });
+    expect(log).toHaveBeenCalledWith("Admin dashboard data read failed", {
+      queries: ["inquiries.recent:count-unavailable"],
     });
   });
 
   it("shows real zeros for empty tables", async () => {
     const result = await loadAdminDashboard(
       makeQueries({
-        totalProducts: vi.fn().mockResolvedValue(0),
-        publishedProducts: vi.fn().mockResolvedValue(0),
-        totalCertificates: vi.fn().mockResolvedValue(0),
-        totalInquiries: vi.fn().mockResolvedValue(0),
-        unreadInquiries: vi.fn().mockResolvedValue(0),
+        getSnapshot: vi.fn().mockResolvedValue(
+          snapshot({
+            totalProducts: 0,
+            publishedProducts: 0,
+            totalCertificates: 0,
+            totalInquiries: 0,
+            unreadInquiries: 0,
+          }),
+        ),
         recentInquiries: vi.fn().mockResolvedValue([]),
       }),
     );
@@ -104,17 +143,19 @@ describe("admin dashboard integrity", () => {
 
   it("uses the exact unread inquiry count", async () => {
     const result = await loadAdminDashboard(
-      makeQueries({ unreadInquiries: vi.fn().mockResolvedValue(2) }),
+      makeQueries({
+        getSnapshot: vi.fn().mockResolvedValue(snapshot({ unreadInquiries: 2 })),
+      }),
     );
     expect(result).toMatchObject({ ok: true, data: { unreadCount: 2 } });
   });
 
   it("reflects a product publish-state change on the next read", async () => {
-    const publishedProducts = vi
+    const getSnapshot = vi
       .fn()
-      .mockResolvedValueOnce(2)
-      .mockResolvedValueOnce(1);
-    const queries = makeQueries({ publishedProducts });
+      .mockResolvedValueOnce(snapshot({ publishedProducts: 2 }))
+      .mockResolvedValueOnce(snapshot({ publishedProducts: 1 }));
+    const queries = makeQueries({ getSnapshot });
 
     const before = await loadAdminDashboard(queries);
     const after = await loadAdminDashboard(queries);
@@ -124,12 +165,12 @@ describe("admin dashboard integrity", () => {
   });
 
   it("reflects certificate additions and deletions on subsequent reads", async () => {
-    const totalCertificates = vi
+    const getSnapshot = vi
       .fn()
-      .mockResolvedValueOnce(1)
-      .mockResolvedValueOnce(2)
-      .mockResolvedValueOnce(1);
-    const queries = makeQueries({ totalCertificates });
+      .mockResolvedValueOnce(snapshot({ totalCertificates: 1 }))
+      .mockResolvedValueOnce(snapshot({ totalCertificates: 2 }))
+      .mockResolvedValueOnce(snapshot({ totalCertificates: 1 }));
+    const queries = makeQueries({ getSnapshot });
 
     const before = await loadAdminDashboard(queries);
     const added = await loadAdminDashboard(queries);
@@ -145,7 +186,7 @@ describe("admin dashboard integrity", () => {
     const sensitiveMessage = "relation secret_table failed with private details";
     const result = await loadAdminDashboard(
       makeQueries({
-        totalInquiries: vi.fn().mockRejectedValue(new Error(sensitiveMessage)),
+        getSnapshot: vi.fn().mockRejectedValue(new Error(sensitiveMessage)),
       }),
       log,
     );
@@ -153,7 +194,202 @@ describe("admin dashboard integrity", () => {
     expect(JSON.stringify(result)).not.toContain(sensitiveMessage);
     expect(JSON.stringify(log.mock.calls)).not.toContain(sensitiveMessage);
     expect(log).toHaveBeenCalledWith("Admin dashboard data read failed", {
-      queries: ["inquiries.total"],
+      queries: ["dashboard.snapshot:unknown"],
     });
+  });
+
+  it("does NOT return 0 on failure (no deny-by-default regression)", async () => {
+    const queries = makeQueries({
+      getSnapshot: vi
+        .fn()
+        .mockRejectedValue(new DashboardSnapshotError("permission")),
+    });
+    const result = await loadAdminDashboard(queries);
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      throw new Error("expected failure state, got success");
+    }
+  });
+});
+
+describe("parseDashboardSnapshot (RPC structural validation)", () => {
+  const validObject = {
+    total_products: 3,
+    published_products: 2,
+    total_certificates: 1,
+    total_inquiries: 2,
+    unread_inquiries: 1,
+  };
+
+  it("accepts a well-formed object with numeric counts", () => {
+    expect(parseDashboardSnapshot(validObject)).toEqual({
+      totalProducts: 3,
+      publishedProducts: 2,
+      totalCertificates: 1,
+      totalInquiries: 2,
+      unreadInquiries: 1,
+    });
+  });
+
+  it("accepts decimal-string counts that convert to safe integers", () => {
+    expect(
+      parseDashboardSnapshot({
+        total_products: "3",
+        published_products: "2",
+        total_certificates: "1",
+        total_inquiries: "2",
+        unread_inquiries: "1",
+      }),
+    ).toEqual({
+      totalProducts: 3,
+      publishedProducts: 2,
+      totalCertificates: 1,
+      totalInquiries: 2,
+      unreadInquiries: 1,
+    });
+  });
+
+  it("accepts a mixed numeric/string payload (PostgREST may stringify bigints)", () => {
+    expect(
+      parseDashboardSnapshot({
+        total_products: "3",
+        published_products: 2,
+        total_certificates: "1",
+        total_inquiries: 2,
+        unread_inquiries: "1",
+      }),
+    ).toEqual({
+      totalProducts: 3,
+      publishedProducts: 2,
+      totalCertificates: 1,
+      totalInquiries: 2,
+      unreadInquiries: 1,
+    });
+  });
+
+  it("accepts an array with exactly one row (table return shape)", () => {
+    expect(parseDashboardSnapshot([validObject])).toEqual({
+      totalProducts: 3,
+      publishedProducts: 2,
+      totalCertificates: 1,
+      totalInquiries: 2,
+      unreadInquiries: 1,
+    });
+  });
+
+  it("accepts real zeros", () => {
+    expect(
+      parseDashboardSnapshot({
+        total_products: 0,
+        published_products: 0,
+        total_certificates: 0,
+        total_inquiries: 0,
+        unread_inquiries: 0,
+      }),
+    ).toEqual({
+      totalProducts: 0,
+      publishedProducts: 0,
+      totalCertificates: 0,
+      totalInquiries: 0,
+      unreadInquiries: 0,
+    });
+  });
+
+  it.each([
+    ["null", null],
+    ["undefined", undefined],
+    ["a number", 5],
+    ["a string", "5"],
+    ["a boolean", true],
+    ["an empty array", []],
+    ["an array with two rows", [validObject, validObject]],
+    ["an object missing all fields", {}],
+  ])("rejects %s as count-unavailable", (_label, data) => {
+    expect(() => parseDashboardSnapshot(data)).toThrowError(
+      DashboardSnapshotError,
+    );
+    try {
+      parseDashboardSnapshot(data);
+    } catch (err) {
+      expect((err as DashboardSnapshotError).causeCode).toBe(
+        "count-unavailable",
+      );
+    }
+  });
+
+  it.each([
+    ["total_products missing", { ...validObject, total_products: undefined }],
+    ["published_products missing", { ...validObject, published_products: undefined }],
+    ["total_certificates missing", { ...validObject, total_certificates: undefined }],
+    ["total_inquiries missing", { ...validObject, total_inquiries: undefined }],
+    ["unread_inquiries missing", { ...validObject, unread_inquiries: undefined }],
+  ])("rejects when %s", (_label, data) => {
+    expect(() => parseDashboardSnapshot(data)).toThrowError(
+      DashboardSnapshotError,
+    );
+  });
+
+  it.each([
+    ["negative number", -1],
+    ["fractional number", 1.5],
+    ["NaN", Number.NaN],
+    ["Infinity", Number.POSITIVE_INFINITY],
+    ["number above MAX_SAFE_INTEGER", Number.MAX_SAFE_INTEGER + 1],
+    ["empty string", ""],
+    ["negative string", "-1"],
+    ["positive-signed string", "+1"],
+    ["decimal string", "1.0"],
+    ["scientific-notation string", "1e3"],
+    ["string above MAX_SAFE_INTEGER", "9007199254740992"],
+    ["object", { count: 1 }],
+    ["array", [1]],
+    ["boolean", true],
+    ["null", null],
+  ])("rejects an invalid count value: %s", (label, value) => {
+    expect(() =>
+      parseDashboardSnapshot({ ...validObject, total_products: value }),
+    ).toThrowError(DashboardSnapshotError);
+  });
+
+  it("never returns a synthetic zero when a field is structurally invalid", () => {
+    const outcomes: number[] = [];
+    try {
+      outcomes.push(
+        parseDashboardSnapshot({ ...validObject, total_inquiries: -1 })
+          .totalInquiries,
+      );
+    } catch {
+      // expected
+    }
+    expect(outcomes).not.toContain(0);
+  });
+});
+
+describe("DashboardSnapshotError", () => {
+  it("is an instance of Error with a fixed message and does not carry the original error", () => {
+    const e = new DashboardSnapshotError("permission");
+    expect(e).toBeInstanceOf(Error);
+    expect(e.name).toBe("DashboardSnapshotError");
+    expect(e.message).toBe("Admin dashboard snapshot failed");
+    expect(e.causeCode).toBe("permission");
+    expect((e as unknown as { cause?: unknown }).cause).toBeUndefined();
+  });
+
+  it("every causeCode is a fixed lowercase-hyphenated token safe for redirect params", () => {
+    const causes = [
+      "schema",
+      "permission",
+      "authentication",
+      "connection",
+      "timeout",
+      "count-unavailable",
+      "unknown",
+    ] as const;
+    for (const cause of causes) {
+      const e = new DashboardSnapshotError(cause);
+      expect(e.causeCode).toBe(cause);
+      expect(cause).toMatch(/^[a-z][a-z-]*$/);
+      expect(cause).not.toMatch(/[&=?#/\s]/);
+    }
   });
 });

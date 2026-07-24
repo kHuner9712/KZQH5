@@ -23,6 +23,9 @@ function asset(overrides: Partial<ProductAsset> = {}): ProductAsset {
     sort_order: 0,
     created_at: "2026-01-01T00:00:00.000Z",
     updated_at: "2026-01-01T00:00:00.000Z",
+    access_level: "public",
+    source_type: null,
+    authorization_status: "confirmed",
     ...overrides,
   };
 }

@@ -7,6 +7,30 @@ export interface AdminProfile {
   email: string | null;
   role: string | null;
   created_at: string;
+  updated_at: string;
+}
+
+/**
+ * Phase 3: Admin role values enforced by the admin_profiles_role_check
+ * CHECK constraint. Existing rows default to 'admin'.
+ */
+export type AdminRole = "super_admin" | "admin" | "editor";
+
+/**
+ * Phase 3: Audit log entry written by logAdminAction().
+ * RLS denies all access to anon/authenticated; only service_role can
+ * insert and query.
+ */
+export interface AdminAuditLog {
+  id: number;
+  actor_id: string | null;
+  actor_email: string | null;
+  actor_role: string | null;
+  action: string;
+  target_type: string;
+  target_id: string | null;
+  summary: string | null;
+  created_at: string;
 }
 
 export interface Category {
@@ -142,6 +166,39 @@ export type ProductAssetType =
   | "packaging"
   | "other";
 
+/**
+ * Phase 12 (corrected): Catalog asset access level.
+ *   public  : visible to anon once authorization_status='confirmed'
+ *   private : visible only via service_role (admin RBAC at app layer)
+ *
+ * The 'registered'/'partner' values were removed because the project has
+ * no complete customer authorization system. 'authenticated' Supabase Auth
+ * role is NOT equivalent to a vetted customer/partner and must not grant
+ * private access. See migration 20260724200000_catalog_authorization_tighten.sql.
+ */
+export type ProductAssetAccessLevel = "public" | "private";
+
+/**
+ * Phase 12: Catalog asset source provenance.
+ *   official       : obtained from the manufacturer's official channel
+ *   self-produced  : produced by KZQ internally
+ *   licensed       : obtained under a licensing agreement
+ *   public-domain  : public domain material
+ */
+export type ProductAssetSourceType =
+  | "official"
+  | "self-produced"
+  | "licensed"
+  | "public-domain";
+
+/**
+ * Phase 12: Catalog asset authorization status.
+ *   confirmed : the right to use this asset has been verified
+ *   pending   : authorization has not yet been confirmed (default)
+ *   restricted: asset is restricted and should not be publicly displayed
+ */
+export type ProductAssetAuthorizationStatus = "confirmed" | "pending" | "restricted";
+
 export interface ProductAsset {
   id: string;
   product_id: string | null;
@@ -242,6 +299,7 @@ export interface Inquiry {
   read_at: string | null;
   notes: string | null;
   assignee: string | null;
+  client_submission_id: string | null;
   created_at: string;
   updated_at: string;
   inquiry_items?: InquiryItem[];
@@ -401,6 +459,7 @@ export interface InquiryInput {
   utm_term?: string;
   privacy_accepted?: boolean;
   items?: InquiryListItemInput[];
+  client_submission_id?: string;
 }
 
 export const analyticsEventNames = [
@@ -473,6 +532,12 @@ export type Database = {
         Row: SupabaseRow<AdminProfile>;
         Insert: SupabaseInsert<AdminProfile>;
         Update: SupabaseUpdate<AdminProfile>;
+        Relationships: [];
+      };
+      admin_audit_log: {
+        Row: SupabaseRow<AdminAuditLog>;
+        Insert: SupabaseInsert<AdminAuditLog>;
+        Update: SupabaseUpdate<AdminAuditLog>;
         Relationships: [];
       };
       categories: {
@@ -589,12 +654,153 @@ export type Database = {
         Returns: unknown;
       };
       create_inquiry_with_items: {
-        Args: { p_inquiry: Record<string, unknown>; p_items?: Record<string, unknown>[] };
+        Args: {
+          p_inquiry: Record<string, unknown>;
+          p_items?: Record<string, unknown>[];
+          p_client_submission_id?: string | null;
+        };
+        Returns: unknown;
+      };
+      claim_inquiry_outbox_batch: {
+        Args: { p_limit?: number; p_stale_timeout_seconds?: number };
+        Returns: unknown;
+      };
+      mark_inquiry_outbox_sent: {
+        Args: { p_event_id: string; p_lock_token: string; p_provider_message_id?: string | null };
+        Returns: boolean;
+      };
+      fail_inquiry_outbox_event: {
+        Args: { p_event_id: string; p_lock_token: string; p_error_code?: string | null };
+        Returns: string;
+      };
+      get_inquiry_outbox_status: {
+        Args: Record<string, never>;
+        Returns: unknown;
+      };
+      verify_schema_readiness: {
+        Args: Record<string, never>;
         Returns: unknown;
       };
       get_analytics_summary: {
         Args: { p_start: string; p_end: string };
         Returns: unknown;
+      };
+      get_admin_dashboard_snapshot: {
+        Args: Record<string, never>;
+        Returns: {
+          total_products: number;
+          published_products: number;
+          total_certificates: number;
+          total_inquiries: number;
+          unread_inquiries: number;
+        };
+      };
+      save_product_with_images: {
+        Args: {
+          p_id: string | null;
+          p_product: Record<string, unknown>;
+          p_images?: Record<string, unknown>[];
+          p_expected_updated_at?: string | null;
+        };
+        Returns: string;
+      };
+      save_project_with_relations: {
+        Args: {
+          p_id: string | null;
+          p_project: Record<string, unknown>;
+          p_images?: Record<string, unknown>[];
+          p_products?: Record<string, unknown>[];
+          p_expected_updated_at?: string | null;
+        };
+        Returns: string;
+      };
+      // Phase 13: transactional business write + audit log RPCs.
+      // Actor info (id/email/role) is provided by the server-verified admin
+      // session, NEVER from the request body.
+      save_product_with_images_and_audit: {
+        Args: {
+          p_id: string | null;
+          p_product: Record<string, unknown>;
+          p_images?: Record<string, unknown>[];
+          p_expected_updated_at?: string | null;
+          p_actor_id?: string | null;
+          p_actor_email?: string | null;
+          p_actor_role?: string | null;
+        };
+        Returns: string;
+      };
+      bulk_update_products_with_audit: {
+        Args: {
+          p_ids: string[];
+          p_patch: Record<string, unknown>;
+          p_actor_id?: string | null;
+          p_actor_email?: string | null;
+          p_actor_role?: string | null;
+        };
+        Returns: number;
+      };
+      bulk_delete_products_with_audit: {
+        Args: {
+          p_ids: string[];
+          p_actor_id?: string | null;
+          p_actor_email?: string | null;
+          p_actor_role?: string | null;
+        };
+        Returns: number;
+      };
+      update_inquiry_with_audit: {
+        Args: {
+          p_id: string;
+          p_patch: Record<string, unknown>;
+          p_expected_updated_at: string;
+          p_actor_id?: string | null;
+          p_actor_email?: string | null;
+          p_actor_role?: string | null;
+        };
+        Returns: unknown;
+      };
+      // Phase 14: per-provider outbox delivery state RPCs.
+      claim_inquiry_outbox_deliveries: {
+        Args: { p_limit?: number; p_stale_timeout_seconds?: number };
+        Returns: unknown;
+      };
+      mark_delivery_sent: {
+        Args: {
+          p_delivery_id: string;
+          p_lock_token: string;
+          p_provider_message_id?: string | null;
+        };
+        Returns: boolean;
+      };
+      fail_delivery_event: {
+        Args: {
+          p_delivery_id: string;
+          p_lock_token: string;
+          p_error_code?: string | null;
+        };
+        Returns: string;
+      };
+      // Phase 14: Storage operation audit RPCs.
+      record_storage_operation_started: {
+        Args: {
+          p_actor_id?: string | null;
+          p_actor_role?: string | null;
+          p_action?: string | null;
+          p_bucket?: string | null;
+          p_object_path?: string | null;
+          p_mime_type?: string | null;
+          p_size_bytes?: number | null;
+          p_sha256?: string | null;
+        };
+        Returns: string;
+      };
+      complete_storage_operation: {
+        Args: {
+          p_operation_id: string;
+          p_success: boolean;
+          p_error_code?: string | null;
+        };
+        Returns: boolean;
       };
     };
     Enums: Record<string, never>;

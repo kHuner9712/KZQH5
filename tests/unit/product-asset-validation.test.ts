@@ -25,6 +25,9 @@ function makeAsset(overrides: Partial<ProductAsset> = {}): ProductAsset {
     cover_image_url: null,
     published_at: null,
     content_hash: null,
+    access_level: "public",
+    source_type: null,
+    authorization_status: "pending",
     ...overrides,
   };
 }

@@ -18,10 +18,10 @@ begin
   if has_table_privilege('anon', 'public.analytics_events', 'select,insert') then
     raise exception 'anon unexpectedly has analytics access';
   end if;
-  if has_function_privilege('anon', 'public.create_inquiry_with_items(jsonb,jsonb)', 'execute') then
+  if has_function_privilege('anon', 'public.create_inquiry_with_items(jsonb,jsonb,uuid)', 'execute') then
     raise exception 'anon can execute atomic inquiry RPC';
   end if;
-  if has_function_privilege('authenticated', 'public.create_inquiry_with_items(jsonb,jsonb)', 'execute') then
+  if has_function_privilege('authenticated', 'public.create_inquiry_with_items(jsonb,jsonb,uuid)', 'execute') then
     raise exception 'ordinary authenticated can execute atomic inquiry RPC';
   end if;
   if has_function_privilege('anon', 'public.count_unread_inquiries()', 'execute') then
@@ -33,6 +33,15 @@ begin
   if not has_function_privilege('service_role', 'public.count_unread_inquiries()', 'execute') then
     raise exception 'service_role cannot execute unread count RPC';
   end if;
+  if has_function_privilege('anon', 'public.get_admin_dashboard_snapshot()', 'execute') then
+    raise exception 'anon can execute dashboard snapshot RPC';
+  end if;
+  if has_function_privilege('authenticated', 'public.get_admin_dashboard_snapshot()', 'execute') then
+    raise exception 'ordinary authenticated can execute dashboard snapshot RPC';
+  end if;
+  if not has_function_privilege('service_role', 'public.get_admin_dashboard_snapshot()', 'execute') then
+    raise exception 'service_role cannot execute dashboard snapshot RPC';
+  end if;
   if not has_function_privilege('anon', 'public.search_published_products(text,uuid,uuid,integer,integer)', 'execute') then
     raise exception 'anon cannot execute public search RPC';
   end if;
@@ -43,7 +52,7 @@ begin
      or not has_table_privilege('service_role', 'public.analytics_events', 'insert') then
     raise exception 'service_role lacks required server write privileges';
   end if;
-  if not has_function_privilege('service_role', 'public.create_inquiry_with_items(jsonb,jsonb)', 'execute') then
+  if not has_function_privilege('service_role', 'public.create_inquiry_with_items(jsonb,jsonb,uuid)', 'execute') then
     raise exception 'service_role cannot execute atomic inquiry RPC';
   end if;
 end;
@@ -62,9 +71,9 @@ insert into public.certificates (id, name_cn, is_published) values
 insert into public.projects (id, slug, title_cn, is_published) values
   ('00000000-0000-4000-8000-000000000026', 'regression-public-project', '[REGRESSION TEST] public project', true),
   ('00000000-0000-4000-8000-000000000027', 'regression-hidden-project', '[REGRESSION TEST] hidden project', false);
-insert into public.product_assets (id, product_id, asset_type, title_cn, file_url, is_published) values
-  ('00000000-0000-4000-8000-000000000028', '00000000-0000-4000-8000-000000000022', 'catalog', '[REGRESSION TEST] public asset', '/regression-public.pdf', true),
-  ('00000000-0000-4000-8000-000000000029', '00000000-0000-4000-8000-000000000022', 'catalog', '[REGRESSION TEST] hidden asset', '/regression-hidden.pdf', false);
+insert into public.product_assets (id, product_id, asset_type, title_cn, file_url, is_published, access_level, authorization_status) values
+  ('00000000-0000-4000-8000-000000000028', '00000000-0000-4000-8000-000000000022', 'catalog', '[REGRESSION TEST] public asset', '/regression-public.pdf', true, 'public', 'confirmed'),
+  ('00000000-0000-4000-8000-000000000029', '00000000-0000-4000-8000-000000000022', 'catalog', '[REGRESSION TEST] hidden asset', '/regression-hidden.pdf', false, 'public', 'confirmed');
 set local role anon;
 do $$
 declare

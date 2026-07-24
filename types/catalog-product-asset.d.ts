@@ -6,6 +6,10 @@ declare module "@/types/database" {
     cover_image_url: string | null;
     published_at: string | null;
     content_hash: string | null;
+    // Phase 12: authorization metadata
+    access_level: ProductAssetAccessLevel;
+    source_type: ProductAssetSourceType | null;
+    authorization_status: ProductAssetAuthorizationStatus;
   }
 }
 

@@ -121,6 +121,8 @@ function freshInstall(url) {
   }
   psql(url, currentFile("supabase/tests/permission_matrix.sql"));
   psql(url, currentFile("supabase/tests/atomic_inquiry.sql"));
+  psql(url, currentFile("supabase/tests/dashboard_snapshot.sql"));
+  psql(url, currentFile("supabase/tests/catalog_authorization.sql"));
 }
 
 function incrementalUpgrade(url) {
@@ -138,6 +140,8 @@ function incrementalUpgrade(url) {
   psql(url, currentFile("supabase/tests/assert_legacy_sentinels.sql"));
   psql(url, currentFile("supabase/tests/permission_matrix.sql"));
   psql(url, currentFile("supabase/tests/atomic_inquiry.sql"));
+  psql(url, currentFile("supabase/tests/dashboard_snapshot.sql"));
+  psql(url, currentFile("supabase/tests/catalog_authorization.sql"));
 }
 
 try {

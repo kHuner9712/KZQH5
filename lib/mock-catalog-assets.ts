@@ -22,6 +22,9 @@ export const mockCatalogAssets: ProductAsset[] = [
     sort_order: 10,
     created_at: createdAt,
     updated_at: createdAt,
+    access_level: "public",
+    source_type: "self-produced",
+    authorization_status: "confirmed",
   },
   {
     id: "mock-catalog-wpc-wall-panel",
@@ -42,6 +45,9 @@ export const mockCatalogAssets: ProductAsset[] = [
     sort_order: 20,
     created_at: createdAt,
     updated_at: createdAt,
+    access_level: "public",
+    source_type: "self-produced",
+    authorization_status: "confirmed",
   },
   {
     id: "mock-catalog-edge-finishing",
@@ -62,6 +68,9 @@ export const mockCatalogAssets: ProductAsset[] = [
     sort_order: 30,
     created_at: createdAt,
     updated_at: createdAt,
+    access_level: "public",
+    source_type: "self-produced",
+    authorization_status: "confirmed",
   },
   {
     id: "mock-catalog-hd-spc-test-pdf",
@@ -82,5 +91,8 @@ export const mockCatalogAssets: ProductAsset[] = [
     sort_order: 25,
     created_at: createdAt,
     updated_at: createdAt,
+    access_level: "public",
+    source_type: "self-produced",
+    authorization_status: "confirmed",
   },
 ];

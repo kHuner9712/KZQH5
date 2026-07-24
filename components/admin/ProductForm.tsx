@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createBrowserSupabaseClient } from "@/lib/supabase/client";
+import { saveProduct } from "@/lib/services/admin-fetch";
 import { useToast } from "@/components/admin/Toast";
 import { Button } from "@/components/ui/Button";
 import { Input, Textarea } from "@/components/ui/Input";
@@ -381,48 +382,40 @@ export function ProductForm({ initial, initialImages = [] }: ProductFormProps) {
       faq_en: faqEnFiltered.length > 0 ? faqEnFiltered : null,
     };
 
-    let productId = initial?.id;
-
-    if (isEdit && productId) {
-      const { error } = await supabase.from("products").update(payload).eq("id", productId);
-      if (error) {
-        setSaving(false);
-        show(error.message, "error");
-        return;
-      }
-    } else {
-      const { data: created, error } = await supabase
-        .from("products")
-        .insert(payload)
-        .select("id")
-        .single();
-      if (error || !created) {
-        setSaving(false);
-        show(error?.message || "创建失败", "error");
-        return;
-      }
-      productId = (created as { id: string }).id;
-    }
-
-    // 同步产品图片：先删旧、再插新（简单可靠）
-    if (productId) {
-      await supabase.from("product_images").delete().eq("product_id", productId);
-      if (images.length > 0) {
-        const imgPayload = images.map((img, i) => ({
-          product_id: productId,
-          image_url: img.image_url,
-          alt_cn: img.alt_cn || null,
-          alt_en: img.alt_en || null,
-          sort_order: i,
-        }));
-        const { error: imgError } = await supabase.from("product_images").insert(imgPayload);
-        if (imgError) {
-          show(`图片保存失败：${imgError.message}`, "error");
-        }
-      }
-    }
+    // Phase 2: persist product + images via the transactional server-side RPC.
+    // The /api/admin/products route enforces admin verification, fail-closed
+    // same-origin, Content-Type / size limits, field validation, and calls
+    // save_product_with_images() which inserts/updates the product and
+    // replaces its images in a single transaction. Partial image failure
+    // rolls back the product save — no more "product saved, images lost".
+    const result = await saveProduct({
+      id: initial?.id,
+      product: payload,
+      images: images.map((img, i) => ({
+        image_url: img.image_url || "",
+        alt_cn: img.alt_cn || null,
+        alt_en: img.alt_en || null,
+        sort_order: i,
+      })),
+    });
 
     setSaving(false);
+
+    if (!result.ok) {
+      const message =
+        result.code === "ADMIN_WRITE_BAD_REQUEST"
+          ? "表单数据校验失败"
+          : result.code === "ADMIN_WRITE_CONFLICT"
+            ? "slug 已被其他产品占用"
+            : result.code === "ADMIN_WRITE_UNAUTHORIZED"
+              ? "登录已过期，请重新登录"
+              : result.code === "ADMIN_WRITE_FORBIDDEN_ORIGIN"
+                ? "请求来源不被信任"
+                : "保存失败，请稍后重试";
+      show(message, "error");
+      return;
+    }
+
     show(isEdit ? "产品已更新" : "产品已创建", "success");
     setTimeout(() => router.push("/admin/products"), 600);
   }

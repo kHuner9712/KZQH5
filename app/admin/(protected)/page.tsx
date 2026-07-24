@@ -18,7 +18,7 @@ export const dynamic = "force-dynamic";
 
 export default async function AdminDashboard() {
   noStore();
-  const supabase = createServerSupabaseClient();
+  const supabase = await createServerSupabaseClient();
   const result = await loadAdminDashboard(
     createAdminDashboardQueries(supabase),
   );
