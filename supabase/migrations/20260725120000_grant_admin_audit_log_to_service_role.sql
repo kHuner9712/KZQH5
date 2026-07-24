@@ -1,0 +1,53 @@
+-- ============================================================
+-- 20260725120000_grant_admin_audit_log_to_service_role.sql
+--
+-- Problem:
+--   The `admin_audit_log` table was created in migration
+--   20260724180000_admin_rbac_audit_optimistic_lock.sql with RLS
+--   enabled and NO policies. The migration header states
+--   "Only service_role can read/write", but no GRANT was issued.
+--
+--   The base `supabase/policies.sql` grants ALL on several tables
+--   (inquiries, products, etc.) to service_role, but
+--   `admin_audit_log` did not exist when policies.sql was written,
+--   so it was never added to that GRANT.
+--
+--   The test fixture `supabase/tests/bootstrap.sql` does NOT run
+--   `ALTER DEFAULT PRIVILEGES FOR ROLE postgres GRANT ALL ON
+--   TABLES TO service_role`, so migration-created tables do not
+--   inherit service_role privileges automatically. Every other
+--   migration-created table (inquiry_outbox,
+--   inquiry_outbox_deliveries, admin_storage_operations,
+--   storage_cleanup_queue) explicitly GRANTs ALL to service_role.
+--   `admin_audit_log` was the only exception.
+--
+-- Symptom:
+--   `update_inquiry_with_audit` (SECURITY INVOKER) fails with
+--   `permission denied for table admin_audit_log` when invoked by
+--   service_role, because service_role lacks INSERT on the table.
+--   This breaks the database CI job (fresh + incremental) at the
+--   `storage_rls_outbox_rpc.sql` B.1 test.
+--
+-- Fix:
+--   Issue the missing GRANT. Idempotent — GRANT is a no-op if the
+--   privilege is already held. RLS remains enabled with no
+--   policies, so anon/authenticated still have NO access.
+--   service_role bypasses RLS, so the GRANT is sufficient.
+--
+-- Scope:
+--   Single statement. No schema changes. No function changes.
+--   No RLS policy changes. Safe to apply on production without
+--   downtime.
+-- ============================================================
+
+-- Revoke from public/anon/authenticated first (defense in depth,
+-- matches the pattern used by every other migration-created
+-- audit/internal table). Idempotent.
+revoke all on table public.admin_audit_log
+  from public, anon, authenticated;
+
+-- Grant ALL to service_role so SECURITY INVOKER functions invoked
+-- by the trusted server API (which uses the service_role key) can
+-- INSERT/SELECT/UPDATE audit rows. service_role bypasses RLS, so
+-- this is the only privilege grant required.
+grant all on table public.admin_audit_log to service_role;
