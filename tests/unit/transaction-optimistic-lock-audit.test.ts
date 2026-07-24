@@ -303,7 +303,9 @@ describe("Phase 3/5: Transaction, optimistic lock, audit", () => {
     );
 
     // Verify the insert payload does not contain inquiry contact fields.
-    const inserted = insertCall.mock.calls[0][0] as Record<string, unknown>;
+    expect(insertCall.mock.calls.length).toBeGreaterThan(0);
+    const calls = insertCall.mock.calls as unknown as unknown[][];
+    const inserted = calls[0][0] as Record<string, unknown>;
     expect(inserted).not.toHaveProperty("phone");
     expect(inserted).not.toHaveProperty("wechat");
     expect(inserted).not.toHaveProperty("whatsapp");
