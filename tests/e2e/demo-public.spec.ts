@@ -60,9 +60,16 @@ test.describe("Demo public acceptance", () => {
     const category = page.locator('a[href*="category="]').first();
     await category.click();
     await expect(page).toHaveURL(/category=/);
+    // The ProductsPage is a Server Component. Clicking a category filter
+    // triggers client-side navigation + server re-render + React 19
+    // streaming. The old articles can remain in the DOM briefly while
+    // the new HTML streams in, causing clicks to land on stale elements
+    // that are being detached. Wait for network to settle so the new
+    // product cards are fully rendered before clicking.
+    await page.waitForLoadState("networkidle");
 
     const productLink = page.locator('article a[href^="/products/"]').first();
-    await expect(productLink).toBeAttached();
+    await expect(productLink).toBeVisible();
     await productLink.click();
     await expect(page).toHaveURL(/\/products\/[^/?]+$/);
     await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
@@ -117,13 +124,15 @@ test.describe("Demo public acceptance", () => {
 
     await page.goto("/en/products?q=fire");
     await expect(page.getByRole("heading", { name: "Products" })).toBeVisible();
+    // The heading is part of the static layout shell, but product cards
+    // are streamed from the Server Component. Wait for the first article
+    // link to be visible before clicking so the click doesn't race with
+    // streaming on slow CI runners.
+    await page.waitForLoadState("networkidle");
     const productLink = page
       .locator('article a[href^="/en/products/"]')
       .first();
-    // Wait for at least one product card link to be attached before clicking.
-    // On slow CI runners the server-rendered article can briefly be missing
-    // right after navigation completes.
-    await expect(productLink).toBeAttached();
+    await expect(productLink).toBeVisible();
     await productLink.click();
     await expect(page).toHaveURL(/\/en\/products\/[^/?]+$/);
     await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
@@ -157,7 +166,11 @@ test.describe("Demo public acceptance", () => {
       "Mobile layout assertion",
     );
     await page.goto("/products");
+    await page.waitForLoadState("networkidle");
     await page.locator('article a[href^="/products/"]').first().click();
+    // MobileNavController hides BottomNav on /products/[slug] via
+    // usePathname(). The client-side effect runs after hydration/streaming
+    // settles — wait for it rather than asserting immediately.
     await expect(page.locator('nav[aria-label="移动端导航"]')).toHaveCount(0);
     const fixedCta = page.locator("div.fixed.bottom-0").last();
     await expect(fixedCta).toBeVisible();

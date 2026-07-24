@@ -16,6 +16,14 @@ async function clickCatalogTopic(page: import("@playwright/test").Page, topicId:
 }
 
 test.describe("Demo catalog center", () => {
+  test.beforeEach(async () => {
+    // PDF.js worker init + PDF fetch + first page render can take 20-30s
+    // on shared GitHub runners. The default 30s test timeout is too tight
+    // for the PDF canvas visibility assertion (which itself allows 30s).
+    // Bump to 90s so the assertion has room to complete.
+    test.setTimeout(90_000);
+  });
+
   test("Chinese catalog topics, image preview, PDF preview and inquiry fallback", async ({ page, request }) => {
     await page.goto("/documents");
     await expect(page.getByRole("heading", { level: 1, name: "产品目录与色卡" })).toBeVisible();
@@ -47,7 +55,11 @@ test.describe("Demo catalog center", () => {
     await clickCatalogTopic(page, "hd-spc-catalog");
     const pdfDialog = page.getByRole("dialog", { name: "HD / SPC 测试样本" });
     await expect(pdfDialog).toBeVisible();
-    await expect(pdfDialog.locator("canvas")).toBeVisible({ timeout: 30_000 });
+    // The hook's LOAD_TIMEOUT_MS is 30s. On a slow CI runner, pdf.js worker
+    // init + PDF fetch + first page render can approach that limit. Give the
+    // canvas assertion 60s (2x the load timeout) so it doesn't fail just
+    // because the load completed at 28s and the page render needed 2s more.
+    await expect(pdfDialog.locator("canvas")).toBeVisible({ timeout: 60_000 });
     await page.keyboard.press("Escape");
     await expect(pdfDialog).toHaveCount(0);
 
@@ -76,7 +88,7 @@ test.describe("Demo catalog center", () => {
     await clickCatalogTopic(page, "hd-spc-catalog");
     let dialog = page.getByRole("dialog", { name: "HD / SPC 测试样本" });
     await expect(dialog).toBeVisible();
-    await expect(dialog.locator("canvas")).toBeVisible({ timeout: 30_000 });
+    await expect(dialog.locator("canvas")).toBeVisible({ timeout: 60_000 });
 
     // Check accessible names in Chinese
     await expect(dialog.getByTestId("pdf-next-page")).toHaveAttribute("aria-label", "下一页");
@@ -95,7 +107,7 @@ test.describe("Demo catalog center", () => {
     await clickCatalogTopic(page, "hd-spc-catalog");
     dialog = page.getByRole("dialog", { name: "HD / SPC Test Sample" });
     await expect(dialog).toBeVisible();
-    await expect(dialog.locator("canvas")).toBeVisible({ timeout: 30_000 });
+    await expect(dialog.locator("canvas")).toBeVisible({ timeout: 60_000 });
 
     // Check accessible names in English
     await expect(dialog.getByTestId("pdf-next-page")).toHaveAttribute("aria-label", "Next");
@@ -118,7 +130,7 @@ test.describe("Demo catalog center", () => {
     await clickCatalogTopic(page, "hd-spc-catalog");
     const dialog = page.getByRole("dialog", { name: "HD / SPC 测试样本" });
     await expect(dialog).toBeVisible();
-    await expect(dialog.locator("canvas")).toBeVisible({ timeout: 30_000 });
+    await expect(dialog.locator("canvas")).toBeVisible({ timeout: 60_000 });
     await context.close();
   });
 
