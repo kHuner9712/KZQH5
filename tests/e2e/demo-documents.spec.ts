@@ -39,11 +39,15 @@ test.describe("Demo catalog center", () => {
     await expectNoHorizontalOverflow(page);
 
     // PDF preview via PdfViewer — should render a <canvas>.
+    // CI runners are slower than local dev; pdf.js worker init + PDF fetch
+    // + first page render can exceed 15s on a shared runner. The hook's own
+    // load timeout is 30s, so allow the canvas visibility assertion the
+    // same window rather than failing before the load even completes.
     await page.goto("/documents");
     await clickCatalogTopic(page, "hd-spc-catalog");
     const pdfDialog = page.getByRole("dialog", { name: "HD / SPC 测试样本" });
     await expect(pdfDialog).toBeVisible();
-    await expect(pdfDialog.locator("canvas")).toBeVisible({ timeout: 15_000 });
+    await expect(pdfDialog.locator("canvas")).toBeVisible({ timeout: 30_000 });
     await page.keyboard.press("Escape");
     await expect(pdfDialog).toHaveCount(0);
 
@@ -72,8 +76,8 @@ test.describe("Demo catalog center", () => {
     await clickCatalogTopic(page, "hd-spc-catalog");
     let dialog = page.getByRole("dialog", { name: "HD / SPC 测试样本" });
     await expect(dialog).toBeVisible();
-    await expect(dialog.locator("canvas")).toBeVisible({ timeout: 15_000 });
-    
+    await expect(dialog.locator("canvas")).toBeVisible({ timeout: 30_000 });
+
     // Check accessible names in Chinese
     await expect(dialog.getByTestId("pdf-next-page")).toHaveAttribute("aria-label", "下一页");
     await expect(dialog.getByTestId("pdf-prev-page")).toHaveAttribute("aria-label", "上一页");
@@ -91,7 +95,7 @@ test.describe("Demo catalog center", () => {
     await clickCatalogTopic(page, "hd-spc-catalog");
     dialog = page.getByRole("dialog", { name: "HD / SPC Test Sample" });
     await expect(dialog).toBeVisible();
-    await expect(dialog.locator("canvas")).toBeVisible({ timeout: 15_000 });
+    await expect(dialog.locator("canvas")).toBeVisible({ timeout: 30_000 });
 
     // Check accessible names in English
     await expect(dialog.getByTestId("pdf-next-page")).toHaveAttribute("aria-label", "Next");
@@ -114,7 +118,7 @@ test.describe("Demo catalog center", () => {
     await clickCatalogTopic(page, "hd-spc-catalog");
     const dialog = page.getByRole("dialog", { name: "HD / SPC 测试样本" });
     await expect(dialog).toBeVisible();
-    await expect(dialog.locator("canvas")).toBeVisible({ timeout: 15_000 });
+    await expect(dialog.locator("canvas")).toBeVisible({ timeout: 30_000 });
     await context.close();
   });
 

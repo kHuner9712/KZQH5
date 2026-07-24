@@ -71,9 +71,15 @@ jobs:
       DATABASE_UPGRADE_TEST_URL: postgresql://postgres:postgres@localhost:5432/kzq_upgrade_test
     steps:
       # actions/checkout@v4.2.2
+      # fetch-depth: 0 is required because scripts/verify-database.mjs
+      # reads baseline schema/policies/seed files from the legacy commit
+      # (LEGACY_BASELINE_COMMIT, default d5c5822) via `git show <sha>:<path>`
+      # to simulate an incremental upgrade. A shallow clone (default depth=1)
+      # does not contain that commit, causing "Unable to read ... from <sha>".
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           persist-credentials: false
+          fetch-depth: 0
       # actions/setup-node@v4.4.0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:

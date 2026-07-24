@@ -62,6 +62,7 @@ test.describe("Demo public acceptance", () => {
     await expect(page).toHaveURL(/category=/);
 
     const productLink = page.locator('article a[href^="/products/"]').first();
+    await expect(productLink).toBeAttached();
     await productLink.click();
     await expect(page).toHaveURL(/\/products\/[^/?]+$/);
     await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
@@ -119,6 +120,10 @@ test.describe("Demo public acceptance", () => {
     const productLink = page
       .locator('article a[href^="/en/products/"]')
       .first();
+    // Wait for at least one product card link to be attached before clicking.
+    // On slow CI runners the server-rendered article can briefly be missing
+    // right after navigation completes.
+    await expect(productLink).toBeAttached();
     await productLink.click();
     await expect(page).toHaveURL(/\/en\/products\/[^/?]+$/);
     await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
