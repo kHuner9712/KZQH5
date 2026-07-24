@@ -122,6 +122,12 @@ end $$;
 -- authenticated gets NO direct storage policies — all writes go
 -- through the server-side API (service_role), and private-asset
 -- reads go through short-lived signed URLs.
+-- Drop first because the earlier migration 20260725090000 already
+-- creates "service_role_all_storage"; the DO blocks above only sweep
+-- anon/authenticated/public policies, not service_role ones.
+drop policy if exists "service_role_all_storage" on storage.objects;
+drop policy if exists "anon_read_public_assets_only" on storage.objects;
+
 create policy "service_role_all_storage" on storage.objects
   for all
   to service_role

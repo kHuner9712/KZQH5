@@ -5,6 +5,16 @@ async function expectNoHorizontalOverflow(page: import("@playwright/test").Page)
   expect(overflow).toBeLessThanOrEqual(1);
 }
 
+// Next.js 15 / React 19 Suspense streaming can briefly duplicate catalog
+// topic cards while the loading.tsx fallback is replaced by the resolved
+// Server Component content. Wait for the element to be unique before
+// clicking to avoid Playwright strict-mode violations.
+async function clickCatalogTopic(page: import("@playwright/test").Page, topicId: string) {
+  const locator = page.getByTestId(`catalog-topic-${topicId}`);
+  await expect(locator).toHaveCount(1);
+  await locator.click();
+}
+
 test.describe("Demo catalog center", () => {
   test("Chinese catalog topics, image preview, PDF preview and inquiry fallback", async ({ page, request }) => {
     await page.goto("/documents");
@@ -16,7 +26,7 @@ test.describe("Demo catalog center", () => {
     // The <img> is mounted immediately but is not "visible" (non-empty bounding
     // box) until the SVG actually loads — match the PDF canvas pattern with a
     // generous timeout.
-    await page.getByTestId("catalog-topic-color-card").click();
+    await clickCatalogTopic(page, "color-card");
     const imgDialog = page.getByRole("dialog", { name: "KZQ 综合色卡" });
     await expect(imgDialog).toBeVisible();
     await expect(imgDialog.locator("img")).toBeVisible({ timeout: 10_000 });
@@ -24,13 +34,13 @@ test.describe("Demo catalog center", () => {
     await expect(imgDialog).toHaveCount(0);
 
     // Inquiry fallback for a topic without a published asset.
-    await page.getByTestId("catalog-topic-gz-series").click();
+    await clickCatalogTopic(page, "gz-series");
     await expect(page).toHaveURL(/\/contact\?.*product=/);
     await expectNoHorizontalOverflow(page);
 
     // PDF preview via PdfViewer — should render a <canvas>.
     await page.goto("/documents");
-    await page.getByTestId("catalog-topic-hd-spc-catalog").click();
+    await clickCatalogTopic(page, "hd-spc-catalog");
     const pdfDialog = page.getByRole("dialog", { name: "HD / SPC 测试样本" });
     await expect(pdfDialog).toBeVisible();
     await expect(pdfDialog.locator("canvas")).toBeVisible({ timeout: 15_000 });
@@ -49,7 +59,7 @@ test.describe("Demo catalog center", () => {
     await expect(page.locator("html")).toHaveAttribute("lang", "en");
     await expect(page.getByRole("heading", { level: 1, name: "Catalogs & Color Cards" })).toBeVisible();
     await expect(page.locator('[data-testid^="catalog-topic-"]')).toHaveCount(21);
-    await page.getByTestId("catalog-topic-wpc-wall-panel").click();
+    await clickCatalogTopic(page, "wpc-wall-panel");
     await expect(page.getByRole("dialog", { name: "WPC Wall Panel Catalog" })).toBeVisible();
     await page.getByTestId("viewer-close").click();
     await expect(page.getByRole("dialog")).toHaveCount(0);
@@ -59,7 +69,7 @@ test.describe("Demo catalog center", () => {
   test("PDF viewer page navigation and accessible names", async ({ page }) => {
     // 1. Check Chinese routing and translations
     await page.goto("/documents");
-    await page.getByTestId("catalog-topic-hd-spc-catalog").click();
+    await clickCatalogTopic(page, "hd-spc-catalog");
     let dialog = page.getByRole("dialog", { name: "HD / SPC 测试样本" });
     await expect(dialog).toBeVisible();
     await expect(dialog.locator("canvas")).toBeVisible({ timeout: 15_000 });
@@ -78,7 +88,7 @@ test.describe("Demo catalog center", () => {
 
     // 2. Check English routing and translations
     await page.goto("/en/documents");
-    await page.getByTestId("catalog-topic-hd-spc-catalog").click();
+    await clickCatalogTopic(page, "hd-spc-catalog");
     dialog = page.getByRole("dialog", { name: "HD / SPC Test Sample" });
     await expect(dialog).toBeVisible();
     await expect(dialog.locator("canvas")).toBeVisible({ timeout: 15_000 });
@@ -101,7 +111,7 @@ test.describe("Demo catalog center", () => {
     });
     const page = await context.newPage();
     await page.goto("/documents");
-    await page.getByTestId("catalog-topic-hd-spc-catalog").click();
+    await clickCatalogTopic(page, "hd-spc-catalog");
     const dialog = page.getByRole("dialog", { name: "HD / SPC 测试样本" });
     await expect(dialog).toBeVisible();
     await expect(dialog.locator("canvas")).toBeVisible({ timeout: 15_000 });
@@ -110,7 +120,7 @@ test.describe("Demo catalog center", () => {
 
   test("image asset preview is unaffected", async ({ page }) => {
     await page.goto("/en/documents");
-    await page.getByTestId("catalog-topic-edge-finishing").click();
+    await clickCatalogTopic(page, "edge-finishing");
     const dialog = page.getByRole("dialog", { name: "Fluted Wall Panel Edge Finishing Solutions" });
     await expect(dialog).toBeVisible();
     // The <img> mounts immediately, but the SVG must load before it has a
@@ -128,7 +138,7 @@ test.describe("Demo catalog center", () => {
     );
 
     await page.goto("/en/documents");
-    await page.getByTestId("catalog-topic-edge-finishing").click();
+    await clickCatalogTopic(page, "edge-finishing");
     const dialog = page.getByRole("dialog", { name: "Fluted Wall Panel Edge Finishing Solutions" });
     await expect(dialog).toBeVisible();
 
