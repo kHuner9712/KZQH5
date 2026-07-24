@@ -22,7 +22,54 @@ export type AdminWriteErrorCode =
   | "ADMIN_WRITE_UNSUPPORTED_MEDIA"
   | "ADMIN_WRITE_DEMO"
   | "ADMIN_WRITE_CONFLICT"
-  | "ADMIN_WRITE_FAILED";
+  | "ADMIN_WRITE_FAILED"
+  | "ADMIN_WRITE_FORBIDDEN_ROLE";
+
+/**
+ * RBAC: admin role hierarchy for application-layer access control.
+ *
+ * service_role bypasses RLS entirely, so RBAC MUST be enforced at the
+ * application layer — not via database policies. These roles are enforced
+ * by the admin_profiles_role_check CHECK constraint (Phase 3 migration).
+ *
+ *   super_admin : full access, including admin user management
+ *   admin       : standard CMS writes (products, projects, inquiries, etc.)
+ *   editor      : limited writes (content edits only, no destructive ops)
+ *
+ * A role of NULL or any other value is treated as the most restrictive
+ * (deny-by-default). The check is ALWAYS deny-by-default for unknown roles.
+ */
+export type AdminWriteRole = "super_admin" | "admin" | "editor";
+
+const ROLE_RANK: Record<AdminWriteRole, number> = {
+  editor: 1,
+  admin: 2,
+  super_admin: 3,
+};
+
+/**
+ * Check if the verified admin's role meets the minimum required level.
+ * Returns true if allowed, false if denied.
+ *
+ * Unknown / null roles are ALWAYS denied (deny-by-default).
+ */
+export function hasAdminRole(
+  profile: { role?: string | null },
+  minimum: AdminWriteRole,
+): boolean {
+  const role = profile.role;
+  if (!role || !(role in ROLE_RANK)) return false;
+  return ROLE_RANK[role as AdminWriteRole] >= ROLE_RANK[minimum];
+}
+
+/**
+ * Build a 403 response for a role-denied write attempt.
+ */
+export function adminRoleDenied(minimum: AdminWriteRole): NextResponse {
+  return adminWriteError("ADMIN_WRITE_FORBIDDEN_ROLE", 403, {
+    logCode: `ADMIN_ROLE_DENIED_MIN_${minimum.toUpperCase()}`,
+  });
+}
 
 export interface VerifiedAdmin {
   client: SupabaseClient<Database>;
