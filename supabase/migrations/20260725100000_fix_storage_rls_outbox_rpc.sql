@@ -77,7 +77,7 @@ begin
        and cmd in ('INSERT', 'UPDATE', 'DELETE')
        and (
          roles is null
-         or roles && array['anon', 'authenticated', 'public']
+         or roles && array['anon'::name, 'authenticated'::name, 'public'::name]
        )
   loop
     execute format(
@@ -103,7 +103,7 @@ begin
        and cmd = 'SELECT'
        and (
          roles is null
-         or roles && array['anon', 'authenticated', 'public']
+         or roles && array['anon'::name, 'authenticated'::name, 'public'::name]
        )
   loop
     -- We re-create the anon read policy for public-assets below
