@@ -720,7 +720,7 @@ export function ProductForm({ initial, initialImages = [] }: ProductFormProps) {
       <Section title="媒体资源" subtitle="封面图、视频 URL、详情图片">
         <ImageUpload
           label="封面图"
-          folder="products/covers"
+          purpose="product-image"
           value={form.cover_image_url}
           onChange={(url) => update("cover_image_url", url)}
           aspect="wide"
@@ -932,7 +932,7 @@ function Toggle({
 function ImageUploadHelper({ onUploaded }: { onUploaded: (url: string) => void }) {
   return (
     <ImageUpload
-      folder="products/gallery"
+      purpose="product-image"
       value=""
       onChange={(url) => {
         if (url) onUploaded(url);

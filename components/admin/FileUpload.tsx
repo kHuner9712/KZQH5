@@ -2,16 +2,32 @@
 
 import { useRef, useState } from "react";
 import { FileUp, Loader2 } from "lucide-react";
-import { uploadViaServerApi } from "@/lib/services/admin-storage-fetch";
+import {
+  uploadViaServerApi,
+  uploadViaServerApiLegacy,
+} from "@/lib/services/admin-storage-fetch";
+import type { StoragePurpose } from "@/lib/services/storage-purpose";
 
 export function FileUpload({
+  purpose,
   folder,
   onUploaded,
   label = "上传展示文件",
   accept = "application/pdf,image/jpeg,image/png,image/webp",
   hint = "PDF/JPG/PNG/WebP，最大 20MB；仅限展示版或水印版。",
 }: {
-  folder: string;
+  /**
+   * Storage 用途（推荐）。客户端只提交 purpose，服务端决定 bucket / category / MIME 白名单。
+   * Catalog 资产默认 private-assets，需后续 publish 流程才能公开。
+   *
+   * 必须提供 purpose 或 folder 之一。优先使用 purpose。
+   */
+  purpose?: StoragePurpose;
+  /**
+   * @deprecated 使用 purpose 代替。Legacy 上传路径，默认上传到 public-assets。
+   * 仅用于尚未迁移到 purpose-driven 上传的调用点。
+   */
+  folder?: string;
   onUploaded: (value: { url: string; size: number; mimeType: string }) => void;
   label?: string;
   accept?: string;
@@ -21,11 +37,20 @@ export function FileUpload({
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
 
+  if (!purpose && !folder) {
+    throw new Error(
+      "FileUpload requires either `purpose` (preferred) or `folder` (legacy)",
+    );
+  }
+
   async function upload(file?: File) {
     if (!file) return;
     setUploading(true);
     setError("");
-    const result = await uploadViaServerApi(file, folder);
+    // 优先使用 purpose-driven 上传；缺失时回退到 legacy folder+public=true
+    const result = purpose
+      ? await uploadViaServerApi(file, purpose)
+      : await uploadViaServerApiLegacy(file, folder!);
     setUploading(false);
     if (!result.ok || !result.data.publicUrl) {
       setError(result.ok ? "上传失败" : result.error);

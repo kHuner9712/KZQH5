@@ -252,7 +252,7 @@ export default function SiteSettingsPage() {
           />
           <ImageUpload
             label="默认 OG 分享图"
-            folder="site/og"
+            purpose="homepage-image"
             value={form.default_og_image_url}
             onChange={(url) => update("default_og_image_url", url)}
             aspect="wide"

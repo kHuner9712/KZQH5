@@ -154,7 +154,7 @@ export default function CompanyPage() {
         <Section title="品牌素材" subtitle="Logo 与微信二维码">
           <ImageUpload
             label="品牌 Logo"
-            folder="company/logo"
+            purpose="company-logo"
             value={form.logo_url}
             onChange={(url) => update("logo_url", url)}
             aspect="logo"
@@ -162,7 +162,7 @@ export default function CompanyPage() {
           />
           <ImageUpload
             label="微信二维码"
-            folder="company/wechat"
+            purpose="company-logo"
             value={form.wechat_qr_url}
             onChange={(url) => update("wechat_qr_url", url)}
             aspect="square"
