@@ -58,10 +58,14 @@ describe("inquiry product integrity", () => {
       },
     ]);
     createInquiryWithItems.mockResolvedValue({
-      ...record(),
-      id: "22222222-2222-4222-8222-222222222222",
-      created_at: new Date(0).toISOString(),
-      updated_at: new Date(0).toISOString(),
+      inquiry: {
+        ...record(),
+        id: "22222222-2222-4222-8222-222222222222",
+        created_at: new Date(0).toISOString(),
+        updated_at: new Date(0).toISOString(),
+      },
+      idempotent: false,
+      outboxId: "outbox-1",
     });
     const { submitInquiry } = await import(
       "@/lib/services/inquiries/submission"
@@ -79,6 +83,7 @@ describe("inquiry product integrity", () => {
           product_name_cn: "数据库产品名",
         }),
       ],
+      null,
     );
   });
 
@@ -96,16 +101,20 @@ describe("inquiry product integrity", () => {
   it("allows a manual product inquiry without product IDs", async () => {
     const manual = { ...record(), product_id: null, product_slug: null };
     createInquiryWithItems.mockResolvedValue({
-      ...manual,
-      id: "22222222-2222-4222-8222-222222222222",
-      created_at: new Date(0).toISOString(),
-      updated_at: new Date(0).toISOString(),
+      inquiry: {
+        ...manual,
+        id: "22222222-2222-4222-8222-222222222222",
+        created_at: new Date(0).toISOString(),
+        updated_at: new Date(0).toISOString(),
+      },
+      idempotent: false,
+      outboxId: "outbox-2",
     });
     const { submitInquiry } = await import(
       "@/lib/services/inquiries/submission"
     );
     await submitInquiry(manual, []);
     expect(getLatestProductsForInquiry).not.toHaveBeenCalled();
-    expect(createInquiryWithItems).toHaveBeenCalledWith(manual, []);
+    expect(createInquiryWithItems).toHaveBeenCalledWith(manual, [], null);
   });
 });

@@ -49,6 +49,19 @@ export interface InquiryListResult {
   pageSize: number;
 }
 
+/**
+ * Phase 5: result of the idempotent create_inquiry_with_items RPC.
+ * - `inquiry`     : the inquiry row (newly inserted OR existing on idempotent hit)
+ * - `idempotent`  : true when the call hit an existing client_submission_id
+ * - `outboxId`    : outbox event id written in the same transaction, or null
+ *                   when idempotent=true (no new outbox row was created)
+ */
+export interface InquirySubmissionRpcResult {
+  inquiry: Inquiry;
+  idempotent: boolean;
+  outboxId: string | null;
+}
+
 type InquiryClient = SupabaseClient<Database>;
 
 function parseUnreadInquiryCount(value: unknown): number | null {
@@ -77,15 +90,34 @@ export async function createInquiry(record: InquiryCreateRecord): Promise<Inquir
 
 export async function createInquiryWithItems(
   record: InquiryCreateRecord,
-  items: Array<Record<string, unknown>>
-): Promise<Inquiry> {
+  items: Array<Record<string, unknown>>,
+  clientSubmissionId?: string | null,
+): Promise<InquirySubmissionRpcResult> {
   const client = createAdminSupabaseClient();
   const { data, error } = await client.rpc("create_inquiry_with_items", {
     p_inquiry: record,
     p_items: items,
+    p_client_submission_id: clientSubmissionId ?? null,
   });
-  if (error || !data) throw error || new Error("Atomic inquiry insert returned no row");
-  return data as unknown as Inquiry;
+  if (error || !data) {
+    throw error || new Error("Atomic inquiry insert returned no row");
+  }
+
+  // Phase 5: RPC returns { inquiry, idempotent, outbox_id }.
+  // Defensive parse — never trust the shape blindly.
+  const payload = data as unknown as Record<string, unknown>;
+  const inquiryRaw = payload?.inquiry;
+  if (!inquiryRaw || typeof inquiryRaw !== "object") {
+    throw new Error("Atomic inquiry insert returned malformed payload");
+  }
+  const inquiry = inquiryRaw as unknown as Inquiry;
+
+  const idempotent =
+    typeof payload.idempotent === "boolean" ? payload.idempotent : false;
+  const outboxId =
+    typeof payload.outbox_id === "string" ? payload.outbox_id : null;
+
+  return { inquiry, idempotent, outboxId };
 }
 
 export async function listInquiries(

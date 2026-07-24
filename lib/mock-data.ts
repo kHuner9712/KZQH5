@@ -161,6 +161,7 @@ export const mockInquiries: Inquiry[] = [
     read_at: null,
     notes: null,
     assignee: null,
+    client_submission_id: null,
     created_at: now,
     updated_at: now,
     inquiry_items: mockInquiryItems,

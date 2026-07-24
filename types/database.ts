@@ -242,6 +242,7 @@ export interface Inquiry {
   read_at: string | null;
   notes: string | null;
   assignee: string | null;
+  client_submission_id: string | null;
   created_at: string;
   updated_at: string;
   inquiry_items?: InquiryItem[];
@@ -401,6 +402,7 @@ export interface InquiryInput {
   utm_term?: string;
   privacy_accepted?: boolean;
   items?: InquiryListItemInput[];
+  client_submission_id?: string;
 }
 
 export const analyticsEventNames = [
@@ -589,8 +591,24 @@ export type Database = {
         Returns: unknown;
       };
       create_inquiry_with_items: {
-        Args: { p_inquiry: Record<string, unknown>; p_items?: Record<string, unknown>[] };
+        Args: {
+          p_inquiry: Record<string, unknown>;
+          p_items?: Record<string, unknown>[];
+          p_client_submission_id?: string | null;
+        };
         Returns: unknown;
+      };
+      claim_inquiry_outbox_batch: {
+        Args: { p_limit?: number };
+        Returns: unknown;
+      };
+      mark_inquiry_outbox_sent: {
+        Args: { p_ids: string[] };
+        Returns: void;
+      };
+      fail_inquiry_outbox_event: {
+        Args: { p_id: string; p_error_code?: string | null };
+        Returns: void;
       };
       get_analytics_summary: {
         Args: { p_start: string; p_end: string };
