@@ -33,6 +33,15 @@ begin
   if not has_function_privilege('service_role', 'public.count_unread_inquiries()', 'execute') then
     raise exception 'service_role cannot execute unread count RPC';
   end if;
+  if has_function_privilege('anon', 'public.get_admin_dashboard_snapshot()', 'execute') then
+    raise exception 'anon can execute dashboard snapshot RPC';
+  end if;
+  if has_function_privilege('authenticated', 'public.get_admin_dashboard_snapshot()', 'execute') then
+    raise exception 'ordinary authenticated can execute dashboard snapshot RPC';
+  end if;
+  if not has_function_privilege('service_role', 'public.get_admin_dashboard_snapshot()', 'execute') then
+    raise exception 'service_role cannot execute dashboard snapshot RPC';
+  end if;
   if not has_function_privilege('anon', 'public.search_published_products(text,uuid,uuid,integer,integer)', 'execute') then
     raise exception 'anon cannot execute public search RPC';
   end if;
