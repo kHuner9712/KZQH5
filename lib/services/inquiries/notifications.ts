@@ -21,6 +21,7 @@ export interface NotificationConfig {
  * - eventId: the inquiry_outbox.id (stable across retries)
  * - lockToken: the per-claim lock_token (changes on each claim)
  * - attempt: 1-based attempt number for this delivery
+ * - provider: the provider name ('email' | 'wecom') for this delivery
  *
  * Adapters that do NOT support idempotency keys (e.g. WeCom webhook)
  * should document that duplicate sends are still possible.
@@ -29,18 +30,39 @@ export interface NotificationSendContext {
   eventId: string;
   lockToken: string;
   attempt: number;
+  provider: "email" | "wecom";
 }
 
 /**
  * Result of NotificationAdapter.send.
  *
  * providerMessageId is captured when the provider returns one
- * (e.g. Resend message id) and recorded on the outbox event via
- * mark_inquiry_outbox_sent. Adapters that don't expose a message id
+ * (e.g. Resend message id) and recorded on the delivery row via
+ * mark_delivery_sent. Adapters that don't expose a message id
  * (e.g. WeCom webhook) return undefined.
  */
 export interface NotificationSendResult {
   providerMessageId?: string;
+}
+
+/**
+ * Error classification for the outbox processor.
+ * - 'retryable': transient failure (network, 429, 5xx, concurrent 409)
+ *   — the processor advances attempts and schedules retry.
+ * - 'permanent': non-retryable failure (invalid 409, malformed request)
+ *   — the processor forces dead_letter immediately.
+ */
+export type NotificationErrorKind = "retryable" | "permanent";
+
+export class NotificationError extends Error {
+  readonly kind: NotificationErrorKind;
+  readonly code: string;
+  constructor(kind: NotificationErrorKind, code: string, message?: string) {
+    super(message || code);
+    this.name = "NotificationError";
+    this.kind = kind;
+    this.code = code;
+  }
 }
 
 export interface NotificationAdapter {
@@ -57,6 +79,21 @@ const defaultRuntime: NotificationRuntime = {
   timeoutMs: NOTIFICATION_TIMEOUT_MS,
 };
 
+/**
+ * HTTP error with status code + response body so adapters can
+ * classify 409 (concurrent vs invalid) and other status codes.
+ */
+class NotificationHttpError extends Error {
+  readonly status: number;
+  readonly bodyText: string;
+  constructor(status: number, bodyText: string) {
+    super(`HTTP ${status}`);
+    this.name = "NotificationHttpError";
+    this.status = status;
+    this.bodyText = bodyText;
+  }
+}
+
 async function postJson(
   url: string,
   init: RequestInit,
@@ -68,7 +105,7 @@ async function postJson(
 /**
  * Same contract as postJson, but returns the parsed JSON body so the
  * caller can extract a provider message id (e.g. Resend's `id` field).
- * Throws the same errors as postJson on non-2xx / non-JSON responses.
+ * Throws NotificationHttpError on non-2xx so callers can classify.
  */
 async function postJsonWithResponse(
   url: string,
@@ -82,7 +119,10 @@ async function postJsonWithResponse(
       ...init,
       signal: controller.signal,
     });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    if (!response.ok) {
+      const bodyText = await response.text().catch(() => "");
+      throw new NotificationHttpError(response.status, bodyText);
+    }
     const contentType = response.headers.get("content-type") || "";
     const text = await response.text();
     if (text && !contentType.toLowerCase().includes("application/json")) {
@@ -152,6 +192,55 @@ function escapeHtml(input: string): string {
   );
 }
 
+/**
+ * Build the Resend Idempotency-Key for a given delivery.
+ *
+ * Format: `kzq/inquiry/{eventId}/email`
+ * - Stable across retries of the SAME delivery (same eventId + same provider)
+ * - Different per provider (email vs wecom use different keys)
+ * - Does NOT include the lock_token (which changes per claim)
+ * - Max length well under Resend's 256-char limit
+ */
+export function buildResendIdempotencyKey(eventId: string): string {
+  return `kzq/inquiry/${eventId}/email`;
+}
+
+/**
+ * Classify a Resend HTTP error.
+ *
+ * - 409 with "concurrent" in the body → retryable
+ *   (a parallel request with the same key is in flight)
+ * - 409 without "concurrent" → permanent
+ *   (idempotency-key mismatch / invalid request — retrying won't help)
+ * - 429 / 5xx → retryable
+ * - 4xx (other) → permanent
+ */
+function classifyResendError(error: unknown): NotificationError {
+  if (error instanceof NotificationHttpError) {
+    const body = error.bodyText.toLowerCase();
+    if (error.status === 409) {
+      if (body.includes("concurrent")) {
+        return new NotificationError(
+          "retryable",
+          "RESEND_409_CONCURRENT",
+        );
+      }
+      return new NotificationError(
+        "permanent",
+        "RESEND_409_INVALID",
+      );
+    }
+    if (error.status === 429 || error.status >= 500) {
+      return new NotificationError("retryable", `RESEND_${error.status}`);
+    }
+    return new NotificationError("permanent", `RESEND_${error.status}`);
+  }
+  // Network / timeout / abort — retryable.
+  const code =
+    error instanceof Error ? error.name : "RESEND_UNKNOWN";
+  return new NotificationError("retryable", code);
+}
+
 export function createNotificationAdapters(
   config: NotificationConfig,
   runtime: NotificationRuntime = defaultRuntime,
@@ -161,7 +250,9 @@ export function createNotificationAdapters(
     configured: Boolean(config.wecomWebhookUrl),
     // WeCom webhook does NOT support an idempotency key, so duplicate
     // sends are possible if the parent outbox event is retried
-    // (at-least-once). Documented as a known limitation.
+    // (at-least-once). The per-provider delivery model ensures that
+    // a SUCCEEDED wecom delivery is never re-invoked even if another
+    // provider (email) fails and the parent event retries.
     async send(inquiry) {
       if (!config.wecomWebhookUrl) return {};
       await postJson(
@@ -193,34 +284,54 @@ export function createNotificationAdapters(
       if (!config.resendApiKey || !config.resendFrom || !config.resendTo)
         return {};
       const content = lines(inquiry);
-      const response = await postJsonWithResponse(
-        "https://api.resend.com/emails",
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${config.resendApiKey}`,
-            "Content-Type": "application/json",
+
+      // Build headers. The Idempotency-Key is sent as an HTTP Header
+      // (NOT in the JSON body) per Resend's API spec. The key is
+      // scoped to (eventId, provider) so:
+      //   - Same delivery retried → same key → Resend deduplicates
+      //   - Different provider → different key → no cross-provider collision
+      //   - Lock token is NOT included (changes per claim)
+      const headers: Record<string, string> = {
+        Authorization: `Bearer ${config.resendApiKey}`,
+        "Content-Type": "application/json",
+      };
+      if (context?.eventId) {
+        headers["Idempotency-Key"] = buildResendIdempotencyKey(
+          context.eventId,
+        );
+      }
+
+      let response: Record<string, unknown> | null;
+      try {
+        response = await postJsonWithResponse(
+          "https://api.resend.com/emails",
+          {
+            method: "POST",
+            headers,
+            body: JSON.stringify({
+              from: config.resendFrom,
+              to: config.resendTo
+                .split(",")
+                .map((address) => address.trim())
+                .filter(Boolean),
+              subject: `[KZQ] 新询盘 - ${inquiry.name}`,
+              text: content.join("\n"),
+              html: `<h2>KZQ 新询盘</h2>${content.map((line) => `<p>${escapeHtml(line)}</p>`).join("")}`,
+              // NOTE: idempotency_key is NOT in the body — it is sent
+              // as the Idempotency-Key HTTP Header above.
+            }),
+            cache: "no-store",
           },
-          body: JSON.stringify({
-            from: config.resendFrom,
-            to: config.resendTo
-              .split(",")
-              .map((address) => address.trim())
-              .filter(Boolean),
-            subject: `[KZQ] 新询盘 - ${inquiry.name}`,
-            text: content.join("\n"),
-            html: `<h2>KZQ 新询盘</h2>${content.map((line) => `<p>${escapeHtml(line)}</p>`).join("")}`,
-            // Resend supports an `idempotency_key` for duplicate
-            // suppression. Use the outbox event id when available.
-            ...(context?.eventId
-              ? { idempotency_key: `kzq-outbox-${context.eventId}` }
-              : {}),
-          }),
-          cache: "no-store",
-        },
-        runtime,
-      );
-      // Resend returns { id: "re_xxx" } on success.
+          runtime,
+        );
+      } catch (error) {
+        // Classify and re-throw as NotificationError so the processor
+        // can decide retry vs dead_letter.
+        throw classifyResendError(error);
+      }
+
+      // Resend returns { id: "re_xxx" } on success — this is the
+      // real provider message id, persisted to the delivery row.
       const providerMessageId =
         typeof response?.id === "string" ? response.id : undefined;
       return providerMessageId ? { providerMessageId } : {};
