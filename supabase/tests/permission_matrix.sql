@@ -18,10 +18,10 @@ begin
   if has_table_privilege('anon', 'public.analytics_events', 'select,insert') then
     raise exception 'anon unexpectedly has analytics access';
   end if;
-  if has_function_privilege('anon', 'public.create_inquiry_with_items(jsonb,jsonb)', 'execute') then
+  if has_function_privilege('anon', 'public.create_inquiry_with_items(jsonb,jsonb,uuid)', 'execute') then
     raise exception 'anon can execute atomic inquiry RPC';
   end if;
-  if has_function_privilege('authenticated', 'public.create_inquiry_with_items(jsonb,jsonb)', 'execute') then
+  if has_function_privilege('authenticated', 'public.create_inquiry_with_items(jsonb,jsonb,uuid)', 'execute') then
     raise exception 'ordinary authenticated can execute atomic inquiry RPC';
   end if;
   if has_function_privilege('anon', 'public.count_unread_inquiries()', 'execute') then
@@ -52,7 +52,7 @@ begin
      or not has_table_privilege('service_role', 'public.analytics_events', 'insert') then
     raise exception 'service_role lacks required server write privileges';
   end if;
-  if not has_function_privilege('service_role', 'public.create_inquiry_with_items(jsonb,jsonb)', 'execute') then
+  if not has_function_privilege('service_role', 'public.create_inquiry_with_items(jsonb,jsonb,uuid)', 'execute') then
     raise exception 'service_role cannot execute atomic inquiry RPC';
   end if;
 end;
