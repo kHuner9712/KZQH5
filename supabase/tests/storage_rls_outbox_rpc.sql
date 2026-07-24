@@ -41,13 +41,13 @@ begin;
 -- Seed one object in each bucket so the SELECT tests have something
 -- to find. Use service_role to bypass RLS during seeding.
 set local role service_role;
-insert into storage.objects (id, bucket_id, name, owner)
+insert into storage.objects (id, bucket_id, name)
 values
-  ('00000000-0000-4000-8000-000000000060', 'public-assets', 'storage-rls-test-public.txt', null)
+  ('00000000-0000-4000-8000-000000000060', 'public-assets', 'storage-rls-test-public.txt')
 on conflict (id) do nothing;
-insert into storage.objects (id, bucket_id, name, owner)
+insert into storage.objects (id, bucket_id, name)
 values
-  ('00000000-0000-4000-8000-000000000061', 'private-assets', 'storage-rls-test-private.txt', null)
+  ('00000000-0000-4000-8000-000000000061', 'private-assets', 'storage-rls-test-private.txt')
 on conflict (id) do nothing;
 
 -- A.1: anon can SELECT from public-assets
