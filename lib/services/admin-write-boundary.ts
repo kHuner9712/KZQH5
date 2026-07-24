@@ -3,7 +3,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/types/database";
 import { getVerifiedAdmin } from "@/lib/services/admin-auth";
 import {
-  isSameSiteRequest,
+  isSameOrigin,
+  isAllowedFetchSite,
   readJsonBody,
 } from "@/lib/services/http-security";
 
@@ -57,9 +58,15 @@ export async function requireAdminWrite<T = unknown>(
     };
   }
 
-  // Phase 6: Combined Origin + Sec-Fetch-Site check (replaces isSameOrigin).
-  // isSameSiteRequest checks both headers for defense-in-depth.
-  if (!isSameSiteRequest(request)) {
+  // Phase 6: Combined Origin + Sec-Fetch-Site check for admin writes.
+  // Admin write endpoints use a STRICTER policy than general endpoints:
+  //   - Origin MUST be present and match (fail-closed for missing Origin)
+  //   - Sec-Fetch-Site, if present, must be same-origin/none (defense-in-depth)
+  // This preserves the deny-by-default model: a missing Origin on a
+  // state-changing admin request is always rejected, never treated as a
+  // trusted non-browser client. Non-browser callers (release scripts) must
+  // send an explicit same-origin Origin header.
+  if (!isSameOrigin(request) || !isAllowedFetchSite(request)) {
     return {
       ok: false,
       response: adminWriteError("ADMIN_WRITE_FORBIDDEN_ORIGIN", 403),
