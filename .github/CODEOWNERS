@@ -1,8 +1,10 @@
 # Phase 11: Code ownership rules.
 #
-# GitHub requires at least one reviewer for owned paths. This ensures
-# the right people are automatically requested on PRs touching critical
-# areas (security, database migrations, CI/CD, deployment).
+# NOTE: This file alone does NOT enforce review. It only auto-requests
+# the listed owners on PRs. To ENFORCE review, a GitHub Ruleset or
+# Branch Protection rule with "Require review from Code Owners" must
+# be enabled in the repository settings. That configuration is a
+# manual todo — it cannot be applied from a file in the repo.
 
 # Default owner — all files not matched below.
 * @kHuner9712

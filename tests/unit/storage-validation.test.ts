@@ -142,6 +142,28 @@ describe("Phase 4: storage validation", () => {
       expect(result.ok).toBe(false);
     });
 
+    it("rejects SVG content masquerading as PNG (magic bytes mismatch)", () => {
+      // "<svg" bytes — an SVG file declared as image/png
+      const svgBytes = new Uint8Array([0x3c, 0x73, 0x76, 0x67, 0x20, 0x78, 0x6d, 0x6c]);
+      const result = verifyMagicBytes(svgBytes, "image/png");
+      expect(result.ok).toBe(false);
+      expect(result.error).toContain("不匹配");
+    });
+
+    it("rejects SVG content masquerading as PDF (magic bytes mismatch)", () => {
+      // "<svg" bytes — an SVG file declared as application/pdf
+      const svgBytes = new Uint8Array([0x3c, 0x73, 0x76, 0x67, 0x3e]);
+      const result = verifyMagicBytes(svgBytes, "application/pdf");
+      expect(result.ok).toBe(false);
+    });
+
+    it("rejects EXE content masquerading as JPEG (PE header)", () => {
+      // MZ header (Windows PE executable) declared as image/jpeg
+      const exeBytes = new Uint8Array([0x4d, 0x5a, 0x90, 0x00, 0x03, 0x00, 0x00, 0x00]);
+      const result = verifyMagicBytes(exeBytes, "image/jpeg");
+      expect(result.ok).toBe(false);
+    });
+
     it("rejects WebP with wrong format tag (RIFF but not WEBP at offset 8)", () => {
       // RIFF + 4 size bytes + WAVE (not WEBP)
       const bytes = new Uint8Array([
@@ -335,6 +357,61 @@ describe("Phase 4: storage validation", () => {
         maxSize: PUBLIC_ASSETS_MAX_SIZE,
       });
       expect(result.ok).toBe(false);
+    });
+
+    it("rejects SVG content masquerading as PNG via full pipeline (magic bytes)", () => {
+      // SVG bytes with a .png extension and image/png MIME type.
+      // MIME allowlist passes, size passes, but magic bytes FAIL.
+      const svgBytes = new Uint8Array([
+        0x3c, 0x73, 0x76, 0x67, 0x20, 0x78, 0x6d, 0x6c,
+        0x6e, 0x73, 0x3d, 0x22, 0x68, 0x74, 0x74, 0x70,
+      ]);
+      const result = validateFileUpload({
+        mimeType: "image/png",
+        size: 2048,
+        filename: "evil-logo.png",
+        bytes: svgBytes,
+        allowedMime: IMAGE_ALLOWED_MIME,
+        maxSize: IMAGE_MAX_SIZE,
+      });
+      expect(result.ok).toBe(false);
+      expect(result.error).toContain("不匹配");
+    });
+
+    it("rejects oversized image (above IMAGE_MAX_SIZE)", () => {
+      const result = validateFileUpload({
+        mimeType: "image/png",
+        size: IMAGE_MAX_SIZE + 1,
+        filename: "huge.png",
+        bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+        allowedMime: IMAGE_ALLOWED_MIME,
+        maxSize: IMAGE_MAX_SIZE,
+      });
+      expect(result.ok).toBe(false);
+      expect(result.error).toContain("10MB");
+    });
+
+    it("rejects oversized PDF (above PUBLIC_ASSETS_MAX_SIZE)", () => {
+      const result = validateFileUpload({
+        mimeType: "application/pdf",
+        size: PUBLIC_ASSETS_MAX_SIZE + 1,
+        filename: "huge.pdf",
+        bytes: pdfBytes,
+        allowedMime: PUBLIC_ASSETS_ALLOWED_MIME,
+        maxSize: PUBLIC_ASSETS_MAX_SIZE,
+      });
+      expect(result.ok).toBe(false);
+      expect(result.error).toContain("50MB");
+    });
+
+    it("rejects folder traversal in generated storage path", () => {
+      const path = generateStoragePath("../../../etc/passwd", ".pdf");
+      expect(path).toBeNull();
+    });
+
+    it("rejects null-byte injection in folder name", () => {
+      const path = generateStoragePath("products\0/../../etc", ".pdf");
+      expect(path).toBeNull();
     });
 
     it("rejects oversized file", () => {
