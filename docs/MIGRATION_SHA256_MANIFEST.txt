@@ -1,15 +1,21 @@
 # Migration SHA-256 Manifest
 #
-# Records the SHA-256 of every migration file under supabase/migrations/
-# at the time of the first green HEAD after the pre-merge migration
-# correction exception window closed.
+# Records the SHA-256 of every versioned migration file under
+# supabase/migrations/ at the time of the first green HEAD after the
+# pre-merge migration correction exception window closed.
 #
 # Subsequent PRs MUST NOT modify a migration that already appears here.
 # New fixes must be added as a NEW migration with a strictly later
-# timestamp, and this manifest must be updated in the SAME PR to
-# include the new file.
+# timestamp, and this manifest must be updated in the SAME PR via:
+#   node scripts/check-migration-immutability.mjs --append-new
 #
-# Regenerate with: node scripts/check-migration-immutability.mjs --update
+# The legacy --update mode (full rewrite) is REMOVED. Existing hash
+# lines are never rewritten. To bootstrap a one-time manifest when
+# none exists, use --initialize (refuses if a manifest exists).
+#
+# Only YYYYMMDDHHMMSS_*.sql files are tracked. Non-versioned baseline
+# files (schema.sql, policies.sql, seed.sql, cms_seed.sql,
+# cms_upgrade.sql) are NOT tracked here.
 
 a9269812034920befb769daab9cdd5854451f37e36765cbea94868073ce46d76  20260713181111_upgrade_inquiries.sql
 601cf56e20a5427dc82f1a34ee1aea319daea4137dcd82185c7af6a6fb1afc25  20260714032351_b2b_product_search_and_inquiry_items.sql
@@ -47,4 +53,5 @@ a7ae22936100093cb99321f6ce86cdae7c2f0b3b9cadecab0a8c06f36485086f  20260725210000
 e2e8f414bf684fa73099f08cff66d312b3236518c380dba4ea8218542b18617d  20260725240000_fix_cleanup_rpc_signature_and_schema_contract.sql
 8a9ba81d61ec94eba3e9e53e8dbd0b60c809e227acad43d19e72e1802fa6db38  20260725240010_aggregate_audit_updated_fields.sql
 81e6067f2363da93e1da915d34c96503506ae92bfcb15396221c93aba88872db  20260725250000_wire_storage_object_refs_into_asset_lifecycle.sql
-466c6beb0080b2dce6718412e75c37e98215c21dfcb0ace38995b49e0c50831b  cms_upgrade.sql
+b18d939274fbce7cfe0e852fd5924c3e83fb5efdd2b4f816c1e678cc76ccc336  20260725260000_fix_schema_verifier_runtime.sql
+d46664c3b8503bd57ffe25030f90f31ba4169ebf91734f025304e7e905b19948  20260725261000_fix_storage_ref_deletion_lifecycle.sql
