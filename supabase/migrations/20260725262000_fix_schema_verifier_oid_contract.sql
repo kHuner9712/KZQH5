@@ -281,7 +281,10 @@ begin
 
       -- 2. PUBLIC (grantee=0) must NOT have EXECUTE.
       --    Use aclexplode(proacl) — the canonical ACL introspection.
-      --    privilege_type 'X' = EXECUTE (see pg_builtin_acl).
+      --    aclexplode returns privilege_type as the TEXT name of the
+      --    privilege ('EXECUTE', 'SELECT', ...), NOT the single-char
+      --    code ('X'). Checking = 'X' never matched, so a stray
+      --    GRANT EXECUTE TO PUBLIC was silently missed.
       v_public_ok := false;
       select p.proacl into v_proacl
         from pg_proc p
@@ -292,7 +295,7 @@ begin
         v_public_ok := true;
       else
         for v_acl_row in select * from aclexplode(v_proacl) loop
-          if v_acl_row.grantee = 0 and v_acl_row.privilege_type = 'X' then
+          if v_acl_row.grantee = 0 and v_acl_row.privilege_type = 'EXECUTE' then
             v_public_ok := true;
           end if;
         end loop;
