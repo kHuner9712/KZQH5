@@ -19,6 +19,17 @@
 -- ============================================================
 -- A. Widen storage_object_refs.status CHECK to include pending_delete
 -- ============================================================
+-- The prior migration (20260725170000) defined status with an inline
+-- CHECK:  status text ... check (status in ('active', 'superseded', 'deleted'))
+-- PostgreSQL auto-names inline CHECKs as <table>_<column>_check, so
+-- the constraint is named storage_object_refs_status_check.
+--
+-- The DO block below tries to drop any status CHECK by regex match
+-- on pg_get_constraintdef. But pg_get_constraintdef may render the
+-- predicate as  ((status)::text = ANY ((ARRAY[...])::text[]))  which
+-- does NOT match the 'status\s+in\s*\(' regex, so the DO block can
+-- miss it. We therefore ALSO drop by the explicit auto-generated name
+-- before ADD CONSTRAINT, guaranteeing no duplicate-name collision.
 do $$
 declare
   v_constraint_name text;
@@ -31,12 +42,18 @@ begin
       where n.nspname = 'public'
         and t.relname = 'storage_object_refs'
         and c.contype = 'c'
-        and pg_get_constraintdef(c.oid) ~* 'status\s+in\s*\('
+        and pg_get_constraintdef(c.oid) ~* 'status'
   loop
     execute format('alter table public.storage_object_refs drop constraint if exists %I', v_constraint_name);
   end loop;
 end;
 $$;
+
+-- Explicit name-based drop as a belt-and-suspenders guarantee:
+-- the auto-generated inline CHECK name is deterministic, so drop it
+-- directly to avoid 'constraint already exists' on ADD CONSTRAINT.
+alter table public.storage_object_refs
+  drop constraint if exists storage_object_refs_status_check;
 
 alter table public.storage_object_refs
   add constraint storage_object_refs_status_check
