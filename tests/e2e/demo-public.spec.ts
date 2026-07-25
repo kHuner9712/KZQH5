@@ -29,6 +29,15 @@ test.describe("Demo public acceptance", () => {
     page,
     request,
   }, testInfo) => {
+    // This test exercises a long end-to-end flow: home screenshot, product
+    // search, category filter, RSC navigation to a product detail page,
+    // add-to-inquiry, inquiry form submission with validation, and a
+    // second visit to verify list clearing. Under the full suite the
+    // shared `npm run start` server is warmer and RSC fetches compete
+    // with other requests, so the default 30s test timeout is too tight.
+    // 60s keeps the test deterministic without retrying or loosening
+    // assertions.
+    test.setTimeout(60_000);
     await page.context().setExtraHTTPHeaders({
       "x-edgeone-client-ip":
         testInfo.project.name === "mobile-chromium"
@@ -111,6 +120,10 @@ test.describe("Demo public acceptance", () => {
     page,
     request,
   }, testInfo) => {
+    // Same rationale as the Chinese flow: the full suite shares one
+    // `npm run start` server, and RSC navigation + inquiry submission
+    // need headroom beyond the default 30s test timeout.
+    test.setTimeout(60_000);
     await page.context().setExtraHTTPHeaders({
       "x-edgeone-client-ip":
         testInfo.project.name === "mobile-chromium"
