@@ -29,6 +29,7 @@
     "check:deployed": "node scripts/check-deployed-site.mjs",
     "check:release-readiness": "node scripts/check-release-readiness.mjs",
     "check:release-readiness:staging": "node scripts/check-release-readiness.mjs --mode=staging",
+    "check:migration-immutability": "node scripts/check-migration-immutability.mjs",
     "sync:pdfjs-worker": "node scripts/sync-pdfjs-worker.mjs",
     "postinstall": "node scripts/sync-pdfjs-worker.mjs",
     "check": "npm run typecheck && npm run lint && npm run test:unit && npm run build:demo"

@@ -38,6 +38,8 @@ jobs:
           npm --version
           which node
       - run: npm ci
+      - name: Verify frozen migration hashes
+        run: npm run check:migration-immutability
       - run: npm run typecheck
       - run: npm run lint
       - run: npm run test:unit
@@ -91,6 +93,8 @@ jobs:
           npm --version
           which node
       - run: npm ci
+      - name: Verify frozen migration hashes
+        run: npm run check:migration-immutability
       - name: Wait for PostgreSQL and create test databases
         run: |
           until pg_isready -h localhost -p 5432 -U postgres; do
