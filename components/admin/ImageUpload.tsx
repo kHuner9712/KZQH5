@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import {
   uploadViaServerApi,
   deleteViaServerApi,
@@ -91,6 +91,12 @@ export function ImageUpload({
   aspect = "wide",
 }: ImageUploadProps) {
   const inputRef = useRef<HTMLInputElement>(null);
+  // useId 生成稳定且 React 全局唯一的 ID，避免同一页面多个相同 purpose
+  // 上传器（如产品详情图列表、Company Logo + 微信二维码、多个证书/资料上传器）
+  // 共享 id={`upload-${purpose}`} 导致点击 label 误触发首个 input。
+  // https://react.dev/reference/react/useId
+  const reactId = useId();
+  const inputId = `upload-${purpose}-${reactId.replace(/[^a-zA-Z0-9_-]/g, "")}`;
   const [uploading, setUploading] = useState(false);
   const [removing, setRemoving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -294,11 +300,11 @@ export function ImageUpload({
             onChange={handleFile}
             disabled={uploading}
             className="hidden"
-            id={`upload-${purpose}`}
+            id={inputId}
           />
           <div className="flex gap-2">
             <label
-              htmlFor={`upload-${purpose}`}
+              htmlFor={inputId}
               className={cn(
                 "inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-md border border-gray-200 bg-white px-3 text-xs text-gray-700 hover:bg-gray-50",
                 uploading && "pointer-events-none opacity-50"
