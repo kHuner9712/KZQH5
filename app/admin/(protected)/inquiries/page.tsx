@@ -115,10 +115,20 @@ export default function InquiriesPage() {
     inquiry: Inquiry,
     patch: Partial<Pick<Inquiry, "status" | "is_read" | "notes" | "assignee">>
   ) {
+    // Phase 3 optimistic lock: the server-side update_inquiry_with_audit RPC
+    // requires `expected_updated_at` and rejects with 409 when the version
+    // stamp is stale (another editor landed a change first). We pass the
+    // inquiry.updated_at currently held in state; the response returns the
+    // new updated_at which we merge back so subsequent patches use the
+    // fresh stamp without requiring a full reload.
     const response = await fetch("/api/admin/inquiries", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id: inquiry.id, ...patch }),
+      body: JSON.stringify({
+        id: inquiry.id,
+        expected_updated_at: inquiry.updated_at,
+        ...patch,
+      }),
     });
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || "更新失败");

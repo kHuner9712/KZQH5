@@ -65,6 +65,14 @@ export interface BulkProductResponse {
  * Save (create or update) a product together with its images via the
  * transactional RPC. If `payload.id` is provided the product is updated;
  * otherwise a new product is created.
+ *
+ * Optimistic lock (Phase 3): when updating an existing product the
+ * caller MUST pass `expected_updated_at` set to the `updated_at`
+ * timestamp of the product record currently in the editor. The server
+ * RPC compares this against `products.updated_at` using `FOR UPDATE`
+ * and rejects the update with 409 (ADMIN_WRITE_CONFLICT) when another
+ * edit landed in between. Creates omit `expected_updated_at` (the
+ * server ignores it for inserts).
  */
 export function saveProduct(payload: {
   id?: string;
@@ -75,6 +83,7 @@ export function saveProduct(payload: {
     alt_en: string | null;
     sort_order: number;
   }>;
+  expected_updated_at?: string | null;
 }): Promise<AdminFetchResult<ProductSaveResponse>> {
   return adminFetch<ProductSaveResponse>("/api/admin/products", "POST", payload);
 }

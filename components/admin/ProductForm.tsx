@@ -385,9 +385,15 @@ export function ProductForm({ initial, initialImages = [] }: ProductFormProps) {
     // Phase 2: persist product + images via the transactional server-side RPC.
     // The /api/admin/products route enforces admin verification, fail-closed
     // same-origin, Content-Type / size limits, field validation, and calls
-    // save_product_with_images() which inserts/updates the product and
-    // replaces its images in a single transaction. Partial image failure
+    // save_product_with_images_and_audit() which inserts/updates the product
+    // and replaces its images in a single transaction. Partial image failure
     // rolls back the product save — no more "product saved, images lost".
+    //
+    // Phase 3 optimistic lock: when editing an existing product we pass
+    // `expected_updated_at` so the server RPC can compare it against
+    // products.updated_at using FOR UPDATE. If another edit landed
+    // between page load and save, the server returns ADMIN_WRITE_CONFLICT
+    // (409) and we surface a clear message to re-load the record.
     const result = await saveProduct({
       id: initial?.id,
       product: payload,
@@ -397,6 +403,7 @@ export function ProductForm({ initial, initialImages = [] }: ProductFormProps) {
         alt_en: img.alt_en || null,
         sort_order: i,
       })),
+      expected_updated_at: initial?.updated_at ?? null,
     });
 
     setSaving(false);
@@ -406,7 +413,7 @@ export function ProductForm({ initial, initialImages = [] }: ProductFormProps) {
         result.code === "ADMIN_WRITE_BAD_REQUEST"
           ? "表单数据校验失败"
           : result.code === "ADMIN_WRITE_CONFLICT"
-            ? "slug 已被其他产品占用"
+            ? "保存冲突：该产品可能已被其他人更新，或 slug 已被其他产品占用。请刷新后重试。"
             : result.code === "ADMIN_WRITE_UNAUTHORIZED"
               ? "登录已过期，请重新登录"
               : result.code === "ADMIN_WRITE_FORBIDDEN_ORIGIN"
