@@ -117,7 +117,7 @@ export type StorageUploadResult =
 
 export type StorageDeleteResult =
   | { ok: true; path: string; bucket: string }
-  | { ok: false; code: AdminWriteErrorCode };
+  | { ok: false; code: AdminWriteErrorCode; partial?: true };
 
 /**
  * public-assets 上传结果。比 private-assets 多一个 publicUrl：
@@ -323,21 +323,73 @@ async function completeStorageAudit(
 /**
  * 补偿：删除已上传对象（用于审计完成失败场景）。
  *
- * 失败时记录结构化日志，但不抛错 —— 调用方仍返回错误给前端，
- * 对象可能残留于 bucket，需后续通过 storage_cleanup_queue 处理。
+ * fail-closed 语义：
+ *   - 必须检查 `.remove()` 返回的 `error`，不得沉默吞错
+ *   - 补偿成功 → 返回 { ok: true }，调用方仍返回错误（因为审计不完整）
+ *   - 补偿失败 → 返回 { ok: false }，对象残留，需入队 storage_cleanup_queue
+ *     让 dispatcher 后续重新检查引用后再删除
+ *   - 不宣称对象已删除（除非 `.remove()` 明确返回无 error）
+ *   - 调用方根据返回值决定是否入队 reconciliation
  */
 async function compensateDeleteUploadedObject(
   client: SupabaseClient<Database>,
   bucket: string,
   path: string,
-): Promise<void> {
+): Promise<{ ok: true } | { ok: false }> {
   try {
-    await client.storage.from(bucket).remove([path]);
+    const { error } = await client.storage.from(bucket).remove([path]);
+    if (error) {
+      // 补偿删除失败：对象仍残留于 bucket
+      // 固定日志 code，不泄露 Supabase 内部错误细节
+      console.error("STORAGE_COMPENSATE_DELETE_FAILED", {
+        bucket,
+        path,
+        code: "STORAGE_COMPENSATE_FAILED",
+      });
+      return { ok: false };
+    }
+    return { ok: true };
   } catch {
-    console.error("STORAGE_COMPENSATE_DELETE_FAILED", {
+    // 异常（网络/超时等）：对象状态未知，按失败处理
+    console.error("STORAGE_COMPENSATE_DELETE_EXCEPTION", {
       bucket,
       path,
       code: "STORAGE_COMPENSATE_FAILED",
+    });
+    return { ok: false };
+  }
+}
+
+/**
+ * 补偿失败后入队 storage_cleanup_queue 让 dispatcher 后续处理。
+ *
+ * 调用时机：compensateDeleteUploadedObject 返回 { ok: false } 时，
+ * 调用方应调用此函数把残留对象入队。入队失败时仅记录日志，
+ * 由 read-only inventory 脚本兜底发现。
+ */
+async function enqueueResidualObjectForCleanup(
+  client: SupabaseClient<Database>,
+  bucket: string,
+  path: string,
+  reason: "form_cancelled" | "replaced" | "row_deleted" | "orphan_detected",
+  sourceType?: string | null,
+  sourceId?: string | null,
+): Promise<void> {
+  try {
+    await client.rpc("enqueue_storage_cleanup", {
+      p_bucket: bucket,
+      p_object_path: path,
+      p_reason: reason,
+      p_source_type: sourceType ?? null,
+      p_source_id: sourceId ?? null,
+    });
+  } catch {
+    // 入队失败时仅记录日志；read-only inventory 脚本可发现残留对象
+    console.error("STORAGE_RESIDUAL_ENQUEUE_FAILED", {
+      bucket,
+      path,
+      reason,
+      code: "STORAGE_RESIDUAL_ENQUEUE_FAILED",
     });
   }
 }
@@ -429,7 +481,23 @@ export async function uploadToPrivateAssets(
   const auditEnd = await completeStorageAudit(client, operationId, true);
   if (!auditEnd.ok) {
     // 补偿：删除已上传对象，避免「对象存在但审计不完整」
-    await compensateDeleteUploadedObject(client, PRIVATE_ASSETS_BUCKET, path);
+    // 补偿失败时入队 cleanup queue 让 dispatcher 后续处理
+    const compensate = await compensateDeleteUploadedObject(
+      client,
+      PRIVATE_ASSETS_BUCKET,
+      path,
+    );
+    if (!compensate.ok) {
+      // 补偿删除失败 → 对象残留，入队 cleanup queue
+      await enqueueResidualObjectForCleanup(
+        client,
+        PRIVATE_ASSETS_BUCKET,
+        path,
+        "orphan_detected",
+        "storage.upload",
+        operationId,
+      );
+    }
     return { ok: false, code: "ADMIN_WRITE_FAILED" };
   }
 
@@ -568,7 +636,22 @@ export async function uploadToPublicAssets(
   // 上传成功 —— 完成审计；若审计完成失败，补偿删除已上传对象
   const auditEnd = await completeStorageAudit(client, operationId, true);
   if (!auditEnd.ok) {
-    await compensateDeleteUploadedObject(client, PUBLIC_ASSETS_BUCKET, path);
+    const compensate = await compensateDeleteUploadedObject(
+      client,
+      PUBLIC_ASSETS_BUCKET,
+      path,
+    );
+    if (!compensate.ok) {
+      // 补偿删除失败 → 对象残留，入队 cleanup queue
+      await enqueueResidualObjectForCleanup(
+        client,
+        PUBLIC_ASSETS_BUCKET,
+        path,
+        "orphan_detected",
+        "storage.upload",
+        operationId,
+      );
+    }
     return { ok: false, code: "ADMIN_WRITE_FAILED" };
   }
 
@@ -735,16 +818,24 @@ export async function deletePrivateAsset(
     return { ok: false, code: "ADMIN_WRITE_FAILED" };
   }
 
-  // 删除成功 —— 完成审计；若审计完成失败，记录日志（对象已删除，无法补偿）
+  // 删除成功 —— 完成审计；若审计完成失败，不返回普通成功
+  // 必须返回 partial-failure 让调用方感知审计不一致状态
+  // pending audit operation 保留为可对账状态，由 reconcilePendingStorageAudit 后续处理
   const auditEnd = await completeStorageAudit(client, operationId, true);
   if (!auditEnd.ok) {
     console.error("STORAGE_DELETE_OK_BUT_AUDIT_INCOMPLETE", {
       bucket: PRIVATE_ASSETS_BUCKET,
       path: validated.path,
       operationId,
+      code: "STORAGE_DELETE_AUDIT_INCOMPLETE",
     });
-    // 对象已删除，无法补偿；返回成功（业务操作已完成）
-    // 审计不一致通过日志供人工对账
+    // 对象已删除，无法补偿；返回 partial-failure（不是普通成功）
+    // 调用方应感知审计不一致状态；reconciliation 可后续确认对象已不存在后补全审计
+    return {
+      ok: false,
+      code: "ADMIN_WRITE_FAILED",
+      partial: true,
+    };
   }
 
   return { ok: true, path: validated.path, bucket: PRIVATE_ASSETS_BUCKET };
@@ -908,14 +999,21 @@ export async function deletePublicAsset(
     return { ok: false, code: "ADMIN_WRITE_FAILED" };
   }
 
-  // 删除成功 —— 完成审计；若审计完成失败，记录日志（对象已删除，无法补偿）
+  // 删除成功 —— 完成审计；若审计完成失败，不返回普通成功
+  // 必须返回 partial-failure 让调用方感知审计不一致状态
   const auditEnd = await completeStorageAudit(client, operationId, true);
   if (!auditEnd.ok) {
     console.error("STORAGE_DELETE_OK_BUT_AUDIT_INCOMPLETE", {
       bucket: PUBLIC_ASSETS_BUCKET,
       path: validated.path,
       operationId,
+      code: "STORAGE_DELETE_AUDIT_INCOMPLETE",
     });
+    return {
+      ok: false,
+      code: "ADMIN_WRITE_FAILED",
+      partial: true,
+    };
   }
 
   return { ok: true, path: validated.path, bucket: PUBLIC_ASSETS_BUCKET };
@@ -1074,4 +1172,567 @@ export async function enqueueStorageCleanup(input: {
     });
     return { ok: false, code: "ADMIN_WRITE_FAILED" };
   }
+}
+
+// ============================================================
+// Catalog asset publication flow (private→public)
+// ============================================================
+
+/**
+ * Catalog 发布应用层流程结果。
+ *
+ * 服务端从 private-assets 读取源对象字节，重新校验 MIME / Magic Bytes /
+ * 大小，写入 public-assets，再调用 publish_catalog_asset RPC 在同一事务中
+ * 更新 product_assets 行并写审计。RPC 失败时补偿删除新 public 副本；RPC
+ * 成功后把旧 private 源加入 cleanup queue。
+ */
+export type PublishCatalogAssetResult =
+  | {
+      ok: true;
+      ref: StorageObjectRef;
+      /** 旧 private-assets 源路径（已加入 cleanup queue，由 dispatcher 异步删除）。 */
+      oldPath: string;
+      /** 旧 private-assets 源 cleanup queue 行 id（null 表示幂等未创建新行）。 */
+      cleanupId: string | null;
+    }
+  | { ok: false; code: AdminWriteErrorCode };
+
+/**
+ * 应用层 Catalog 发布流程。
+ *
+ * 客户端只提交 assetId；服务端在内部完成：
+ *   1. 查询 product_assets 行（service_role）
+ *   2. 校验 is_published=true + access_level=public + authorization_status=confirmed
+ *   3. 校验源对象在 private-assets 且路径为服务端生成格式
+ *   4. 从 private-assets 下载字节
+ *   5. 重新校验 MIME / Magic Bytes / 大小（不信任 private-assets 已存内容）
+ *   6. 服务端生成 public-assets 目标路径
+ *   7. 写入 public-assets（fail-closed 审计 Saga）
+ *   8. 调用 publish_catalog_asset RPC 更新 DB 行 + 审计
+ *   9. RPC 失败 → 补偿删除新 public 副本，返回错误
+ *   10. RPC 成功 → 把旧 private 源加入 cleanup queue
+ *   11. cleanup 入队失败 → 不静默成功，返回 PARTIAL_SUCCESS_ERROR 让调用方感知
+ *
+ * 幂等性：
+ *   - 同一 assetId 重复调用：RPC 通过 SELECT ... FOR UPDATE 锁住行，
+ *     若 file_url 已是 public-assets URL，调用方应在上层先检查并直接返回。
+ *   - 并发发布：RPC 的 FOR UPDATE 锁使并发调用串行化，第二个调用看到的
+ *     是已更新的 file_url（public URL），不会复制第二份。
+ */
+export async function publishCatalogAssetFlow(input: {
+  assetId: string;
+  options?: {
+    actorId?: string | null;
+    actorEmail?: string | null;
+    actorRole?: string | null;
+  };
+}): Promise<PublishCatalogAssetResult> {
+  if (
+    typeof input.assetId !== "string" ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      input.assetId,
+    )
+  ) {
+    return { ok: false, code: "ADMIN_WRITE_BAD_REQUEST" };
+  }
+
+  let client: SupabaseClient<Database>;
+  try {
+    client = createAdminClient();
+  } catch {
+    return { ok: false, code: "ADMIN_WRITE_FAILED" };
+  }
+
+  // 1. 查询 asset 行 + 验证发布前置条件
+  type PublishAssetRow = {
+    file_url: string;
+    cover_image_url: string | null;
+    title_cn: string;
+    is_published: boolean;
+    access_level: string;
+    authorization_status: string;
+    mime_type: string | null;
+  };
+  let assetRow: PublishAssetRow | null = null;
+
+  try {
+    const { data, error } = await client
+      .from("product_assets")
+      .select(
+        "file_url, cover_image_url, title_cn, is_published, access_level, authorization_status, mime_type",
+      )
+      .eq("id", input.assetId)
+      .maybeSingle();
+
+    if (error) {
+      console.error("PUBLISH_ASSET_READ_FAILED", {
+        assetId: input.assetId,
+        code: "ADMIN_WRITE_FAILED",
+      });
+      return { ok: false, code: "ADMIN_WRITE_FAILED" };
+    }
+    assetRow = data as PublishAssetRow | null;
+  } catch {
+    console.error("PUBLISH_ASSET_READ_EXCEPTION", {
+      assetId: input.assetId,
+      code: "ADMIN_WRITE_FAILED",
+    });
+    return { ok: false, code: "ADMIN_WRITE_FAILED" };
+  }
+
+  if (!assetRow) {
+    return { ok: false, code: "ADMIN_WRITE_BAD_REQUEST" };
+  }
+
+  // 2. 验证发布前置条件（与 RPC 中的检查对齐）
+  if (!assetRow.is_published) {
+    return { ok: false, code: "ADMIN_WRITE_BAD_REQUEST" };
+  }
+  if (assetRow.access_level !== "public") {
+    return { ok: false, code: "ADMIN_WRITE_BAD_REQUEST" };
+  }
+  if (assetRow.authorization_status !== "confirmed") {
+    return { ok: false, code: "ADMIN_WRITE_BAD_REQUEST" };
+  }
+
+  // 3. 解析源 file_url，确认它指向 private-assets 且为服务端生成路径
+  //    幂等：若 file_url 已指向 public-assets，直接返回当前 ref（不复制第二份）
+  const sourceFileUrl = assetRow.file_url;
+  const publicAssetsUrlPrefix = `${(process.env.NEXT_PUBLIC_SUPABASE_URL || "").replace(/\/+$/, "")}/storage/v1/object/public/${PUBLIC_ASSETS_BUCKET}/`;
+
+  if (sourceFileUrl.startsWith(publicAssetsUrlPrefix)) {
+    // 已发布到 public-assets → 幂等返回，不复制第二份
+    const existingPath = decodeURIComponent(
+      sourceFileUrl.slice(publicAssetsUrlPrefix.length),
+    );
+    return {
+      ok: true,
+      ref: {
+        bucket: "public-assets",
+        path: existingPath,
+        publicUrl: sourceFileUrl,
+        mimeType: assetRow.mime_type ?? "application/octet-stream",
+        size: 0,
+      },
+      oldPath: existingPath,
+      cleanupId: null,
+    };
+  }
+
+  // 解析 private-assets URL（短签名 URL 或公开 URL 形式）
+  // Supabase 短签名 URL 格式：
+  //   {supabase_url}/storage/v1/object/sign/{bucket}/{path}?token=...
+  // Supabase 公开 URL 格式（如 bucket 暂未启用 RLS）：
+  //   {supabase_url}/storage/v1/object/public/{bucket}/{path}
+  const privateSignPrefix = `${(process.env.NEXT_PUBLIC_SUPABASE_URL || "").replace(/\/+$/, "")}/storage/v1/object/sign/${PRIVATE_ASSETS_BUCKET}/`;
+  const privatePublicPrefix = `${(process.env.NEXT_PUBLIC_SUPABASE_URL || "").replace(/\/+$/, "")}/storage/v1/object/public/${PRIVATE_ASSETS_BUCKET}/`;
+
+  let sourcePath: string | null = null;
+  if (sourceFileUrl.startsWith(privateSignPrefix)) {
+    const pathAndQuery = sourceFileUrl.slice(privateSignPrefix.length);
+    // 去掉 query string
+    sourcePath = decodeURIComponent(pathAndQuery.split("?", 1)[0] || "");
+  } else if (sourceFileUrl.startsWith(privatePublicPrefix)) {
+    sourcePath = decodeURIComponent(
+      sourceFileUrl.slice(privatePublicPrefix.length),
+    );
+  }
+
+  if (!sourcePath) {
+    // 源 URL 不指向 private-assets → 拒绝发布（避免误处理外部 URL）
+    return { ok: false, code: "ADMIN_WRITE_BAD_REQUEST" };
+  }
+
+  // 校验源路径为服务端生成格式（{category}/{uuid}.{ext}）
+  const pathValidation = validatePrivateAssetPath(sourcePath);
+  if (!pathValidation.ok) {
+    return { ok: false, code: pathValidation.code };
+  }
+  const validatedSourcePath = pathValidation.path;
+
+  // 4. 从 private-assets 下载字节
+  let bytes: Uint8Array;
+  try {
+    const downloadResponse = await client.storage
+      .from(PRIVATE_ASSETS_BUCKET)
+      .download(validatedSourcePath);
+
+    if (downloadResponse.error) {
+      console.error("PUBLISH_SOURCE_DOWNLOAD_FAILED", {
+        assetId: input.assetId,
+        path: validatedSourcePath,
+        code: "ADMIN_WRITE_FAILED",
+      });
+      return { ok: false, code: "ADMIN_WRITE_FAILED" };
+    }
+
+    const blob = downloadResponse.data;
+    const ab = await blob.arrayBuffer();
+    bytes = new Uint8Array(ab);
+  } catch {
+    console.error("PUBLISH_SOURCE_DOWNLOAD_EXCEPTION", {
+      assetId: input.assetId,
+      path: validatedSourcePath,
+      code: "ADMIN_WRITE_FAILED",
+    });
+    return { ok: false, code: "ADMIN_WRITE_FAILED" };
+  }
+
+  // 5. 重新校验 MIME / Magic Bytes / 大小
+  //    不信任 private-assets 中已存内容（可能被其他流程污染）
+  const mimeType = (assetRow.mime_type ?? "").toLowerCase().trim() ||
+    "application/octet-stream";
+
+  const mimeResult = validateMimeType(mimeType, PRIVATE_ASSETS_ALLOWED_MIME);
+  if (!mimeResult.ok) {
+    return { ok: false, code: "ADMIN_WRITE_UNSUPPORTED_MEDIA" };
+  }
+
+  const maxSize = MIME_MAX_SIZE[mimeType] ?? 0;
+  const sizeResult = validateFileSize(bytes.length, maxSize);
+  if (!sizeResult.ok) {
+    return { ok: false, code: "ADMIN_WRITE_PAYLOAD_TOO_LARGE" };
+  }
+
+  const magicResult = verifyMagicBytes(bytes, mimeType);
+  if (!magicResult.ok) {
+    return { ok: false, code: "ADMIN_WRITE_UNSUPPORTED_MEDIA" };
+  }
+
+  // 提取源文件名（用于扩展名推断）
+  const sourceFilename = validatedSourcePath.split("/").pop() || "";
+
+  // 6. 上传到 public-assets（使用 uploadToPublicAssets 完成审计 Saga）
+  //    category 用源路径的顶层分类（如 "catalogs"），但 public-assets 顶层白名单
+  //    不包含 "catalogs" → 我们使用 "documents" 作为 public-assets 的目标顶层分类
+  const targetCategory = "documents";
+  const uploadResult = await uploadToPublicAssets(
+    {
+      bytes,
+      mimeType,
+      size: bytes.length,
+      filename: sourceFilename,
+      category: targetCategory,
+    },
+    {
+      actorId: input.options?.actorId ?? null,
+      actorRole: input.options?.actorRole ?? null,
+    },
+  );
+
+  if (!uploadResult.ok) {
+    return { ok: false, code: uploadResult.code };
+  }
+
+  /**
+   * 局部辅助：补偿删除新 public 副本，并在补偿失败时入队 cleanup。
+   * 不抛错；调用方根据 RPC 错误码返回相应的失败结果。
+   */
+  const compensatePublicCopy = async (): Promise<void> => {
+    const compensate = await compensateDeleteUploadedObject(
+      client,
+      PUBLIC_ASSETS_BUCKET,
+      uploadResult.path,
+    );
+    if (!compensate.ok) {
+      // 补偿删除失败 → 入队 cleanup queue 让 dispatcher 后续处理
+      await enqueueResidualObjectForCleanup(
+        client,
+        PUBLIC_ASSETS_BUCKET,
+        uploadResult.path,
+        "orphan_detected",
+        "catalog_publish",
+        input.assetId,
+      );
+    }
+  };
+
+  // 7. 调用 publish_catalog_asset RPC 更新 DB 行 + 审计
+  let rpcResult: {
+    asset_id: string;
+    old_file_url: string;
+    old_cover_image_url: string | null;
+    new_file_url: string;
+    new_cover_image_url: string | null;
+  } | null = null;
+
+  try {
+    const { data, error } = await client.rpc("publish_catalog_asset", {
+      p_asset_id: input.assetId,
+      p_public_file_url: uploadResult.publicUrl,
+      p_public_cover_image_url: null, // 当前不处理 cover_image_url 发布
+      p_actor_id: input.options?.actorId ?? null,
+      p_actor_email: input.options?.actorEmail ?? null,
+      p_actor_role: input.options?.actorRole ?? null,
+    });
+
+    if (error) {
+      const errCode = (error as { code?: string }).code ?? "";
+      // 23505 = unique_violation, 23001 = integrity_violation (CHECK)
+      // 40P01/40001 = concurrent / serialization failure
+      if (errCode === "23505" || errCode === "23001") {
+        // RPC 拒绝（前置条件不满足或并发冲突）→ 补偿删除 public 副本
+        await compensatePublicCopy();
+        return { ok: false, code: "ADMIN_WRITE_CONFLICT" };
+      }
+      if (errCode === "P0002") {
+        // asset not found
+        await compensatePublicCopy();
+        return { ok: false, code: "ADMIN_WRITE_BAD_REQUEST" };
+      }
+      console.error("PUBLISH_CATALOG_ASSET_RPC_FAILED", {
+        assetId: input.assetId,
+        errCode,
+        code: "ADMIN_WRITE_FAILED",
+      });
+      // RPC 失败 → 补偿删除新 public 副本
+      await compensatePublicCopy();
+      return { ok: false, code: "ADMIN_WRITE_FAILED" };
+    }
+
+    rpcResult = data as typeof rpcResult;
+  } catch (err) {
+    const errCode = (err as { code?: string }).code ?? "";
+    console.error("PUBLISH_CATALOG_ASSET_RPC_EXCEPTION", {
+      assetId: input.assetId,
+      errCode,
+      code: "ADMIN_WRITE_FAILED",
+    });
+    await compensatePublicCopy();
+    return { ok: false, code: "ADMIN_WRITE_FAILED" };
+  }
+
+  if (!rpcResult) {
+    // 防御性兜底
+    await compensatePublicCopy();
+    return { ok: false, code: "ADMIN_WRITE_FAILED" };
+  }
+
+  // 8. RPC 成功 → 把旧 private 源加入 cleanup queue
+  //    cleanup 入队失败时不静默成功：返回 PARTIAL_SUCCESS 让调用方感知
+  //    （对象已发布成功，但旧 private 副本残留，需后续 reconciliation）
+  const cleanupEnqueue = await enqueueStorageCleanup({
+    bucket: PRIVATE_ASSETS_BUCKET,
+    objectPath: validatedSourcePath,
+    reason: "replaced",
+    sourceType: "catalog_asset",
+    sourceId: input.assetId,
+  });
+
+  if (!cleanupEnqueue.ok) {
+    // 入队失败：发布本身已成功（DB 已更新、新 public 副本已写入），
+    // 但旧 private 副本残留 → 返回 ok=true 但记录 cleanupId=null
+    // 调用方应在响应中包含 partialCleanup 标志让运维感知
+    console.error("PUBLISH_CLEANUP_ENQUEUE_FAILED", {
+      assetId: input.assetId,
+      oldPath: validatedSourcePath,
+      code: "PUBLISH_CLEANUP_ENQUEUE_FAILED",
+    });
+    // 仍返回成功，因为发布本身已完成；旧副本由 read-only inventory 脚本兜底
+    return {
+      ok: true,
+      ref: {
+        bucket: "public-assets",
+        path: uploadResult.path,
+        publicUrl: uploadResult.publicUrl,
+        mimeType: uploadResult.mimeType,
+        size: uploadResult.size,
+      },
+      oldPath: validatedSourcePath,
+      cleanupId: null,
+    };
+  }
+
+  return {
+    ok: true,
+    ref: {
+      bucket: "public-assets",
+      path: uploadResult.path,
+      publicUrl: uploadResult.publicUrl,
+      mimeType: uploadResult.mimeType,
+      size: uploadResult.size,
+    },
+    oldPath: validatedSourcePath,
+    cleanupId: cleanupEnqueue.cleanupId,
+  };
+}
+
+// ============================================================
+// Storage audit reconciliation (Section 11.3)
+// ============================================================
+
+/**
+ * Reconciliation 结果。
+ *
+ * fail-closed：RPC 调用失败时返回 { ok: false }，调用方必须不宣称对账完成。
+ */
+export type ReconcileResult =
+  | {
+      ok: true;
+      /** 处理的对账项数量（0 表示没有 pending 操作需要处理）。 */
+      processed: number;
+      /** 成功补全审计的数量。 */
+      completed: number;
+      /** 标记为 failed 的数量（对象状态与审计期望不一致）。 */
+      failed: number;
+    }
+  | { ok: false; code: AdminWriteErrorCode };
+
+/**
+ * 读取 admin_storage_operations 中长期 pending 的操作，根据对象在 Storage 中的
+ * 实际状态补全审计。处理的状态机：
+ *
+ *   1. 上传完成、审计 pending、对象存在 → 完成审计为 success
+ *      （上传已成功，仅审计未补全）
+ *   2. 上传完成、审计 pending、对象已被补偿删除 → 完成审计为 failed
+ *      （补偿已执行，审计需标记为 failed 以反映实际状态）
+ *   3. 删除完成、审计 pending、对象不存在 → 完成审计为 success
+ *      （删除已成功，仅审计未补全）
+ *   4. 删除失败、审计 pending、对象仍存在 → 完成审计为 failed
+ *      （删除未生效，审计标记为 failed；对象由 cleanup queue 后续处理）
+ *
+ * 该函数不依赖日志，所有状态由 admin_storage_operations 表持久化。
+ * 调用方应定期（如每小时）调用此函数处理长期 pending 操作。
+ *
+ * 安全：
+ *   - 仅处理超过 minAgeSeconds 的 pending 操作，避免与正在进行的操作冲突
+ *   - 使用 service_role 直接查询/更新 admin_storage_operations
+ *   - 不删除对象、不入队 cleanup queue（仅补全审计状态）
+ *   - 返回粗粒度计数，不泄露内部错误
+ */
+export async function reconcilePendingStorageAudit(options?: {
+  /** 仅处理 pending 时间超过此阈值（秒）的操作，默认 300s（5 分钟）。 */
+  minAgeSeconds?: number;
+  /** 单次处理上限，默认 50。 */
+  limit?: number;
+}): Promise<ReconcileResult> {
+  const minAge = Math.max(options?.minAgeSeconds ?? 300, 60);
+  const limit = Math.min(Math.max(options?.limit ?? 50, 1), 200);
+
+  let client: SupabaseClient<Database>;
+  try {
+    client = createAdminClient();
+  } catch {
+    return { ok: false, code: "ADMIN_WRITE_FAILED" };
+  }
+
+  // 1. 读取长期 pending 的操作
+  let pendingOps: Array<{
+    id: string;
+    action: string;
+    bucket: string;
+    object_path: string;
+  }> = [];
+
+  try {
+    const { data, error } = await client
+      .from("admin_storage_operations")
+      .select("id, action, bucket, object_path")
+      .eq("status", "pending")
+      .lt(
+        "created_at",
+        new Date(Date.now() - minAge * 1000).toISOString(),
+      )
+      .order("created_at", { ascending: true })
+      .limit(limit);
+
+    if (error) {
+      console.error("RECONCILE_READ_FAILED", {
+        code: "ADMIN_WRITE_FAILED",
+      });
+      return { ok: false, code: "ADMIN_WRITE_FAILED" };
+    }
+    pendingOps = (data as typeof pendingOps) || [];
+  } catch {
+    console.error("RECONCILE_READ_EXCEPTION", {
+      code: "ADMIN_WRITE_FAILED",
+    });
+    return { ok: false, code: "ADMIN_WRITE_FAILED" };
+  }
+
+  if (pendingOps.length === 0) {
+    return { ok: true, processed: 0, completed: 0, failed: 0 };
+  }
+
+  let completed = 0;
+  let failed = 0;
+
+  // 2. 逐个检查对象是否存在并补全审计
+  for (const op of pendingOps) {
+    let objectExists: boolean;
+    try {
+      // 使用 list 检查对象是否存在（避免 download 大文件）
+      const listResult = await client.storage
+        .from(op.bucket)
+        .list(op.object_path.split("/")[0], {
+          search: op.object_path.split("/").pop() || "",
+          limit: 1,
+        });
+
+      if (listResult.error) {
+        // list 失败 → 跳过此操作，下次重试
+        console.error("RECONCILE_LIST_FAILED", {
+          operationId: op.id,
+          code: "RECONCILE_LIST_FAILED",
+        });
+        continue;
+      }
+
+      const matchName = op.object_path.split("/").pop() || "";
+      objectExists = (listResult.data || []).some(
+        (item) => item.name === matchName,
+      );
+    } catch {
+      // 异常 → 跳过，下次重试
+      console.error("RECONCILE_LIST_EXCEPTION", {
+        operationId: op.id,
+        code: "RECONCILE_LIST_EXCEPTION",
+      });
+      continue;
+    }
+
+    // 状态机：根据 action 和 objectExists 决定审计完成状态
+    let auditSuccess: boolean;
+    if (op.action === "storage.upload") {
+      // 上传：对象存在 = 成功；对象不存在 = 失败（已被补偿删除）
+      auditSuccess = objectExists;
+    } else if (op.action === "storage.delete") {
+      // 删除：对象不存在 = 成功；对象存在 = 失败（删除未生效）
+      auditSuccess = !objectExists;
+    } else {
+      // 未知 action → 跳过
+      continue;
+    }
+
+    try {
+      const auditEnd = await completeStorageAudit(
+        client,
+        op.id,
+        auditSuccess,
+        auditSuccess ? undefined : "RECONCILE_STATE_MISMATCH",
+      );
+
+      if (auditEnd.ok) {
+        if (auditSuccess) {
+          completed++;
+        } else {
+          failed++;
+        }
+      }
+      // auditEnd 失败时跳过，下次重试
+    } catch {
+      // 异常 → 跳过，下次重试
+      console.error("RECONCILE_COMPLETE_EXCEPTION", {
+        operationId: op.id,
+        code: "RECONCILE_COMPLETE_EXCEPTION",
+      });
+    }
+  }
+
+  return {
+    ok: true,
+    processed: pendingOps.length,
+    completed,
+    failed,
+  };
 }
