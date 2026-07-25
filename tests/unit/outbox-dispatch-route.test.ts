@@ -138,7 +138,11 @@ describe("POST /api/internal/outbox/dispatch — fail-closed dispatcher entrypoi
       failed: 0,
       deadLettered: 0,
     });
-    expect(processInquiryOutbox).toHaveBeenCalledWith(5);
+    // The route now passes (batchSize, { signal }) — Section 11 方案 B.
+    expect(processInquiryOutbox).toHaveBeenCalledWith(
+      5,
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
   });
 
   it("clamps batchSize to default when missing", async () => {
@@ -155,7 +159,10 @@ describe("POST /api/internal/outbox/dispatch — fail-closed dispatcher entrypoi
     );
     expect(response.status).toBe(200);
     // Default batch size is 10.
-    expect(processInquiryOutbox).toHaveBeenCalledWith(10);
+    expect(processInquiryOutbox).toHaveBeenCalledWith(
+      10,
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
   });
 
   it("clamps batchSize to MAX_BATCH_SIZE when too large", async () => {
@@ -175,7 +182,10 @@ describe("POST /api/internal/outbox/dispatch — fail-closed dispatcher entrypoi
     );
     expect(response.status).toBe(200);
     // MAX_BATCH_SIZE = 50.
-    expect(processInquiryOutbox).toHaveBeenCalledWith(50);
+    expect(processInquiryOutbox).toHaveBeenCalledWith(
+      50,
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
   });
 
   it("clamps negative batchSize to default", async () => {
@@ -194,7 +204,10 @@ describe("POST /api/internal/outbox/dispatch — fail-closed dispatcher entrypoi
       ),
     );
     expect(response.status).toBe(200);
-    expect(processInquiryOutbox).toHaveBeenCalledWith(10);
+    expect(processInquiryOutbox).toHaveBeenCalledWith(
+      10,
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
   });
 
   it("returns 500 with fixed error string when processor throws", async () => {
@@ -212,6 +225,50 @@ describe("POST /api/internal/outbox/dispatch — fail-closed dispatcher entrypoi
     // Never leak raw SQL / PII.
     expect(JSON.stringify(json)).not.toContain("inquiries");
     expect(JSON.stringify(json)).not.toContain("POSTGRES");
+  });
+
+  it("returns 504 with fixed coarse code when processor throws AbortError (Section 11)", async () => {
+    // Simulate the AbortController firing during processInquiryOutbox:
+    // the processor sees signal.aborted and the in-flight adapter.send
+    // throws an AbortError that bubbles up to the route.
+    const abortError = new Error("The user aborted a request.");
+    abortError.name = "AbortError";
+    processInquiryOutbox.mockRejectedValue(abortError);
+    const { POST } = await import("@/app/api/internal/outbox/dispatch/route");
+    const response = await POST(
+      dispatchRequest(
+        { batchSize: 5 },
+        { Authorization: `Bearer ${VALID_SECRET}` },
+      ),
+    );
+    expect(response.status).toBe(504);
+    const json = await response.json();
+    expect(json.ok).toBe(false);
+    expect(json.error).toBe("dispatch_timeout");
+    // Never leak the underlying error message.
+    expect(JSON.stringify(json)).not.toContain("aborted");
+  });
+
+  it("passes an AbortSignal that is NOT yet aborted on normal dispatch (Section 11)", async () => {
+    processInquiryOutbox.mockResolvedValue({
+      initialized: 0,
+      claimed: 0,
+      sent: 0,
+      failed: 0,
+      deadLettered: 0,
+    });
+    const { POST } = await import("@/app/api/internal/outbox/dispatch/route");
+    await POST(
+      dispatchRequest(
+        { batchSize: 5 },
+        { Authorization: `Bearer ${VALID_SECRET}` },
+      ),
+    );
+    const callArgs = processInquiryOutbox.mock.calls[0];
+    expect(callArgs).toBeDefined();
+    expect(callArgs[1]).toBeDefined();
+    const signal = (callArgs[1] as { signal: AbortSignal }).signal;
+    expect(signal.aborted).toBe(false);
   });
 
   it("response body never includes inquiry PII even when processor returns counters", async () => {

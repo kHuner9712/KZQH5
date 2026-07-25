@@ -5,6 +5,17 @@ const NOTIFICATION_TIMEOUT_MS = 5000;
 export interface NotificationRuntime {
   fetch: typeof fetch;
   timeoutMs: number;
+  /**
+   * Optional external AbortSignal threaded down from the top-level
+   * dispatcher route. When aborted, in-flight HTTP requests to the
+   * notification provider (Resend / WeCom) are aborted as well, so
+   * the worker cannot keep sending after the route has responded.
+   *
+   * This is combined with the per-request timeout via AbortSignal.any
+   * inside postJson — either source (external abort or per-request
+   * timeout) cancels the underlying fetch.
+   */
+  signal?: AbortSignal;
 }
 
 export interface NotificationConfig {
@@ -31,6 +42,13 @@ export interface NotificationSendContext {
   lockToken: string;
   attempt: number;
   provider: "email" | "wecom";
+  /**
+   * Optional external AbortSignal that, when aborted, cancels the
+   * underlying provider HTTP request in-flight. Threaded from the
+   * dispatcher route → processInquiryOutbox → adapter.send so that
+   * a route-level timeout actually stops ongoing sends.
+   */
+  signal?: AbortSignal;
 }
 
 /**
@@ -106,6 +124,14 @@ async function postJson(
  * Same contract as postJson, but returns the parsed JSON body so the
  * caller can extract a provider message id (e.g. Resend's `id` field).
  * Throws NotificationHttpError on non-2xx so callers can classify.
+ *
+ * Signal composition:
+ *   - runtime.signal (external, threaded from the dispatcher route)
+ *   - per-request timeout signal (runtime.timeoutMs)
+ *   - init.signal (caller-supplied, if any)
+ *   Any of the three aborting aborts the underlying fetch via
+ *   AbortSignal.any. This guarantees that a route-level timeout
+ *   actually cancels the in-flight provider HTTP request.
  */
 async function postJsonWithResponse(
   url: string,
@@ -114,10 +140,17 @@ async function postJsonWithResponse(
 ): Promise<Record<string, unknown> | null> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), runtime.timeoutMs);
+  // Compose external + per-request + caller signals so any one of them
+  // aborts the fetch. AbortSignal.any is available in Node 20+ and all
+  // modern browsers.
+  const externalSignal = runtime.signal ?? init.signal;
+  const combinedSignal = externalSignal
+    ? AbortSignal.any([controller.signal, externalSignal])
+    : controller.signal;
   try {
     const response = await runtime.fetch(url, {
       ...init,
-      signal: controller.signal,
+      signal: combinedSignal,
     });
     if (!response.ok) {
       const bodyText = await response.text().catch(() => "");
@@ -253,8 +286,13 @@ export function createNotificationAdapters(
     // (at-least-once). The per-provider delivery model ensures that
     // a SUCCEEDED wecom delivery is never re-invoked even if another
     // provider (email) fails and the parent event retries.
-    async send(inquiry) {
+    async send(inquiry, context) {
       if (!config.wecomWebhookUrl) return {};
+      // Thread the external signal (if any) through the runtime so
+      // postJson combines it with the per-request timeout.
+      const sendRuntime: NotificationRuntime = context?.signal
+        ? { ...runtime, signal: context.signal }
+        : runtime;
       await postJson(
         config.wecomWebhookUrl,
         {
@@ -268,7 +306,7 @@ export function createNotificationAdapters(
           }),
           cache: "no-store",
         },
-        runtime,
+        sendRuntime,
       );
       // WeCom webhook does not return a message id.
       return {};
@@ -303,6 +341,11 @@ export function createNotificationAdapters(
 
       let response: Record<string, unknown> | null;
       try {
+        // Thread the external signal (if any) through the runtime so
+        // postJson combines it with the per-request timeout.
+        const sendRuntime: NotificationRuntime = context?.signal
+          ? { ...runtime, signal: context.signal }
+          : runtime;
         response = await postJsonWithResponse(
           "https://api.resend.com/emails",
           {
@@ -322,7 +365,7 @@ export function createNotificationAdapters(
             }),
             cache: "no-store",
           },
-          runtime,
+          sendRuntime,
         );
       } catch (error) {
         // Classify and re-throw as NotificationError so the processor

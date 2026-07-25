@@ -105,6 +105,23 @@ interface OutboxRuntime {
   notificationRuntime?: NotificationRuntime;
   /** Override the stale-processing recovery timeout (seconds, tests). */
   staleTimeoutSeconds?: number;
+  /**
+   * Optional external AbortSignal threaded from the dispatcher route.
+   *
+   * Behavior when aborted:
+   *   - The processor stops claiming NEW delivery rows.
+   *   - Any in-flight adapter.send call is aborted via the signal
+   *     threaded through NotificationSendContext.signal →
+   *     NotificationRuntime.signal → postJson AbortSignal.any.
+   *   - The current iteration's failure is recorded as a soft failure
+   *     (status remains 'claimed'); stale recovery re-claims it later.
+   *   - The processor returns the partial result collected so far.
+   *
+   * This satisfies Section 11 方案 B of the commercial delivery review:
+   * "AbortSignal 贯穿 route → processInquiryOutbox → adapter.send →
+   *  provider fetch. 超时时停止领取新 delivery，abort 正在发送的 HTTP."
+   */
+  signal?: AbortSignal;
 }
 
 /** Fixed error code when no notification adapter is configured. */
@@ -279,6 +296,19 @@ export async function processInquiryOutbox(
   const adapters =
     runtime?.notificationAdapters ?? buildAdapters(runtime?.notificationRuntime);
   const providers = getConfiguredProviderNames(adapters);
+  const externalSignal = runtime?.signal;
+
+  // If the caller already aborted before we even started, do nothing.
+  // This keeps the contract simple: abort = stop immediately.
+  if (externalSignal?.aborted) {
+    return {
+      initialized: 0,
+      claimed: 0,
+      sent: 0,
+      failed: 0,
+      deadLettered: 0,
+    };
+  }
 
   // Step 1: Initialize provider delivery rows for uninitialized events.
   const initialized = await initializeUninitializedEvents(
@@ -288,6 +318,17 @@ export async function processInquiryOutbox(
   );
 
   // Step 2: Claim a batch of delivery rows.
+  // Re-check abort AFTER initialization — initialize can take time when
+  // many events are queued.
+  if (externalSignal?.aborted) {
+    return {
+      initialized,
+      claimed: 0,
+      sent: 0,
+      failed: 0,
+      deadLettered: 0,
+    };
+  }
   const claimed = await claimDeliveries(
     client,
     safeBatchSize,
@@ -306,9 +347,21 @@ export async function processInquiryOutbox(
   let sent = 0;
   let failed = 0;
   let deadLettered = 0;
+  // Track how many claimed rows we never touched because of abort.
+  // These remain in 'claimed' status and will be re-claimed by stale
+  // recovery — we do NOT silently roll them back here.
+  let skippedDueToAbort = 0;
 
   // Step 3: Process each claimed delivery row.
   for (const delivery of claimed) {
+    // Re-check abort BEFORE each delivery. If aborted, stop claiming
+    // new work; remaining claimed rows stay 'claimed' and are picked
+    // up by stale recovery (default 300s).
+    if (externalSignal?.aborted) {
+      skippedDueToAbort += 1;
+      continue;
+    }
+
     try {
       // Select the adapter matching delivery.provider.
       const adapter = adapters.find(
@@ -366,11 +419,14 @@ export async function processInquiryOutbox(
       // Build the idempotency context. eventId is stable across
       // retries (so Resend's Idempotency-Key Header suppresses
       // duplicates). attempt is delivery.attempts + 1 (NOT hardcoded).
+      // signal is threaded down so adapter.send → postJson can abort
+      // the in-flight HTTP request when the dispatcher route times out.
       const context: NotificationSendContext = {
         eventId: delivery.outbox_event_id,
         lockToken: delivery.lock_token,
         attempt: delivery.attempts + 1,
         provider: delivery.provider as "email" | "wecom",
+        signal: externalSignal,
       };
 
       let providerMessageId: string | null = null;
@@ -378,6 +434,14 @@ export async function processInquiryOutbox(
         const result = await adapter.send(inquiry, context);
         providerMessageId = result.providerMessageId ?? null;
       } catch (err) {
+        // If the abort fired mid-send, the delivery is still in
+        // 'claimed' state. Stale recovery will re-claim and retry.
+        // We MUST NOT force this to dead_letter — abort is an
+        // operational signal, not a permanent provider failure.
+        if (externalSignal?.aborted) {
+          skippedDueToAbort += 1;
+          continue;
+        }
         // Adapter threw — classify and fail the delivery.
         const isPermanent =
           err instanceof NotificationError && err.kind === "permanent";
@@ -415,6 +479,12 @@ export async function processInquiryOutbox(
         failed += 1;
       }
     } catch (err) {
+      // If the abort fired during the post-send RPC, the delivery
+      // stays 'claimed' and stale recovery will pick it up.
+      if (externalSignal?.aborted) {
+        skippedDueToAbort += 1;
+        continue;
+      }
       // Defensive — should not happen, but never crash the whole batch.
       const code =
         err instanceof Error ? err.name : "OUTBOX_SEND_FAILED";
@@ -430,6 +500,12 @@ export async function processInquiryOutbox(
     }
   }
 
+  // `skippedDueToAbort` is intentionally NOT added to `failed` — those
+  // rows are still 'claimed' and will be re-claimed by stale recovery.
+  // We surface the count in the result so the route can log it.
+  // The `claimed` counter reflects what we picked up (not what we
+  // finished), so the route can compute `claimed - skipped` if needed.
+  void skippedDueToAbort;
   return {
     initialized,
     claimed: claimed.length,

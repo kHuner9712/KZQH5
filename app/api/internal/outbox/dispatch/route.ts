@@ -49,8 +49,28 @@ import { readJsonBody } from "@/lib/services/http-security";
  *   - 401: missing or malformed Authorization header.
  *   - 403: token mismatch.
  *   - 503: OUTBOX_DISPATCH_SECRET not configured.
+ *   - 504: dispatch timeout. The route aborted the processor mid-flight;
+ *     any in-flight HTTP send to a notification provider was aborted.
+ *     Claimed-but-unprocessed deliveries remain 'claimed' and are
+ *     re-claimed by stale recovery (default 300s).
  *   - 500: unexpected internal error. The body is a fixed string;
  *     details are logged server-side with a fixed code only.
+ *
+ * TIMEOUT / CANCELLATION CONTRACT (Section 11 方案 B)
+ *   - The route sets up an AbortController with DISPATCH_TIMEOUT_MS.
+ *   - The signal is threaded through processInquiryOutbox →
+ *     NotificationSendContext.signal → NotificationRuntime.signal →
+ *     postJson AbortSignal.any. A route-level timeout therefore
+ *     aborts the in-flight provider HTTP request, NOT just the route.
+ *   - When the timeout fires:
+ *       1. The processor stops claiming NEW deliveries.
+ *       2. Any in-flight adapter.send call is aborted (fetch AbortError).
+ *       3. The route returns 504 with a fixed coarse body.
+ *       4. The current delivery stays 'claimed'; stale recovery picks
+ *          it up after staleTimeoutSeconds (default 300s).
+ *   - This replaces the previous Promise.race() approach which left
+ *     the processor running in the background after the route had
+ *     already responded — a real bug for at-least-once delivery.
  *
  * ORDER OF CHECKS
  *   1. Secret presence (503 if missing) — checked FIRST so that
@@ -59,7 +79,7 @@ import { readJsonBody } from "@/lib/services/http-security";
  *   2. Authorization header presence + format (401 if missing/malformed).
  *   3. Token match (403 if mismatch) — timing-safe.
  *   4. Body validation (400 if invalid).
- *   5. Dispatch.
+ *   5. Dispatch with AbortController.
  *
  * DEPLOYMENT STATUS
  *   This route is implemented but NOT deployed as an always-on worker.
@@ -114,19 +134,59 @@ function coerceBatchSize(value: unknown): number {
 async function runDispatchWithTimeout(
   batchSize: number,
 ): Promise<CoarseDispatchResult> {
-  // The processor's own batch size is clamped internally; we apply a
-  // top-level timeout so a stuck adapter call cannot pin the worker.
-  const processorPromise = processInquiryOutbox(batchSize);
-  const timeoutPromise = new Promise<never>((_, reject) => {
-    setTimeout(() => reject(new Error("DISPATCH_TIMEOUT")), DISPATCH_TIMEOUT_MS);
-  });
-  const result = await Promise.race([processorPromise, timeoutPromise]);
+  // AbortController-based timeout (Section 11 方案 B).
+  // The signal is threaded through processInquiryOutbox → adapter.send
+  // → postJson AbortSignal.any so a timeout actually cancels the
+  // in-flight HTTP send, not just the route-level await.
+  const controller = new AbortController();
+  const timer = setTimeout(
+    () => controller.abort(),
+    DISPATCH_TIMEOUT_MS,
+  );
+  try {
+    const result = await processInquiryOutbox(batchSize, {
+      signal: controller.signal,
+    });
+    return {
+      initialized: result.initialized,
+      claimed: result.claimed,
+      sent: result.sent,
+      failed: result.failed,
+      deadLettered: result.deadLettered,
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Classify a thrown error from the dispatch path.
+ * Returns the fixed coarse code to surface to the caller + the HTTP
+ * status. NEVER returns the raw error message — only fixed codes.
+ */
+function classifyDispatchError(
+  error: unknown,
+): { code: string; status: number; logCode: string } {
+  if (error instanceof Error) {
+    // AbortError / DOMException.ABORT_ERR fires from controller.abort()
+    // OR from the underlying fetch when the AbortSignal fires.
+    const isAbort =
+      error.name === "AbortError" ||
+      (typeof DOMException !== "undefined" &&
+        error instanceof DOMException &&
+        error.name === "AbortError");
+    if (isAbort) {
+      return {
+        code: "dispatch_timeout",
+        status: 504,
+        logCode: "OUTBOX_DISPATCH_TIMEOUT",
+      };
+    }
+  }
   return {
-    initialized: result.initialized,
-    claimed: result.claimed,
-    sent: result.sent,
-    failed: result.failed,
-    deadLettered: result.deadLettered,
+    code: "dispatch_failed",
+    status: 500,
+    logCode: "OUTBOX_DISPATCH_FAILED",
   };
 }
 
@@ -168,7 +228,7 @@ export async function POST(request: NextRequest) {
   }
   const batchSize = coerceBatchSize(parsed.value.batchSize);
 
-  // Step 5: Dispatch.
+  // Step 5: Dispatch with AbortController-driven timeout.
   try {
     const result = await runDispatchWithTimeout(batchSize);
     return NextResponse.json({
@@ -179,12 +239,11 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     // Log a fixed coarse cause only — never the raw Supabase error which
     // may contain SQL text / parameter values / PII from the inquiry.
-    const causeName =
-      error instanceof Error ? error.name : "UnknownError";
-    console.error(`OUTBOX_DISPATCH_FAILED code=${causeName}`);
+    const classified = classifyDispatchError(error);
+    console.error(`${classified.logCode}`);
     return NextResponse.json(
-      { ok: false, error: "dispatch_failed" },
-      { status: 500 },
+      { ok: false, error: classified.code },
+      { status: classified.status },
     );
   }
 }
