@@ -24,6 +24,56 @@ async function expectFixedNavigationDoesNotCoverContent(
   expect(overlap).toBeLessThanOrEqual(1);
 }
 
+/**
+ * Collect browser-side diagnostics (console errors + page errors) so
+ * test failure messages include actionable context instead of just
+ * "locator not found". The diagnostics are attached to the test via
+ * testInfo.attach on failure, and also logged to stderr.
+ *
+ * Why: CI failures of demo-public.spec.ts historically timed out at
+ * `waitForURL(/\/products\/[^/?]+$/)` with no clue whether the click
+ * landed, whether the RSC payload errored, or whether the URL changed
+ * to something unexpected. Capturing console + pageerror lets the
+ * next failure self-diagnose.
+ */
+function attachDiagnostics(
+  page: import("@playwright/test").Page,
+  testInfo: import("@playwright/test").TestInfo,
+) {
+  const consoleErrors: string[] = [];
+  const pageErrors: string[] = [];
+  page.on("console", (msg) => {
+    if (msg.type() === "error") {
+      consoleErrors.push(`[console.error] ${msg.text()}`);
+    }
+  });
+  page.on("pageerror", (err) => {
+    pageErrors.push(`[pageerror] ${err.message}`);
+  });
+  return async function dumpDiagnostics() {
+    if (consoleErrors.length === 0 && pageErrors.length === 0) return;
+    const lines: string[] = [];
+    if (consoleErrors.length > 0) {
+      lines.push(`--- ${consoleErrors.length} console error(s) ---`);
+      lines.push(...consoleErrors);
+    }
+    if (pageErrors.length > 0) {
+      lines.push(`--- ${pageErrors.length} page error(s) ---`);
+      lines.push(...pageErrors);
+    }
+    const body = lines.join("\n");
+    // Always log to stderr so it shows up in the CI log next to the
+    // failure, even if testInfo.attach is unavailable.
+    process.stderr.write(`[diagnostics:${testInfo.title}]\n${body}\n`);
+    if (typeof testInfo.attach === "function") {
+      await testInfo.attach("diagnostics.txt", {
+        body,
+        contentType: "text/plain",
+      });
+    }
+  };
+}
+
 test.describe("Demo public acceptance", () => {
   test("Chinese product and inquiry flow", async ({
     page,
@@ -38,6 +88,7 @@ test.describe("Demo public acceptance", () => {
     // 60s keeps the test deterministic without retrying or loosening
     // assertions.
     test.setTimeout(60_000);
+    const dumpDiagnostics = attachDiagnostics(page, testInfo);
     await page.context().setExtraHTTPHeaders({
       "x-edgeone-client-ip":
         testInfo.project.name === "mobile-chromium"
@@ -66,25 +117,35 @@ test.describe("Demo public acceptance", () => {
     await expect(page).toHaveURL(/q=/);
     await expect(page.locator("article").first()).toBeVisible();
 
+    // Click the category filter and wait for the URL to update. Using
+    // Promise.all([waitForURL, click]) avoids the race where the
+    // navigation commits before a sequential waitForURL is set up,
+    // which on fast runners causes waitForURL to hang until timeout.
+    // We previously used `await page.waitForLoadState("networkidle")`
+    // here, but networkidle is flaky on RSC streaming pages (the
+    // stream stays open just under the 500ms idle threshold, then
+    // re-opens) and adds 5-15s of wall time per call.
     const category = page.locator('a[href*="category="]').first();
-    await category.click();
-    await expect(page).toHaveURL(/category=/);
-    // The ProductsPage is a Server Component. Clicking a category filter
-    // triggers client-side navigation + server re-render + React 19
-    // streaming. The old articles can remain in the DOM briefly while
-    // the new HTML streams in, causing clicks to land on stale elements
-    // that are being detached. Wait for network to settle so the new
-    // product cards are fully rendered before clicking.
-    await page.waitForLoadState("networkidle");
+    await expect(category).toBeVisible();
+    await Promise.all([
+      page.waitForURL(/category=/, { timeout: 30_000 }),
+      category.click(),
+    ]);
 
+    // Wait for at least one product card article link to be visible
+    // before clicking. This is a content-based wait that is both
+    // faster and more reliable than networkidle.
     const productLink = page.locator('article a[href^="/products/"]').first();
-    await expect(productLink).toBeVisible();
-    await productLink.click();
+    await expect(productLink).toBeVisible({ timeout: 30_000 });
     // Next.js 15 App Router client-side navigation fetches the RSC payload
-    // before committing the URL change. On slow CI runners this can exceed
-    // the default 5s assertion timeout. Use waitForURL with 30s to avoid
-    // a false failure when the server-side render is slow.
-    await page.waitForURL(/\/products\/[^/?]+$/, { timeout: 30_000 });
+    // before committing the URL change. Use Promise.all so the wait is
+    // armed BEFORE the click fires — otherwise on a fast localhost render
+    // the URL can change before waitForURL is registered, causing a
+    // 30s timeout.
+    await Promise.all([
+      page.waitForURL(/\/products\/[^/?]+$/, { timeout: 30_000 }),
+      productLink.click(),
+    ]);
     await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
     await page
       .getByRole("button", { name: /加入询盘/ })
@@ -114,6 +175,7 @@ test.describe("Demo public acceptance", () => {
     await expect(page.locator("text=已选择 1")).toHaveCount(0);
     await expectNoHorizontalOverflow(page);
     await expectFixedNavigationDoesNotCoverContent(page);
+    await dumpDiagnostics();
   });
 
   test("English server language, locale switch and inquiry flow", async ({
@@ -124,6 +186,7 @@ test.describe("Demo public acceptance", () => {
     // `npm run start` server, and RSC navigation + inquiry submission
     // need headroom beyond the default 30s test timeout.
     test.setTimeout(60_000);
+    const dumpDiagnostics = attachDiagnostics(page, testInfo);
     await page.context().setExtraHTTPHeaders({
       "x-edgeone-client-ip":
         testInfo.project.name === "mobile-chromium"
@@ -141,18 +204,18 @@ test.describe("Demo public acceptance", () => {
 
     await page.goto("/en/products?q=fire");
     await expect(page.getByRole("heading", { name: "Products" })).toBeVisible();
-    // The heading is part of the static layout shell, but product cards
-    // are streamed from the Server Component. Wait for the first article
-    // link to be visible before clicking so the click doesn't race with
-    // streaming on slow CI runners.
-    await page.waitForLoadState("networkidle");
+    // Content-based wait for the first product card link. Replaces the
+    // previous `await page.waitForLoadState("networkidle")` which was
+    // both slow and flaky under RSC streaming (see Chinese flow comment).
     const productLink = page
       .locator('article a[href^="/en/products/"]')
       .first();
-    await expect(productLink).toBeVisible();
-    await productLink.click();
-    // See comment in the Chinese flow — RSC fetch on CI can exceed 5s.
-    await page.waitForURL(/\/en\/products\/[^/?]+$/, { timeout: 30_000 });
+    await expect(productLink).toBeVisible({ timeout: 30_000 });
+    // Promise.all to arm the URL wait before the click fires.
+    await Promise.all([
+      page.waitForURL(/\/en\/products\/[^/?]+$/, { timeout: 30_000 }),
+      productLink.click(),
+    ]);
     await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
     await page
       .getByRole("button", { name: /Add to inquiry/ })
@@ -174,6 +237,7 @@ test.describe("Demo public acceptance", () => {
     ).toBeVisible();
     await expectNoHorizontalOverflow(page);
     await expectFixedNavigationDoesNotCoverContent(page);
+    await dumpDiagnostics();
   });
 
   test("dialogs close and product CTA does not overlap mobile navigation", async ({
@@ -183,14 +247,15 @@ test.describe("Demo public acceptance", () => {
       testInfo.project.name !== "mobile-chromium",
       "Mobile layout assertion",
     );
+    const dumpDiagnostics = attachDiagnostics(page, testInfo);
     await page.goto("/products");
-    await page.waitForLoadState("networkidle");
+    // Content-based wait instead of networkidle.
     const mobileProductLink = page.locator('article a[href^="/products/"]').first();
-    await expect(mobileProductLink).toBeVisible();
-    await mobileProductLink.click();
-    // Wait for the RSC navigation to commit the URL change. The mobile nav
-    // visibility assertion depends on the URL being /products/[slug].
-    await page.waitForURL(/\/products\/[^/?]+$/, { timeout: 30_000 });
+    await expect(mobileProductLink).toBeVisible({ timeout: 30_000 });
+    await Promise.all([
+      page.waitForURL(/\/products\/[^/?]+$/, { timeout: 30_000 }),
+      mobileProductLink.click(),
+    ]);
     // MobileNavController hides BottomNav on /products/[slug] via
     // usePathname(). The client-side effect runs after hydration/streaming
     // settles — wait for it rather than asserting immediately.
@@ -200,6 +265,9 @@ test.describe("Demo public acceptance", () => {
     await expectNoHorizontalOverflow(page);
 
     await page.goto("/certificates");
+    await expect(
+      page.getByRole("button", { name: /全屏查看/ }).first(),
+    ).toBeVisible({ timeout: 30_000 });
     await page
       .getByRole("button", { name: /全屏查看/ })
       .first()
@@ -208,6 +276,7 @@ test.describe("Demo public acceptance", () => {
     await expect(dialog).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(dialog).toHaveCount(0);
+    await dumpDiagnostics();
   });
 
   test("responsive acceptance widths have no overflow", async ({
@@ -217,6 +286,7 @@ test.describe("Demo public acceptance", () => {
       testInfo.project.name !== "desktop-chromium",
       "Run the viewport matrix once",
     );
+    const dumpDiagnostics = attachDiagnostics(page, testInfo);
     for (const viewport of [
       { width: 360, height: 800 },
       { width: 430, height: 900 },
@@ -229,5 +299,6 @@ test.describe("Demo public acceptance", () => {
       await expectNoHorizontalOverflow(page);
       await expectFixedNavigationDoesNotCoverContent(page);
     }
+    await dumpDiagnostics();
   });
 });
