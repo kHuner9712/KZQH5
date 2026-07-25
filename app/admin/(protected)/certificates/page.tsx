@@ -256,7 +256,7 @@ function CertificateModal({
       <form onSubmit={handleSubmit} className="space-y-4">
         <ImageUpload
           label="证书图片"
-          folder="certificates"
+          purpose="certificate-draft"
           value={form.image_url}
           onChange={(url) => update("image_url", url)}
           aspect="square"

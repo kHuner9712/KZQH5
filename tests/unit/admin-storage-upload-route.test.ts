@@ -11,24 +11,28 @@ import { NextRequest } from "next/server";
 //   4. PDF exceeding 20MB is rejected
 //   5. Editor role is rejected (RBAC minimumRole: "admin")
 //   6. Missing Origin is rejected (fail-closed)
-//   7. Path traversal in category is rejected
-//   8. Cross-origin is rejected
-//   9. Unauthenticated is rejected (401)
+//   7. Cross-origin is rejected
+//   8. Unauthenticated is rejected (401)
+//   9. Legacy fields (public/category/bucket/path) are rejected with 400
+//  10. private-assets upload succeeds WITHOUT publicUrl
+//  11. Missing purpose is rejected with 400
 //
 // These exercise the actual route handler, not just the validation
 // utility functions. The route calls requireAdminWrite (RBAC + Origin
-// + session) and then uploadToPrivateAssets (Magic Bytes + size + path).
+// + session) and then uploadByPurpose (which routes to uploadToPrivateAssets
+// or uploadToPublicAssets based on the purpose config).
 // ============================================================
 
 const getVerifiedAdmin = vi.fn();
-const uploadToPrivateAssets = vi.fn();
+const uploadByPurpose = vi.fn();
 const deletePrivateAsset = vi.fn();
 const isReferencedStorageObject = vi.fn();
 const isDemoMode = vi.fn(() => false);
+const resolvePurposeConfig = vi.fn();
 
 vi.mock("@/lib/services/admin-auth", () => ({ getVerifiedAdmin }));
 vi.mock("@/lib/services/storage-upload", () => ({
-  uploadToPrivateAssets,
+  uploadByPurpose,
   deletePrivateAsset,
   isReferencedStorageObject,
   validatePrivateAssetPath: vi.fn((raw: string) => {
@@ -45,6 +49,27 @@ vi.mock("@/lib/services/storage-upload", () => ({
     return { ok: true, path: raw };
   }),
 }));
+vi.mock("@/lib/services/storage-purpose", () => ({
+  resolvePurposeConfig,
+  STORAGE_PURPOSES: [
+    "product-image",
+    "project-image",
+    "company-logo",
+    "homepage-image",
+    "catalog-draft",
+    "certificate-draft",
+  ] as const,
+  isStoragePurpose: (value: unknown) =>
+    typeof value === "string" &&
+    [
+      "product-image",
+      "project-image",
+      "company-logo",
+      "homepage-image",
+      "catalog-draft",
+      "certificate-draft",
+    ].includes(value),
+}));
 vi.mock("@/lib/demo", () => ({ isDemoMode }));
 
 function makeAdminContext(role = "admin") {
@@ -59,14 +84,36 @@ function makeAdminContext(role = "admin") {
 function multipartRequest(
   url: string,
   method: string,
-  fields: { category: string; file: { name: string; type: string; bytes: Uint8Array } },
+  fields: {
+    purpose?: string;
+    /** Legacy fields that should be rejected. */
+    legacy?: {
+      public?: string;
+      category?: string;
+      bucket?: string;
+      path?: string;
+    };
+    file: { name: string; type: string; bytes: Uint8Array };
+  },
   headers: Record<string, string> = {
     Host: "kzq.test",
     Origin: "https://kzq.test",
   },
 ): NextRequest {
   const formData = new FormData();
-  formData.set("category", fields.category);
+  if (fields.purpose !== undefined) {
+    formData.set("purpose", fields.purpose);
+  }
+  if (fields.legacy) {
+    if (fields.legacy.public !== undefined)
+      formData.set("public", fields.legacy.public);
+    if (fields.legacy.category !== undefined)
+      formData.set("category", fields.legacy.category);
+    if (fields.legacy.bucket !== undefined)
+      formData.set("bucket", fields.legacy.bucket);
+    if (fields.legacy.path !== undefined)
+      formData.set("path", fields.legacy.path);
+  }
   // Copy bytes into a fresh ArrayBuffer to avoid SharedArrayBuffer typing
   // issues in the test environment.
   const ab = new ArrayBuffer(fields.file.bytes.length);
@@ -100,19 +147,56 @@ function jsonRequest(
   });
 }
 
+/** Purpose config stand-ins mirroring storage-purpose.ts. */
+const PURPOSE_CONFIGS: Record<string, {
+  bucket: "public-assets" | "private-assets";
+  category: string;
+  isPublicUrlAllowed: boolean;
+  allowedMimeTypes: readonly string[];
+}> = {
+  "product-image": {
+    bucket: "public-assets",
+    category: "products",
+    isPublicUrlAllowed: true,
+    allowedMimeTypes: ["image/jpeg", "image/png", "image/webp"],
+  },
+  "catalog-draft": {
+    bucket: "private-assets",
+    category: "catalogs",
+    isPublicUrlAllowed: false,
+    allowedMimeTypes: [
+      "image/jpeg",
+      "image/png",
+      "image/webp",
+      "application/pdf",
+    ],
+  },
+  "certificate-draft": {
+    bucket: "private-assets",
+    category: "certificates",
+    isPublicUrlAllowed: false,
+    allowedMimeTypes: ["image/jpeg", "image/png", "image/webp"],
+  },
+};
+
 describe("Phase 13: Storage upload route — server-side Magic Bytes enforcement", () => {
   beforeEach(() => {
     getVerifiedAdmin.mockReset();
-    uploadToPrivateAssets.mockReset();
+    uploadByPurpose.mockReset();
     deletePrivateAsset.mockReset();
     isDemoMode.mockReturnValue(false);
+    resolvePurposeConfig.mockReset();
+    // Default: resolve any valid purpose to its config
+    resolvePurposeConfig.mockImplementation((purpose: string) =>
+      PURPOSE_CONFIGS[purpose] ?? null,
+    );
   });
 
   it("rejects SVG content masquerading as PNG (Magic Bytes mismatch)", async () => {
     getVerifiedAdmin.mockResolvedValue(makeAdminContext());
-    // uploadToPrivateAssets performs the Magic Bytes check; simulate the
-    // rejection that the real service would return.
-    uploadToPrivateAssets.mockResolvedValue({
+    // uploadByPurpose performs the Magic Bytes check via uploadToPrivateAssets;
+    // simulate the rejection that the real service would return.
+    uploadByPurpose.mockResolvedValue({
       ok: false,
       code: "ADMIN_WRITE_UNSUPPORTED_MEDIA",
     });
@@ -122,23 +206,23 @@ describe("Phase 13: Storage upload route — server-side Magic Bytes enforcement
     const svgBytes = new Uint8Array([0x3c, 0x73, 0x76, 0x67, 0x20, 0x78, 0x6d, 0x6c]);
     const res = await POST(
       multipartRequest("https://kzq.test/api/admin/storage/upload", "POST", {
-        category: "products",
+        purpose: "product-image",
         file: { name: "evil.png", type: "image/png", bytes: svgBytes },
       }),
     );
 
     expect(res.status).toBe(415);
-    expect(uploadToPrivateAssets).toHaveBeenCalledTimes(1);
+    expect(uploadByPurpose).toHaveBeenCalledTimes(1);
     // Verify the bytes passed to the service are the ACTUAL file bytes
     // (not the client-declared MIME alone).
-    const call = uploadToPrivateAssets.mock.calls[0][0];
-    expect(call.bytes).toBeInstanceOf(Uint8Array);
-    expect(call.bytes.length).toBe(svgBytes.length);
+    const call = uploadByPurpose.mock.calls[0];
+    expect(call[1].bytes).toBeInstanceOf(Uint8Array);
+    expect(call[1].bytes.length).toBe(svgBytes.length);
   });
 
   it("rejects HTML content masquerading as PDF (Magic Bytes mismatch)", async () => {
     getVerifiedAdmin.mockResolvedValue(makeAdminContext());
-    uploadToPrivateAssets.mockResolvedValue({
+    uploadByPurpose.mockResolvedValue({
       ok: false,
       code: "ADMIN_WRITE_UNSUPPORTED_MEDIA",
     });
@@ -148,7 +232,7 @@ describe("Phase 13: Storage upload route — server-side Magic Bytes enforcement
     const htmlBytes = new Uint8Array([0x3c, 0x68, 0x74, 0x6d, 0x6c, 0x3e]);
     const res = await POST(
       multipartRequest("https://kzq.test/api/admin/storage/upload", "POST", {
-        category: "catalogs",
+        purpose: "catalog-draft",
         file: { name: "evil.pdf", type: "application/pdf", bytes: htmlBytes },
       }),
     );
@@ -158,7 +242,7 @@ describe("Phase 13: Storage upload route — server-side Magic Bytes enforcement
 
   it("rejects image exceeding 5MB (server-side size limit)", async () => {
     getVerifiedAdmin.mockResolvedValue(makeAdminContext());
-    uploadToPrivateAssets.mockResolvedValue({
+    uploadByPurpose.mockResolvedValue({
       ok: false,
       code: "ADMIN_WRITE_PAYLOAD_TOO_LARGE",
     });
@@ -170,18 +254,18 @@ describe("Phase 13: Storage upload route — server-side Magic Bytes enforcement
     oversized.set(pngMagic, 0);
     const res = await POST(
       multipartRequest("https://kzq.test/api/admin/storage/upload", "POST", {
-        category: "products",
+        purpose: "product-image",
         file: { name: "big.png", type: "image/png", bytes: oversized },
       }),
     );
 
     expect(res.status).toBe(413);
-    expect(uploadToPrivateAssets).toHaveBeenCalledTimes(1);
+    expect(uploadByPurpose).toHaveBeenCalledTimes(1);
   });
 
   it("rejects PDF exceeding 20MB (server-side size limit)", async () => {
     getVerifiedAdmin.mockResolvedValue(makeAdminContext());
-    uploadToPrivateAssets.mockResolvedValue({
+    uploadByPurpose.mockResolvedValue({
       ok: false,
       code: "ADMIN_WRITE_PAYLOAD_TOO_LARGE",
     });
@@ -193,7 +277,7 @@ describe("Phase 13: Storage upload route — server-side Magic Bytes enforcement
     oversized.set(pdfMagic, 0);
     const res = await POST(
       multipartRequest("https://kzq.test/api/admin/storage/upload", "POST", {
-        category: "catalogs",
+        purpose: "catalog-draft",
         file: { name: "big.pdf", type: "application/pdf", bytes: oversized },
       }),
     );
@@ -208,7 +292,7 @@ describe("Phase 13: Storage upload route — server-side Magic Bytes enforcement
     const pngBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
     const res = await POST(
       multipartRequest("https://kzq.test/api/admin/storage/upload", "POST", {
-        category: "products",
+        purpose: "product-image",
         file: { name: "test.png", type: "image/png", bytes: pngBytes },
       }),
     );
@@ -216,7 +300,7 @@ describe("Phase 13: Storage upload route — server-side Magic Bytes enforcement
     expect(res.status).toBe(403);
     const body = await res.json();
     expect(body.error).toBe("ADMIN_WRITE_FORBIDDEN_ROLE");
-    expect(uploadToPrivateAssets).not.toHaveBeenCalled();
+    expect(uploadByPurpose).not.toHaveBeenCalled();
   });
 
   it("rejects missing Origin (fail-closed)", async () => {
@@ -228,13 +312,13 @@ describe("Phase 13: Storage upload route — server-side Magic Bytes enforcement
       multipartRequest(
         "https://kzq.test/api/admin/storage/upload",
         "POST",
-        { category: "products", file: { name: "test.png", type: "image/png", bytes: pngBytes } },
+        { purpose: "product-image", file: { name: "test.png", type: "image/png", bytes: pngBytes } },
         { Host: "kzq.test" }, // Origin intentionally omitted
       ),
     );
 
     expect(res.status).toBe(403);
-    expect(uploadToPrivateAssets).not.toHaveBeenCalled();
+    expect(uploadByPurpose).not.toHaveBeenCalled();
   });
 
   it("rejects cross-origin upload", async () => {
@@ -246,13 +330,13 @@ describe("Phase 13: Storage upload route — server-side Magic Bytes enforcement
       multipartRequest(
         "https://kzq.test/api/admin/storage/upload",
         "POST",
-        { category: "products", file: { name: "test.png", type: "image/png", bytes: pngBytes } },
+        { purpose: "product-image", file: { name: "test.png", type: "image/png", bytes: pngBytes } },
         { Host: "kzq.test", Origin: "https://attacker.example.com" },
       ),
     );
 
     expect(res.status).toBe(403);
-    expect(uploadToPrivateAssets).not.toHaveBeenCalled();
+    expect(uploadByPurpose).not.toHaveBeenCalled();
   });
 
   it("rejects unauthenticated upload (401)", async () => {
@@ -262,30 +346,34 @@ describe("Phase 13: Storage upload route — server-side Magic Bytes enforcement
     const pngBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
     const res = await POST(
       multipartRequest("https://kzq.test/api/admin/storage/upload", "POST", {
-        category: "products",
+        purpose: "product-image",
         file: { name: "test.png", type: "image/png", bytes: pngBytes },
       }),
     );
 
     expect(res.status).toBe(401);
-    expect(uploadToPrivateAssets).not.toHaveBeenCalled();
+    expect(uploadByPurpose).not.toHaveBeenCalled();
   });
 
-  it("returns success path for a valid upload (admin role, same-origin, valid bytes)", async () => {
+  it("returns success path for a valid public-assets upload (admin role, same-origin, valid bytes)", async () => {
     getVerifiedAdmin.mockResolvedValue(makeAdminContext());
-    uploadToPrivateAssets.mockResolvedValue({
+    uploadByPurpose.mockResolvedValue({
       ok: true,
-      path: "products/abc-123.png",
-      bucket: "private-assets",
-      mimeType: "image/png",
-      size: 8,
+      ref: {
+        bucket: "public-assets",
+        path: "products/abc-123.png",
+        publicUrl:
+          "https://kzq.test/storage/v1/object/public/public-assets/products/abc-123.png",
+        mimeType: "image/png",
+        size: 8,
+      },
     });
     const { POST } = await import("@/app/api/admin/storage/upload/route");
 
     const pngBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
     const res = await POST(
       multipartRequest("https://kzq.test/api/admin/storage/upload", "POST", {
-        category: "products",
+        purpose: "product-image",
         file: { name: "test.png", type: "image/png", bytes: pngBytes },
       }),
     );
@@ -293,9 +381,177 @@ describe("Phase 13: Storage upload route — server-side Magic Bytes enforcement
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.success).toBe(true);
-    expect(body.bucket).toBe("private-assets");
-    // The path is server-generated, never from the client.
+    expect(body.bucket).toBe("public-assets");
     expect(body.path).toBe("products/abc-123.png");
+    expect(body.publicUrl).toContain("public-assets/products/abc-123.png");
+  });
+
+  // ============================================================
+  // Phase 13 (commercial-delivery-hardening): Legacy removal
+  // ============================================================
+
+  it("rejects Legacy `category` field with 400 (no Legacy upload path)", async () => {
+    getVerifiedAdmin.mockResolvedValue(makeAdminContext());
+    const { POST } = await import("@/app/api/admin/storage/upload/route");
+
+    const pngBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const res = await POST(
+      multipartRequest("https://kzq.test/api/admin/storage/upload", "POST", {
+        purpose: "product-image",
+        legacy: { category: "products" },
+        file: { name: "test.png", type: "image/png", bytes: pngBytes },
+      }),
+    );
+
+    expect(res.status).toBe(400);
+    expect(uploadByPurpose).not.toHaveBeenCalled();
+  });
+
+  it("rejects Legacy `public=true` field with 400", async () => {
+    getVerifiedAdmin.mockResolvedValue(makeAdminContext());
+    const { POST } = await import("@/app/api/admin/storage/upload/route");
+
+    const pngBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const res = await POST(
+      multipartRequest("https://kzq.test/api/admin/storage/upload", "POST", {
+        purpose: "product-image",
+        legacy: { public: "true" },
+        file: { name: "test.png", type: "image/png", bytes: pngBytes },
+      }),
+    );
+
+    expect(res.status).toBe(400);
+    expect(uploadByPurpose).not.toHaveBeenCalled();
+  });
+
+  it("rejects Legacy `bucket` field with 400", async () => {
+    getVerifiedAdmin.mockResolvedValue(makeAdminContext());
+    const { POST } = await import("@/app/api/admin/storage/upload/route");
+
+    const pngBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const res = await POST(
+      multipartRequest("https://kzq.test/api/admin/storage/upload", "POST", {
+        purpose: "product-image",
+        legacy: { bucket: "public-assets" },
+        file: { name: "test.png", type: "image/png", bytes: pngBytes },
+      }),
+    );
+
+    expect(res.status).toBe(400);
+    expect(uploadByPurpose).not.toHaveBeenCalled();
+  });
+
+  it("rejects Legacy `path` field with 400", async () => {
+    getVerifiedAdmin.mockResolvedValue(makeAdminContext());
+    const { POST } = await import("@/app/api/admin/storage/upload/route");
+
+    const pngBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const res = await POST(
+      multipartRequest("https://kzq.test/api/admin/storage/upload", "POST", {
+        purpose: "product-image",
+        legacy: { path: "products/evil.png" },
+        file: { name: "test.png", type: "image/png", bytes: pngBytes },
+      }),
+    );
+
+    expect(res.status).toBe(400);
+    expect(uploadByPurpose).not.toHaveBeenCalled();
+  });
+
+  it("rejects missing purpose with 400", async () => {
+    getVerifiedAdmin.mockResolvedValue(makeAdminContext());
+    const { POST } = await import("@/app/api/admin/storage/upload/route");
+
+    const pngBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const res = await POST(
+      multipartRequest("https://kzq.test/api/admin/storage/upload", "POST", {
+        // purpose intentionally omitted
+        file: { name: "test.png", type: "image/png", bytes: pngBytes },
+      }),
+    );
+
+    expect(res.status).toBe(400);
+    expect(uploadByPurpose).not.toHaveBeenCalled();
+  });
+
+  it("rejects unknown purpose with 400", async () => {
+    getVerifiedAdmin.mockResolvedValue(makeAdminContext());
+    resolvePurposeConfig.mockReturnValue(null);
+    const { POST } = await import("@/app/api/admin/storage/upload/route");
+
+    const pngBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const res = await POST(
+      multipartRequest("https://kzq.test/api/admin/storage/upload", "POST", {
+        purpose: "evil-purpose",
+        file: { name: "test.png", type: "image/png", bytes: pngBytes },
+      }),
+    );
+
+    expect(res.status).toBe(400);
+    expect(uploadByPurpose).not.toHaveBeenCalled();
+  });
+
+  it("private-assets upload succeeds WITHOUT publicUrl (catalog-draft)", async () => {
+    // Critical regression: the route MUST NOT treat missing publicUrl as
+    // failure for private-assets uploads. The ImageUpload / FileUpload
+    // components must accept refs with publicUrl=null and use previewUrl
+    // (short-lived signed URL) instead.
+    getVerifiedAdmin.mockResolvedValue(makeAdminContext());
+    uploadByPurpose.mockResolvedValue({
+      ok: true,
+      ref: {
+        bucket: "private-assets",
+        path: "catalogs/abc-123.pdf",
+        publicUrl: null, // private-assets → null
+        mimeType: "application/pdf",
+        size: 1024,
+      },
+    });
+    const { POST } = await import("@/app/api/admin/storage/upload/route");
+
+    const pdfMagic = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x34]);
+    const res = await POST(
+      multipartRequest("https://kzq.test/api/admin/storage/upload", "POST", {
+        purpose: "catalog-draft",
+        file: { name: "catalog.pdf", type: "application/pdf", bytes: pdfMagic },
+      }),
+    );
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.success).toBe(true);
+    expect(body.bucket).toBe("private-assets");
+    expect(body.path).toBe("catalogs/abc-123.pdf");
+    expect(body.publicUrl).toBeNull();
+  });
+
+  it("private-assets certificate-draft upload succeeds WITHOUT publicUrl", async () => {
+    getVerifiedAdmin.mockResolvedValue(makeAdminContext());
+    uploadByPurpose.mockResolvedValue({
+      ok: true,
+      ref: {
+        bucket: "private-assets",
+        path: "certificates/abc-123.png",
+        publicUrl: null,
+        mimeType: "image/png",
+        size: 8,
+      },
+    });
+    const { POST } = await import("@/app/api/admin/storage/upload/route");
+
+    const pngBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const res = await POST(
+      multipartRequest("https://kzq.test/api/admin/storage/upload", "POST", {
+        purpose: "certificate-draft",
+        file: { name: "cert.png", type: "image/png", bytes: pngBytes },
+      }),
+    );
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.success).toBe(true);
+    expect(body.bucket).toBe("private-assets");
+    expect(body.publicUrl).toBeNull();
   });
 });
 

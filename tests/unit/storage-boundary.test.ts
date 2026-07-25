@@ -82,21 +82,27 @@ describe("Phase 4: Storage boundary — SVG exclusion at every layer", () => {
   });
 });
 
-describe("Phase 4: Storage boundary — cleanup script safety", () => {
+describe("Phase 4: Storage boundary — cleanup script is READ-ONLY inventory", () => {
   const CLEANUP_SCRIPT = "scripts/cleanup-orphaned-assets.mjs";
 
   it("cleanup script exists", () => {
     expect(existsSync(join(ROOT, CLEANUP_SCRIPT))).toBe(true);
   });
 
-  it("cleanup script defaults to DRY-RUN (does not delete without --execute)", () => {
+  it("cleanup script is READ-ONLY (no --execute flag, no delete path)", () => {
     const content = readRoot(CLEANUP_SCRIPT);
-    // The default must be execute: false
-    expect(content).toMatch(/execute:\s*false/);
-    // The --execute flag must be required to actually delete
-    expect(content).toMatch(/--execute/);
-    // There must be a dry-run branch that returns before deleting
-    expect(content).toMatch(/DRY RUN/);
+    // The dangerous --execute flag must NOT be parsed as a CLI argument.
+    // Comments documenting its removal are allowed; the actual parseArgs
+    // function must not accept it.
+    const parseArgsBlock = content.match(/function\s+parseArgs[\s\S]+?\n\}/);
+    expect(parseArgsBlock).not.toBeNull();
+    expect(parseArgsBlock![0]).not.toMatch(/--execute/);
+    // No DELETE HTTP method against storage objects.
+    expect(content).not.toMatch(/method:\s*["']DELETE["']/);
+    // Must explicitly declare READ-ONLY mode.
+    expect(content).toMatch(/READ-ONLY/);
+    // Must explicitly state that cleanup goes through storage_cleanup_queue.
+    expect(content).toMatch(/storage_cleanup_queue/);
   });
 
   it("cleanup script requires SUPABASE_SERVICE_ROLE_KEY (server-side only)", () => {
@@ -106,10 +112,11 @@ describe("Phase 4: Storage boundary — cleanup script safety", () => {
     expect(content).toMatch(/process\.exit\(1\)/);
   });
 
-  it("cleanup script checks ALL referencing tables before deleting", () => {
+  it("cleanup script checks ALL referencing tables (reference query must be exhaustive)", () => {
     const content = readRoot(CLEANUP_SCRIPT);
-    // Every table that holds a storage URL must be checked.
-    // If a file is referenced by ANY table, it must NOT be deleted.
+    // Every table that holds a storage URL must be checked so that
+    // orphan inventory is reliable. The list must stay in sync with
+    // check_storage_object_referenced RPC.
     const requiredTables = [
       "product_images",
       "products",
@@ -126,21 +133,22 @@ describe("Phase 4: Storage boundary — cleanup script safety", () => {
     }
   });
 
-  it("cleanup script counts failures separately from successes", () => {
+  it("cleanup script is fail-closed: any reference query failure is FATAL", () => {
     const content = readRoot(CLEANUP_SCRIPT);
-    // The script must track failed deletions separately, so a partial
-    // failure is NOT misreported as complete success.
-    expect(content).toMatch(/failed/);
-    expect(content).toMatch(/deleted/);
-    // The final report must include both counts
-    expect(content).toMatch(/Deleted.*Failed/);
+    // The script must NOT "warn and continue" on reference query failures.
+    // A failed reference query would produce a false-positive orphan list
+    // that could be misused. Any non-404 error must abort with non-zero exit.
+    expect(content).toMatch(/REFERENCE_QUERY_FAILED|FATAL/);
+    expect(content).toMatch(/process\.exit\(1\)/);
   });
 
-  it("cleanup script treats 404 on delete as success (already gone)", () => {
+  it("cleanup script never claims object deletion (no 'Deleted' count in output)", () => {
     const content = readRoot(CLEANUP_SCRIPT);
-    // A 404 on DELETE means the file was already removed — this is safe
-    // to count as success because the end state (file gone) is achieved.
-    expect(content).toMatch(/res\.status === 404/);
+    // The script must NOT output a "Deleted: N" counter, because it does
+    // not delete anything. Misleading success counters are forbidden.
+    expect(content).not.toMatch(/Deleted.*Failed/);
+    // The reminder that "no objects were deleted" must appear.
+    expect(content).toMatch(/No objects were deleted|does NOT delete objects/);
   });
 });
 

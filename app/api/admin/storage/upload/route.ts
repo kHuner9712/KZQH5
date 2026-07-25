@@ -11,15 +11,12 @@
  *     （Magic Bytes / MIME / 扩展名 / 按类型大小限制）
  *   - 路径由服务端生成 {category}/{uuid}.{ext}，客户端无法指定完整 Storage Path
  *
- * Purpose-driven 上传（推荐）：
- *   - 客户端提交 `purpose`（如 "product-image" | "catalog-draft"）
+ * Purpose-driven 上传（唯一支持路径）：
+ *   - 客户端只提交 `purpose`（如 "product-image" | "catalog-draft"）
  *   - 服务端依据 storage-purpose.ts 决定 bucket / category / MIME 白名单
- *   - 客户端无法指定 bucket / public / 完整 path
- *
- * Legacy 上传（向后兼容，已弃用）：
- *   - 客户端提交 `category` + `public`
- *   - 服务端记录 STORAGE_LEGACY_UPLOAD 警告日志
- *   - 后续版本将完全移除 legacy 路径
+ *   - 客户端提交 public / bucket / category / path 中任意一个一律 400 拒绝
+ *     （防止绕过安全边界以 Legacy 模式自动决定公开性）
+ *   - private-assets 上传成功时不返回 publicUrl
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -29,13 +26,7 @@ import {
   requireAdminWrite,
 } from "@/lib/services/admin-write-boundary";
 import type { AdminWriteErrorCode } from "@/lib/services/admin-write-boundary";
-import {
-  PRIVATE_ASSETS_BUCKET,
-  PUBLIC_ASSETS_BUCKET,
-  uploadByPurpose,
-  uploadToPrivateAssets,
-  uploadToPublicAssets,
-} from "@/lib/services/storage-upload";
+import { uploadByPurpose } from "@/lib/services/storage-upload";
 import { resolvePurposeConfig } from "@/lib/services/storage-purpose";
 
 // 20MB 文件（PDF 上限）+ multipart 框架开销。按类型的实际限制在 storage-upload 内执行。
@@ -90,112 +81,49 @@ export async function POST(request: NextRequest) {
   }
 
   const purpose = form.get("purpose");
-  const category = form.get("category");
   const file = form.get("file");
-  const publicField = form.get("public");
+
+  // Legacy 字段一律拒绝 —— 不允许以任何形式提交 public/category/bucket/path，
+  // 防止绕过 purpose-driven 安全边界。
+  // 任意一个存在即返回 400，不进入上传流程。
+  if (
+    form.get("public") !== null ||
+    form.get("category") !== null ||
+    form.get("bucket") !== null ||
+    form.get("path") !== null
+  ) {
+    return adminWriteError("ADMIN_WRITE_BAD_REQUEST", 400);
+  }
 
   if (!(file instanceof File)) {
     return adminWriteError("ADMIN_WRITE_BAD_REQUEST", 400);
   }
 
-  // Purpose-driven 路径（推荐）：客户端只提交 purpose
-  if (typeof purpose === "string" && purpose.length > 0) {
-    // 拒绝客户端在 purpose 模式下同时提交 public/bucket（防止绕过）
-    if (publicField !== null) {
-      return adminWriteError("ADMIN_WRITE_BAD_REQUEST", 400);
-    }
-    // 校验 purpose 合法性
-    const config = resolvePurposeConfig(purpose);
-    if (!config) {
-      return adminWriteError("ADMIN_WRITE_BAD_REQUEST", 400);
-    }
-
-    if (isDemoMode()) {
-      const demoPath = `demo/${config.category}/${Date.now()}`;
-      return NextResponse.json({
-        success: true,
-        demo: true,
-        path: demoPath,
-        bucket: config.bucket,
-        ...(config.isPublicUrlAllowed
-          ? {
-              publicUrl: `${(process.env.NEXT_PUBLIC_SUPABASE_URL || "").replace(/\/+$/, "")}/storage/v1/object/public/${config.bucket}/${demoPath}`,
-            }
-          : {}),
-      });
-    }
-
-    let bytes: Uint8Array;
-    try {
-      const ab = await file.arrayBuffer();
-      bytes = new Uint8Array(ab);
-    } catch {
-      return adminWriteError("ADMIN_WRITE_BAD_REQUEST", 400);
-    }
-
-    const result = await uploadByPurpose(
-      purpose,
-      {
-        bytes,
-        mimeType: file.type,
-        size: bytes.length,
-        filename: file.name,
-      },
-      {
-        actorId: guard.user.id,
-        actorRole: guard.profile.role ?? null,
-      },
-    );
-    if (!result.ok) {
-      return adminWriteError(result.code, statusForCode(result.code), {
-        logCode: result.code,
-      });
-    }
-
-    return NextResponse.json({
-      success: true,
-      path: result.ref.path,
-      bucket: result.ref.bucket,
-      mimeType: result.ref.mimeType,
-      size: result.ref.size,
-      publicUrl: result.ref.publicUrl,
-    });
-  }
-
-  // Legacy 路径（已弃用）：category + public
-  if (
-    typeof category !== "string" ||
-    category.length === 0
-  ) {
+  // Purpose-driven 是唯一支持路径：客户端必须提交合法 purpose
+  if (typeof purpose !== "string" || purpose.length === 0) {
     return adminWriteError("ADMIN_WRITE_BAD_REQUEST", 400);
   }
 
-  // 记录弃用警告 —— 后续版本将移除 legacy 路径
-  console.warn("STORAGE_LEGACY_UPLOAD", {
-    category,
-    isPublic: publicField === "true",
-    code: "LEGACY_UPLOAD_DEPRECATED",
-  });
-
-  // public="true" → 上传到 public-assets（可公开读取）；否则默认 private-assets。
-  const isPublic = publicField === "true";
+  const config = resolvePurposeConfig(purpose);
+  if (!config) {
+    return adminWriteError("ADMIN_WRITE_BAD_REQUEST", 400);
+  }
 
   if (isDemoMode()) {
-    const demoPath = `demo/${category}/${Date.now()}`;
+    const demoPath = `demo/${config.category}/${Date.now()}`;
     return NextResponse.json({
       success: true,
       demo: true,
       path: demoPath,
-      bucket: isPublic ? PUBLIC_ASSETS_BUCKET : PRIVATE_ASSETS_BUCKET,
-      ...(isPublic
+      bucket: config.bucket,
+      ...(config.isPublicUrlAllowed
         ? {
-            publicUrl: `${(process.env.NEXT_PUBLIC_SUPABASE_URL || "").replace(/\/+$/, "")}/storage/v1/object/public/${PUBLIC_ASSETS_BUCKET}/${demoPath}`,
+            publicUrl: `${(process.env.NEXT_PUBLIC_SUPABASE_URL || "").replace(/\/+$/, "")}/storage/v1/object/public/${config.bucket}/${demoPath}`,
           }
         : {}),
     });
   }
 
-  // 服务端读取实际文件字节（Magic Bytes 校验依赖真实字节，而非 client 声明）
   let bytes: Uint8Array;
   try {
     const ab = await file.arrayBuffer();
@@ -204,43 +132,19 @@ export async function POST(request: NextRequest) {
     return adminWriteError("ADMIN_WRITE_BAD_REQUEST", 400);
   }
 
-  if (isPublic) {
-    const result = await uploadToPublicAssets({
+  const result = await uploadByPurpose(
+    purpose,
+    {
       bytes,
       mimeType: file.type,
       size: bytes.length,
       filename: file.name,
-      category,
-    }, {
+    },
+    {
       actorId: guard.user.id,
       actorRole: guard.profile.role ?? null,
-    });
-    if (!result.ok) {
-      return adminWriteError(result.code, statusForCode(result.code), {
-        logCode: result.code,
-      });
-    }
-
-    return NextResponse.json({
-      success: true,
-      path: result.path,
-      bucket: result.bucket,
-      mimeType: result.mimeType,
-      size: result.size,
-      publicUrl: result.publicUrl,
-    });
-  }
-
-  const result = await uploadToPrivateAssets({
-    bytes,
-    mimeType: file.type,
-    size: bytes.length,
-    filename: file.name,
-    category,
-  }, {
-    actorId: guard.user.id,
-    actorRole: guard.profile.role ?? null,
-  });
+    },
+  );
   if (!result.ok) {
     return adminWriteError(result.code, statusForCode(result.code), {
       logCode: result.code,
@@ -249,9 +153,10 @@ export async function POST(request: NextRequest) {
 
   return NextResponse.json({
     success: true,
-    path: result.path,
-    bucket: result.bucket,
-    mimeType: result.mimeType,
-    size: result.size,
+    path: result.ref.path,
+    bucket: result.ref.bucket,
+    mimeType: result.ref.mimeType,
+    size: result.ref.size,
+    publicUrl: result.ref.publicUrl,
   });
 }
