@@ -1169,30 +1169,43 @@ end $$;
 -- for a specific path, then call save_product_asset_draft with that
 -- path. The entire function must roll back: no product_assets row
 -- and no audit row.
+--
+-- This test needs the OWNER/service_role split pattern from
+-- schema_verifier_runtime.sql:
+--   * CREATE FUNCTION / CREATE TRIGGER require owner (postgres)
+--     because service_role has no CREATE privilege on schema public.
+--   * The actual save_product_asset_draft call must run as
+--     service_role because that is the role the application uses.
 -- ============================================================
+
+-- OWNER PHASE: postgres installs the blocking trigger.
+reset role;
+
+create or replace function public._tmp_block_ref_insert()
+returns trigger
+language plpgsql
+as $func$
+begin
+  if new.object_path = 'catalog-assets/POISONED-PATH.pdf' then
+    raise exception 'registry write deliberately blocked (test K)'
+      using errcode = 'P0001';
+  end if;
+  return new;
+end;
+$func$;
+
+create trigger _tmp_storage_object_refs_block
+  before insert on public.storage_object_refs
+  for each row
+  execute function public._tmp_block_ref_insert();
+
+-- CALLER PHASE: service_role runs the test.
+set local role service_role;
+
 do $$
 declare
   v_count integer;
 begin
-  -- Trigger function: raises an exception for the poisoned path.
-  create or replace function public._tmp_block_ref_insert()
-  returns trigger
-  language plpgsql
-  as $$
-  begin
-    if new.object_path = 'catalog-assets/POISONED-PATH.pdf' then
-      raise exception 'registry write deliberately blocked (test K)'
-        using errcode = 'P0001';
-    end if;
-    return new;
-  end;
-  $$;
-
-  create trigger _tmp_storage_object_refs_block
-    before insert on public.storage_object_refs
-    for each row
-    execute function public._tmp_block_ref_insert();
-
   -- Attempt the draft save — it must raise.
   begin
     perform public.save_product_asset_draft(
@@ -1248,11 +1261,15 @@ begin
       v_count
       using errcode = 'P0001';
   end if;
-
-  -- Clean up the trigger (will also be rolled back, but be explicit).
-  drop trigger if exists _tmp_storage_object_refs_block on public.storage_object_refs;
-  drop function if exists public._tmp_block_ref_insert();
 end $$;
+
+-- CLEANUP PHASE: postgres drops the trigger/function. (They will
+-- also be rolled back by the final ROLLBACK, but be explicit so the
+-- schema is clean if the test is ever run outside a transaction.)
+reset role;
+drop trigger if exists _tmp_storage_object_refs_block on public.storage_object_refs;
+drop function if exists public._tmp_block_ref_insert();
+set local role service_role;
 
 -- ============================================================
 -- L. At most one active ref per (owner_type, owner_id, role).
