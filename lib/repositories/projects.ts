@@ -1,10 +1,7 @@
-import type { SupabaseClient } from "@supabase/supabase-js";
 import { isDemoMode } from "@/lib/demo";
 import { mockProjectImages, mockProjectProducts, mockProjects, mockProducts } from "@/lib/mock-data";
 import { createPublicSupabaseClient } from "@/lib/supabase/public";
-import type { Database, Product, Project, ProjectImage, ProjectProduct } from "@/types/database";
-
-type Client = SupabaseClient<Database>;
+import type { Product, Project, ProjectImage, ProjectProduct } from "@/types/database";
 
 export async function getPublishedProjects(options: { featuredOnly?: boolean; limit?: number } = {}): Promise<Project[]> {
   if (isDemoMode()) {
@@ -65,52 +62,4 @@ export async function getPublishedProjectBySlug(slug: string): Promise<Project |
   } catch (error) {
     throw new Error("PUBLIC_DATA_UNAVAILABLE", { cause: error });
   }
-}
-
-export async function listProjects(client: Client): Promise<Project[]> {
-  const { data, error } = await client.from("projects").select("*").order("sort_order", { ascending: true }).order("created_at", { ascending: false });
-  if (error) throw error;
-  return (data as Project[] | null) || [];
-}
-
-export async function getProjectRelations(client: Client, projectId: string) {
-  const [{ data: images, error: imageError }, { data: products, error: productError }] = await Promise.all([
-    client.from("project_images").select("*").eq("project_id", projectId).order("sort_order", { ascending: true }),
-    client.from("project_products").select("*").eq("project_id", projectId).order("sort_order", { ascending: true }),
-  ]);
-  if (imageError) throw imageError;
-  if (productError) throw productError;
-  return { images: (images as ProjectImage[] | null) || [], products: (products as ProjectProduct[] | null) || [] };
-}
-
-export type ProjectPayload = Omit<Project, "id" | "created_at" | "updated_at" | "project_images" | "products">;
-
-export async function saveProject(client: Client, payload: ProjectPayload, id?: string): Promise<Project> {
-  const query = id
-    ? client.from("projects").update(payload).eq("id", id)
-    : client.from("projects").insert(payload);
-  const { data, error } = await query.select("*").single();
-  if (error) throw error;
-  return data as Project;
-}
-
-export async function replaceProjectImages(client: Client, projectId: string, images: Array<Pick<ProjectImage, "image_url" | "alt_cn" | "alt_en" | "sort_order">>): Promise<void> {
-  const { error: deleteError } = await client.from("project_images").delete().eq("project_id", projectId);
-  if (deleteError) throw deleteError;
-  if (!images.length) return;
-  const { error } = await client.from("project_images").insert(images.map((image) => ({ ...image, project_id: projectId })));
-  if (error) throw error;
-}
-
-export async function replaceProjectProducts(client: Client, projectId: string, productIds: string[]): Promise<void> {
-  const { error: deleteError } = await client.from("project_products").delete().eq("project_id", projectId);
-  if (deleteError) throw deleteError;
-  if (!productIds.length) return;
-  const { error } = await client.from("project_products").insert(productIds.map((productId, sortOrder) => ({ project_id: projectId, product_id: productId, sort_order: sortOrder })));
-  if (error) throw error;
-}
-
-export async function deleteProject(client: Client, id: string): Promise<void> {
-  const { error } = await client.from("projects").delete().eq("id", id);
-  if (error) throw error;
 }

@@ -114,19 +114,23 @@ function findWriteViolations(content: string): WriteViolation[] {
 
 // --- Allowlist ------------------------------------------------------------
 // Files exempt from the write boundary, each with a documented reason.
-// Kept intentionally small. Two categories:
+// Kept intentionally small.
 //
-//   A) Legitimate server-side repositories that use createAdminSupabaseClient()
-//      (service_role key). These are NEVER imported by client components and
-//      back the public API routes.
+// Only legitimate server-side repositories that use createAdminSupabaseClient()
+// (service_role key) are exempted. These are NEVER imported by client
+// components and back the public API routes.
 //
-//   B) Legacy admin browser writes that currently violate the boundary.
-//      These must be migrated to /api/admin/** routes using requireAdminWrite().
-//      The allowlist prevents new violations while documenting existing debt.
+// All admin browser writes have been migrated to trusted server APIs
+// (/api/admin/** with requireAdminWrite). The legacy dead write helpers
+// (saveProductAsset / deleteProductAsset / saveProject / replaceProjectImages /
+// replaceProjectProducts / deleteProject) have been DELETED from
+// lib/repositories/. The static gate now enforces a strict zero-tolerance
+// policy: NO browser-side repository and NO client component may call
+// .from(...).insert / update / delete / upsert on business tables.
 // ------------------------------------------------------------------------
 
 const ALLOWLIST: Record<string, string> = {
-  // --- A) Legitimate server-side repositories (service_role, server-only) ---
+  // --- Legitimate server-side repositories (service_role, server-only) ---
   "lib/repositories/inquiries.ts":
     "Server-side repository. createInquiry / createInquiryWithItems use " +
     "createAdminSupabaseClient() (service_role) and back /api/inquiries. " +
@@ -136,44 +140,6 @@ const ALLOWLIST: Record<string, string> = {
     "Server-side repository. recordAnalyticsEvent uses " +
     "createAdminSupabaseClient() (service_role) and backs " +
     "/api/analytics/events. Never imported by client components.",
-
-  // --- B) Legacy admin browser writes (pending migration to /api/admin/**) ---
-  // The following admin pages used to perform direct browser writes and were
-  // listed here as LEGACY exceptions. They have all been migrated to trusted
-  // server APIs (/api/admin/** with requireAdminWrite) and removed from the
-  // allowlist. The static gate now enforces that no client component under
-  // app/admin/** or components/admin/** may call .from(...).insert / update /
-  // delete / upsert on business tables.
-  //
-  // app/admin/(protected)/categories/page.tsx     -> /api/admin/categories
-  // app/admin/(protected)/certificates/page.tsx   -> /api/admin/certificates
-  // app/admin/(protected)/company/page.tsx        -> /api/admin/company
-  // app/admin/(protected)/homepage/page.tsx       -> /api/admin/homepage
-  // app/admin/(protected)/pages/page.tsx          -> /api/admin/pages
-  // app/admin/(protected)/product-assets/page.tsx -> /api/admin/product-assets
-  // app/admin/(protected)/projects/page.tsx       -> /api/admin/projects
-  // app/admin/(protected)/site-settings/page.tsx  -> /api/admin/site-settings
-  //
-  // The legacy write helpers below are dead code: their callers have been
-  // migrated to admin-fetch.ts -> trusted server APIs -> transactional RPCs.
-  // They remain on disk pending a follow-up deletion commit, but are no
-  // longer imported by any app code. The allowlist entries below exist only
-  // so the static gate does not flag the dead-code definitions; they will be
-  // removed when the dead code is deleted.
-  "lib/repositories/product-assets.ts":
-    "DEAD CODE: saveProductAsset / deleteProductAsset are no longer called " +
-    "by app code. Admin UI now uses saveProductAssetApi / deleteProductAssetApi " +
-    "from admin-fetch.ts -> /api/admin/product-assets -> " +
-    "save_product_asset_draft_with_audit / delete_product_asset_with_audit " +
-    "RPCs. Pending deletion in a follow-up commit. Read helpers " +
-    "(getPublishedProductAssets) use createPublicSupabaseClient().",
-  "lib/repositories/projects.ts":
-    "DEAD CODE: saveProject / replaceProjectImages / replaceProjectProducts / " +
-    "deleteProject are no longer called by app code. Admin UI now uses " +
-    "saveProjectApi / deleteProjectApi from admin-fetch.ts -> " +
-    "/api/admin/projects -> save_project_with_relations_and_audit / " +
-    "delete_project_with_audit RPCs. Pending deletion in a follow-up " +
-    "commit. Read helpers use createPublicSupabaseClient().",
 };
 
 // --- Directories to scan --------------------------------------------------
