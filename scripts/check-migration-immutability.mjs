@@ -43,7 +43,6 @@
 // ============================================================
 
 import { createHash } from "node:crypto";
-import { createReadStream } from "node:fs";
 import { readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -77,16 +76,26 @@ if (MODE_APPEND_NEW && MODE_INITIALIZE) {
 const TIMESTAMP_RE = /^(\d{14})_.+\.sql$/;
 
 /**
- * Compute SHA-256 of a file by streaming it (handles large files).
+ * Compute SHA-256 of a file with CRLF -> LF normalization.
+ *
+ * Why: the same migration file is checked out with LF on Linux and
+ * CRLF on Windows (when git's core.autocrlf=true and no .gitattributes
+ * forces LF). Without normalization, the manifest would have to keep
+ * two parallel hash sets, and a manifest generated on one platform
+ * would block the other. By normalizing to LF before hashing, the
+ * manifest is platform-independent.
+ *
+ * We read the file as a UTF-8 string (SQL migration files are text)
+ * and replace \r\n with \n. This is safe even for files that already
+ * have LF (the replace is a no-op) and handles mixed line endings.
+ *
+ * For non-text content this would be wrong, but the immutability gate
+ * only tracks YYYYMMDDHHMMSS_*.sql files, which are always text.
  */
 async function sha256OfFile(filePath) {
-  return new Promise((resolve, reject) => {
-    const hash = createHash("sha256");
-    const stream = createReadStream(filePath);
-    stream.on("data", (chunk) => hash.update(chunk));
-    stream.on("end", () => resolve(hash.digest("hex")));
-    stream.on("error", reject);
-  });
+  const text = await readFile(filePath, "utf8");
+  const normalized = text.replace(/\r\n/g, "\n");
+  return createHash("sha256").update(normalized, "utf8").digest("hex");
 }
 
 /**
