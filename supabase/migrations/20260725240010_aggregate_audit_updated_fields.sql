@@ -86,7 +86,7 @@ begin
     description_cn = nullif(v_payload->>'description_cn', ''),
     description_en = nullif(v_payload->>'description_en', ''),
     cover_image_url = nullif(v_payload->>'cover_image_url', ''),
-    published_at = nullif(v_payload->>'published_at', ''),
+    published_at = nullif(v_payload->>'published_at', '')::date,
     content_hash = nullif(v_payload->>'content_hash', ''),
     sort_order = coalesce((v_payload->>'sort_order')::integer, 0),
     is_published = coalesce((v_payload->>'is_published')::boolean, false),
