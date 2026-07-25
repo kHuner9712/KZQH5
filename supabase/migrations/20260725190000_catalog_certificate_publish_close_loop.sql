@@ -1728,7 +1728,19 @@ grant execute on function public.recover_stale_certificate_publish(integer, uuid
 -- ============================================================
 -- Tell verify_required_schema about the new RPCs so fresh-install
 -- and incremental-upgrade tests can detect missing functions.
-create or replace function public.verify_required_schema()
+--
+-- DROP FUNCTION first because the prior migration (20260725180000)
+-- declared this function with `returns table(object_name text,
+-- object_type text)`. This migration changes the second column name
+-- to `object_kind` (and later migrations revert to `object_type`),
+-- which PostgreSQL treats as a different return type. CREATE OR
+-- REPLACE FUNCTION does not allow changing the return type, so we
+-- drop and recreate (same pattern as 20260725170000 / 20260725180000 /
+-- 20260725220000 / 20260725230000).
+-- ============================================================
+drop function if exists public.verify_required_schema();
+
+create function public.verify_required_schema()
 returns table(object_name text, object_kind text)
 language plpgsql
 security invoker
@@ -1739,7 +1751,7 @@ begin
   return query select 'product_assets', 'table'::text;
   return query select 'certificates', 'table'::text;
   return query select 'storage_cleanup_queue', 'table'::text;
-  return query select 'admin_storage_operations', 'table'::text';
+  return query select 'admin_storage_operations', 'table'::text;
   return query select 'admin_audit_log', 'table'::text;
   return query select 'storage_object_refs', 'table'::text;
 

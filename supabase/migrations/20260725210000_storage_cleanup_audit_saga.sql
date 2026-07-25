@@ -254,8 +254,18 @@ grant execute on function public.complete_storage_cleanup(uuid, uuid, boolean, t
 -- release-readiness check fails fast if this migration was not
 -- applied. The function is replaced in-place; existing checks
 -- remain intact.
+--
+-- DROP FUNCTION first because the prior migration (20260725190000)
+-- declared this function with `returns table(...)`. This migration
+-- switches the return type to `returns jsonb` (different composite
+-- type). PostgreSQL's CREATE OR REPLACE FUNCTION does not allow
+-- changing the return type, so we drop and recreate (same pattern
+-- as 20260725170000 / 20260725180000 / 20260725190000 / 20260725220000
+-- / 20260725230000).
+-- ============================================================
+drop function if exists public.verify_required_schema();
 
-create or replace function public.verify_required_schema() returns jsonb
+create function public.verify_required_schema() returns jsonb
 language plpgsql
 stable
 security invoker

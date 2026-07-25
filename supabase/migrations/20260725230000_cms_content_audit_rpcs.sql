@@ -1000,7 +1000,15 @@ grant execute on function public.delete_subcategory_with_audit(
 -- ============================================================
 -- I. Update verify_required_schema to include new RPCs
 -- ============================================================
-create or replace function public.verify_required_schema()
+-- DROP FUNCTION first because the prior migration (20260725220000)
+-- declared this function with `returns table(object_name text,
+-- object_type text)`. PostgreSQL's CREATE OR REPLACE FUNCTION does
+-- not allow changing the return type, so we drop and recreate (same
+-- pattern as 20260725170000 / 20260725180000 / 20260725220000).
+-- ============================================================
+drop function if exists public.verify_required_schema();
+
+create function public.verify_required_schema()
 returns table(object_name text, object_type text)
 language plpgsql
 security invoker

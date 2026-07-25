@@ -276,7 +276,9 @@ grant execute on function public.delete_project_with_audit(
 -- list (added by 20260725190000). delete_project_with_audit is new.
 -- We replace the function with a version that includes both.
 -- ============================================================
-create or replace function public.verify_required_schema()
+drop function if exists public.verify_required_schema();
+
+create function public.verify_required_schema()
 returns table(object_name text, object_type text)
 language plpgsql
 security invoker
