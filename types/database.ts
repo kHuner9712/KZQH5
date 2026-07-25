@@ -858,6 +858,65 @@ export type Database = {
         };
         Returns: unknown;
       };
+      // Phase 15: Two-phase catalog publish protocol (claim/finalize).
+      // See migration 20260725170000_storage_object_refs_and_publish_protocol.sql.
+      claim_catalog_asset_publish: {
+        Args: {
+          p_asset_id: string;
+          p_expected_updated_at: string;
+          p_actor_id?: string | null;
+          p_actor_email?: string | null;
+          p_actor_role?: string | null;
+        };
+        Returns: unknown;
+      };
+      finalize_catalog_asset_publish: {
+        Args: {
+          p_asset_id: string;
+          p_publish_token: string;
+          p_public_bucket: string;
+          p_public_object_path: string;
+          p_public_url: string;
+          p_mime_type?: string | null;
+          p_size_bytes?: number | null;
+          p_sha256?: string | null;
+        };
+        Returns: unknown;
+      };
+      recover_stale_catalog_publish: {
+        Args: {
+          p_asset_id: string;
+          p_stale_timeout_seconds?: number;
+        };
+        Returns: unknown;
+      };
+      // Phase 15: Strict managed-URL parser (Section 8).
+      // Rejects cross-host URLs, protocol-relative URLs, userinfo, etc.
+      extract_managed_storage_path_strict: {
+        Args: {
+          p_url: string;
+        };
+        Returns: string | null;
+      };
+      // Phase 15: Storage audit reconciliation claim/complete RPCs (Section 10).
+      // See migration 20260725180000_storage_audit_reconcile_claim.sql.
+      claim_storage_audit_reconcile: {
+        Args: {
+          p_min_age_seconds?: number;
+          p_limit?: number;
+          p_stale_timeout_seconds?: number;
+        };
+        Returns: unknown;
+      };
+      complete_storage_audit_reconcile: {
+        Args: {
+          p_operation_id: string;
+          p_lock_token: string;
+          p_success: boolean;
+          p_error_code?: string | null;
+        };
+        Returns: string;
+      };
     };
     Enums: Record<string, never>;
   };

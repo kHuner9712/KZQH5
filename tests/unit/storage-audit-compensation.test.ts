@@ -147,20 +147,38 @@ describe("Storage audit + compensation — static contract", () => {
     expect(afterFn).toMatch(/enqueueResidualObjectForCleanup/);
   });
 
-  it("reconcilePendingStorageAudit implements the 4-state machine", () => {
+  it("reconcilePendingStorageAudit implements the 4-state machine via claim/complete RPCs (Section 10)", () => {
     const content = readLib(SOURCE);
     const fnStart = content.indexOf("export async function reconcilePendingStorageAudit");
     expect(fnStart).toBeGreaterThanOrEqual(0);
     const afterFn = content.slice(fnStart);
-    expect(afterFn).toMatch(/admin_storage_operations/);
-    expect(afterFn).toMatch(/\.eq\("status",\s*"pending"\)/);
+    // Section 10: MUST use claim_storage_audit_reconcile RPC (FOR
+    // UPDATE SKIP LOCKED + per-row lock_token), not a direct query.
+    expect(afterFn).toMatch(/claim_storage_audit_reconcile/);
+    expect(afterFn).toMatch(/complete_storage_audit_reconcile/);
+    // Must NOT directly query admin_storage_operations anymore.
+    expect(afterFn).not.toMatch(/\.from\(["']admin_storage_operations["']\)/);
+    // 4-state machine preserved.
     expect(afterFn).toMatch(/minAgeSeconds/);
+    expect(afterFn).toMatch(/staleTimeoutSeconds/);
     expect(afterFn).toMatch(/\.list\(/);
     expect(afterFn).toMatch(/op\.action\s*===\s*"storage\.upload"/);
     expect(afterFn).toMatch(/auditSuccess\s*=\s*objectExists/);
     expect(afterFn).toMatch(/op\.action\s*===\s*"storage\.delete"/);
     expect(afterFn).toMatch(/auditSuccess\s*=\s*!objectExists/);
-    expect(afterFn).toMatch(/processed:\s*pendingOps\.length/);
+    // processed counts claimed rows, not the old pendingOps variable.
+    expect(afterFn).toMatch(/processed:\s*claimedOps\.length/);
+    // lock_token MUST be threaded from claim to complete.
+    expect(afterFn).toMatch(/p_lock_token:\s*op\.lock_token/);
+    // Section 10: full parent directory (split all segments, last
+    // is filename).
+    expect(afterFn).toMatch(/pathSegments\.pop\(\)/);
+    expect(afterFn).toMatch(/pathSegments\.join\("\/"\)/);
+    // Section 10: exact name match (rejects directory entries).
+    // Implementation uses `item.name !== fileName` (early return) —
+    // accept either === or !== comparison against fileName.
+    expect(afterFn).toMatch(/item\.name\s*[!=]==?\s*fileName/);
+    // No PII leaked.
     expect(afterFn).not.toMatch(/inquiry_id|phone|email/i);
   });
 });
@@ -354,7 +372,7 @@ describe("Storage audit compensation — runtime saga (mocked)", () => {
 // chain and the storage list chain can be configured per test.
 // ============================================================
 
-describe("reconcilePendingStorageAudit — 4-state machine (mocked)", () => {
+describe("reconcilePendingStorageAudit — claim/complete RPC state machine (mocked)", () => {
   beforeEach(() => {
     mockStorage.from.mockReset();
     mockRpc.mockReset();
@@ -371,24 +389,49 @@ describe("reconcilePendingStorageAudit — 4-state machine (mocked)", () => {
     vi.restoreAllMocks();
   });
 
-  // Helper: build a select chain for admin_storage_operations query.
-  // The actual call chain is: from(table).select(cols).eq(...).lt(...).order(...).limit(...)
-  function makeSelectChain(data: unknown, error: unknown) {
+  /**
+   * Build a claimed-row shape that matches the
+   * claim_storage_audit_reconcile RPC return value.
+   * Each row carries a per-row `reconcile_lock_token` that MUST be
+   * passed back to complete_storage_audit_reconcile.
+   */
+  function makeClaimedRow(input: {
+    id: string;
+    action: string;
+    bucket: string;
+    object_path: string;
+    lockToken?: string;
+  }) {
     return {
-      select: vi.fn(() => ({
-        eq: vi.fn(() => ({
-          lt: vi.fn(() => ({
-            order: vi.fn(() => ({
-              limit: vi.fn().mockResolvedValue({ data, error }),
-            })),
-          })),
-        })),
-      })),
+      id: input.id,
+      action: input.action,
+      bucket: input.bucket,
+      object_path: input.object_path,
+      reconcile_lock_token: input.lockToken ?? `lock-${input.id}`,
     };
   }
 
-  it("returns ok + zero counts when no pending operations exist", async () => {
-    mockFrom.mockReturnValue(makeSelectChain([], null));
+  /**
+   * Configure mockRpc so that the first call to
+   * `claim_storage_audit_reconcile` returns the supplied claimed rows,
+   * and subsequent calls to `complete_storage_audit_reconcile` return
+   * the supplied finalize outcomes in order.
+   */
+  function configureRpc(claimedRows: unknown[], finalizeOutcomes: string[]) {
+    mockRpc.mockImplementation((name: string) => {
+      if (name === "claim_storage_audit_reconcile") {
+        return Promise.resolve({ data: claimedRows, error: null });
+      }
+      if (name === "complete_storage_audit_reconcile") {
+        const outcome = finalizeOutcomes.shift() ?? "completed";
+        return Promise.resolve({ data: outcome, error: null });
+      }
+      return Promise.resolve({ data: null, error: null });
+    });
+  }
+
+  it("returns ok + zero counts when claim returns no rows", async () => {
+    configureRpc([], []);
 
     const { reconcilePendingStorageAudit } = await import(
       "@/lib/services/storage-upload"
@@ -400,6 +443,19 @@ describe("reconcilePendingStorageAudit — 4-state machine (mocked)", () => {
       expect(result.completed).toBe(0);
       expect(result.failed).toBe(0);
     }
+    // claim was called; complete was NOT.
+    expect(mockRpc).toHaveBeenCalledWith(
+      "claim_storage_audit_reconcile",
+      expect.objectContaining({
+        p_min_age_seconds: expect.any(Number),
+        p_limit: expect.any(Number),
+        p_stale_timeout_seconds: expect.any(Number),
+      }),
+    );
+    expect(mockRpc).not.toHaveBeenCalledWith(
+      "complete_storage_audit_reconcile",
+      expect.anything(),
+    );
   });
 
   it("returns ok:false when admin client cannot be created", async () => {
@@ -418,34 +474,54 @@ describe("reconcilePendingStorageAudit — 4-state machine (mocked)", () => {
     }
   });
 
+  it("returns ok:false when claim RPC fails (fail-closed)", async () => {
+    const warnSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    mockRpc.mockImplementation((name: string) => {
+      if (name === "claim_storage_audit_reconcile") {
+        return Promise.resolve({
+          data: null,
+          error: { message: "rpc unavailable" },
+        });
+      }
+      return Promise.resolve({ data: null, error: null });
+    });
+
+    const { reconcilePendingStorageAudit } = await import(
+      "@/lib/services/storage-upload"
+    );
+    const result = await reconcilePendingStorageAudit();
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe("ADMIN_WRITE_FAILED");
+    }
+    // No complete RPC was attempted.
+    expect(mockRpc).not.toHaveBeenCalledWith(
+      "complete_storage_audit_reconcile",
+      expect.anything(),
+    );
+    warnSpy.mockRestore();
+  });
+
   // ============================================================
   // State 1: upload + object exists → audit success (completed++)
   // ============================================================
   it("state 1: upload pending + object EXISTS → completes audit as success (completed++)", async () => {
-    const warnSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const pendingOps = [
-      {
+    const fileName = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.png";
+    const claimed = [
+      makeClaimedRow({
         id: "op-upload-exists",
         action: "storage.upload",
         bucket: "private-assets",
-        object_path: "products/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.png",
-      },
+        object_path: `products/${fileName}`,
+      }),
     ];
-    mockFrom.mockImplementation((table: string) => {
-      if (table === "admin_storage_operations") {
-        return makeSelectChain(pendingOps, null);
-      }
-      return null;
-    });
-    // storage.from(bucket).list(...) returns the object (exists = true).
+    configureRpc(claimed, ["completed"]);
     mockStorage.from.mockReturnValue({
       list: vi.fn().mockResolvedValue({
-        data: [{ name: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.png" }],
+        data: [{ name: fileName }],
         error: null,
       }),
     });
-    // complete_storage_operation RPC returns success.
-    mockRpc.mockResolvedValueOnce({ data: null, error: null });
 
     const { reconcilePendingStorageAudit } = await import(
       "@/lib/services/storage-upload"
@@ -458,38 +534,35 @@ describe("reconcilePendingStorageAudit — 4-state machine (mocked)", () => {
       expect(result.completed).toBe(1);
       expect(result.failed).toBe(0);
     }
-    expect(mockRpc).toHaveBeenCalledWith("complete_storage_operation", {
+    // complete RPC must include the lock_token issued by claim.
+    expect(mockRpc).toHaveBeenCalledWith("complete_storage_audit_reconcile", {
       p_operation_id: "op-upload-exists",
+      p_lock_token: "lock-op-upload-exists",
       p_success: true,
       p_error_code: null,
     });
-    warnSpy.mockRestore();
+    // list must use the FULL parent directory ("products"), not just
+    // the first segment.
+    expect(mockStorage.from).toHaveBeenCalledWith("private-assets");
   });
 
   // ============================================================
   // State 2: upload + object gone → audit failed (compensated delete)
   // ============================================================
   it("state 2: upload pending + object GONE → completes audit as failed (failed++)", async () => {
-    const warnSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const pendingOps = [
-      {
+    const fileName = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb.png";
+    const claimed = [
+      makeClaimedRow({
         id: "op-upload-gone",
         action: "storage.upload",
         bucket: "private-assets",
-        object_path: "products/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb.png",
-      },
+        object_path: `products/${fileName}`,
+      }),
     ];
-    mockFrom.mockImplementation((table: string) => {
-      if (table === "admin_storage_operations") {
-        return makeSelectChain(pendingOps, null);
-      }
-      return null;
-    });
-    // storage.list returns empty (object was compensated-deleted).
+    configureRpc(claimed, ["failed"]);
     mockStorage.from.mockReturnValue({
       list: vi.fn().mockResolvedValue({ data: [], error: null }),
     });
-    mockRpc.mockResolvedValueOnce({ data: null, error: null });
 
     const { reconcilePendingStorageAudit } = await import(
       "@/lib/services/storage-upload"
@@ -502,38 +575,31 @@ describe("reconcilePendingStorageAudit — 4-state machine (mocked)", () => {
       expect(result.completed).toBe(0);
       expect(result.failed).toBe(1);
     }
-    expect(mockRpc).toHaveBeenCalledWith("complete_storage_operation", {
+    expect(mockRpc).toHaveBeenCalledWith("complete_storage_audit_reconcile", {
       p_operation_id: "op-upload-gone",
+      p_lock_token: "lock-op-upload-gone",
       p_success: false,
       p_error_code: "RECONCILE_STATE_MISMATCH",
     });
-    warnSpy.mockRestore();
   });
 
   // ============================================================
   // State 3: delete + object gone → audit success (completed++)
   // ============================================================
   it("state 3: delete pending + object GONE → completes audit as success (completed++)", async () => {
-    const warnSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const pendingOps = [
-      {
+    const fileName = "cccccccc-cccc-4ccc-8ccc-cccccccccccc.png";
+    const claimed = [
+      makeClaimedRow({
         id: "op-delete-gone",
         action: "storage.delete",
         bucket: "public-assets",
-        object_path: "products/cccccccc-cccc-4ccc-8ccc-cccccccccccc.png",
-      },
+        object_path: `products/${fileName}`,
+      }),
     ];
-    mockFrom.mockImplementation((table: string) => {
-      if (table === "admin_storage_operations") {
-        return makeSelectChain(pendingOps, null);
-      }
-      return null;
-    });
-    // storage.list returns empty (object successfully deleted).
+    configureRpc(claimed, ["completed"]);
     mockStorage.from.mockReturnValue({
       list: vi.fn().mockResolvedValue({ data: [], error: null }),
     });
-    mockRpc.mockResolvedValueOnce({ data: null, error: null });
 
     const { reconcilePendingStorageAudit } = await import(
       "@/lib/services/storage-upload"
@@ -546,41 +612,34 @@ describe("reconcilePendingStorageAudit — 4-state machine (mocked)", () => {
       expect(result.completed).toBe(1);
       expect(result.failed).toBe(0);
     }
-    expect(mockRpc).toHaveBeenCalledWith("complete_storage_operation", {
+    expect(mockRpc).toHaveBeenCalledWith("complete_storage_audit_reconcile", {
       p_operation_id: "op-delete-gone",
+      p_lock_token: "lock-op-delete-gone",
       p_success: true,
       p_error_code: null,
     });
-    warnSpy.mockRestore();
   });
 
   // ============================================================
   // State 4: delete + object still exists → audit failed
   // ============================================================
   it("state 4: delete pending + object STILL EXISTS → completes audit as failed (failed++)", async () => {
-    const warnSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const pendingOps = [
-      {
+    const fileName = "dddddddd-dddd-4ddd-8ddd-dddddddddddd.png";
+    const claimed = [
+      makeClaimedRow({
         id: "op-delete-exists",
         action: "storage.delete",
         bucket: "public-assets",
-        object_path: "products/dddddddd-dddd-4ddd-8ddd-dddddddddddd.png",
-      },
+        object_path: `products/${fileName}`,
+      }),
     ];
-    mockFrom.mockImplementation((table: string) => {
-      if (table === "admin_storage_operations") {
-        return makeSelectChain(pendingOps, null);
-      }
-      return null;
-    });
-    // storage.list returns the object (delete did not take effect).
+    configureRpc(claimed, ["failed"]);
     mockStorage.from.mockReturnValue({
       list: vi.fn().mockResolvedValue({
-        data: [{ name: "dddddddd-dddd-4ddd-8ddd-dddddddddddd.png" }],
+        data: [{ name: fileName }],
         error: null,
       }),
     });
-    mockRpc.mockResolvedValueOnce({ data: null, error: null });
 
     const { reconcilePendingStorageAudit } = await import(
       "@/lib/services/storage-upload"
@@ -593,34 +652,30 @@ describe("reconcilePendingStorageAudit — 4-state machine (mocked)", () => {
       expect(result.completed).toBe(0);
       expect(result.failed).toBe(1);
     }
-    expect(mockRpc).toHaveBeenCalledWith("complete_storage_operation", {
+    expect(mockRpc).toHaveBeenCalledWith("complete_storage_audit_reconcile", {
       p_operation_id: "op-delete-exists",
+      p_lock_token: "lock-op-delete-exists",
       p_success: false,
       p_error_code: "RECONCILE_STATE_MISMATCH",
     });
-    warnSpy.mockRestore();
   });
 
   // ============================================================
-  // Edge case: storage.list error → skip (no audit mutation)
+  // Edge case: storage.list error → skip (no complete RPC, row
+  // stays 'claimed' for stale recovery)
   // ============================================================
-  it("storage.list error → skips operation (no RPC call, next retry)", async () => {
+  it("storage.list error → skips operation (no complete RPC, next retry)", async () => {
     const warnSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const pendingOps = [
-      {
+    const fileName = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee.png";
+    const claimed = [
+      makeClaimedRow({
         id: "op-list-error",
         action: "storage.upload",
         bucket: "private-assets",
-        object_path: "products/eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee.png",
-      },
+        object_path: `products/${fileName}`,
+      }),
     ];
-    mockFrom.mockImplementation((table: string) => {
-      if (table === "admin_storage_operations") {
-        return makeSelectChain(pendingOps, null);
-      }
-      return null;
-    });
-    // storage.list returns an error.
+    configureRpc(claimed, []);
     mockStorage.from.mockReturnValue({
       list: vi.fn().mockResolvedValue({
         data: null,
@@ -633,47 +688,43 @@ describe("reconcilePendingStorageAudit — 4-state machine (mocked)", () => {
     );
     const result = await reconcilePendingStorageAudit();
 
-    // ok=true (loop completed) but processed counts reflect skip.
+    // ok=true (loop completed) but processed reflects claim, with
+    // no completed/failed since we skipped.
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.processed).toBe(1);
       expect(result.completed).toBe(0);
       expect(result.failed).toBe(0);
     }
-    // complete_storage_operation must NOT have been called.
+    // complete_storage_audit_reconcile must NOT have been called.
     expect(mockRpc).not.toHaveBeenCalledWith(
-      "complete_storage_operation",
+      "complete_storage_audit_reconcile",
       expect.anything(),
     );
     warnSpy.mockRestore();
   });
 
   // ============================================================
-  // Edge case: unknown action → skip (no audit mutation)
+  // Edge case: unknown action → skip (no complete RPC)
   // ============================================================
-  it("unknown action → skips operation (no RPC call)", async () => {
+  it("unknown action → skips operation (no complete RPC)", async () => {
     const warnSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const pendingOps = [
-      {
+    const fileName = "ffffffff-ffff-4fff-8fff-ffffffffffff.png";
+    const claimed = [
+      makeClaimedRow({
         id: "op-unknown",
         action: "storage.unknown_action",
         bucket: "private-assets",
-        object_path: "products/ffffffff-ffff-4fff-8fff-ffffffffffff.png",
-      },
+        object_path: `products/${fileName}`,
+      }),
     ];
-    mockFrom.mockImplementation((table: string) => {
-      if (table === "admin_storage_operations") {
-        return makeSelectChain(pendingOps, null);
-      }
-      return null;
-    });
-    const listChain = {
+    configureRpc(claimed, []);
+    mockStorage.from.mockReturnValue({
       list: vi.fn().mockResolvedValue({
-        data: [{ name: "ffffffff-ffff-4fff-8fff-ffffffffffff.png" }],
+        data: [{ name: fileName }],
         error: null,
       }),
-    };
-    mockStorage.from.mockReturnValue(listChain);
+    });
 
     const { reconcilePendingStorageAudit } = await import(
       "@/lib/services/storage-upload"
@@ -687,57 +738,49 @@ describe("reconcilePendingStorageAudit — 4-state machine (mocked)", () => {
       expect(result.failed).toBe(0);
     }
     expect(mockRpc).not.toHaveBeenCalledWith(
-      "complete_storage_operation",
+      "complete_storage_audit_reconcile",
       expect.anything(),
     );
     warnSpy.mockRestore();
   });
 
   // ============================================================
-  // Mixed batch: multiple ops in one reconcile run
+  // Mixed batch: multiple claimed rows in one reconcile run
   // ============================================================
-  it("mixed batch: processes multiple ops with different state outcomes", async () => {
-    const warnSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const pendingOps = [
-      {
+  it("mixed batch: processes multiple claimed rows with different outcomes", async () => {
+    const f1 = "11111111-1111-4111-8111-111111111111.png";
+    const f2 = "22222222-2222-4222-8222-222222222222.png";
+    const f3 = "33333333-3333-4333-8333-333333333333.png";
+    const claimed = [
+      makeClaimedRow({
         id: "op-mix-1",
         action: "storage.upload",
         bucket: "private-assets",
-        object_path: "products/11111111-1111-4111-8111-111111111111.png",
-      },
-      {
+        object_path: `products/${f1}`,
+      }),
+      makeClaimedRow({
         id: "op-mix-2",
         action: "storage.delete",
         bucket: "public-assets",
-        object_path: "products/22222222-2222-4222-8222-222222222222.png",
-      },
-      {
+        object_path: `products/${f2}`,
+      }),
+      makeClaimedRow({
         id: "op-mix-3",
         action: "storage.upload",
         bucket: "private-assets",
-        object_path: "products/33333333-3333-4333-8333-333333333333.png",
-      },
+        object_path: `products/${f3}`,
+      }),
     ];
-    mockFrom.mockImplementation((table: string) => {
-      if (table === "admin_storage_operations") {
-        return makeSelectChain(pendingOps, null);
-      }
-      return null;
-    });
-    // 1st: upload + exists → success
-    // 2nd: delete + gone → success
+    // 1st: upload + exists → completed
+    // 2nd: delete + gone → completed
     // 3rd: upload + gone → failed
+    configureRpc(claimed, ["completed", "completed", "failed"]);
     mockStorage.from.mockReturnValue({
       list: vi.fn()
-        .mockResolvedValueOnce({
-          data: [{ name: "11111111-1111-4111-8111-111111111111.png" }],
-          error: null,
-        })
+        .mockResolvedValueOnce({ data: [{ name: f1 }], error: null })
         .mockResolvedValueOnce({ data: [], error: null })
         .mockResolvedValueOnce({ data: [], error: null }),
     });
-    // complete_storage_operation succeeds for all three.
-    mockRpc.mockResolvedValue({ data: null, error: null });
 
     const { reconcilePendingStorageAudit } = await import(
       "@/lib/services/storage-upload"
@@ -750,34 +793,78 @@ describe("reconcilePendingStorageAudit — 4-state machine (mocked)", () => {
       expect(result.completed).toBe(2); // op-mix-1 + op-mix-2
       expect(result.failed).toBe(1); // op-mix-3
     }
-    // Verify RPC was called 3 times with correct success flags.
-    expect(mockRpc).toHaveBeenCalledTimes(3);
-    expect(mockRpc).toHaveBeenNthCalledWith(1, "complete_storage_operation", {
+    // Verify complete RPC called 3 times with correct success flags
+    // and per-row lock_tokens (NOT a shared token).
+    expect(mockRpc).toHaveBeenCalledWith("complete_storage_audit_reconcile", {
       p_operation_id: "op-mix-1",
+      p_lock_token: "lock-op-mix-1",
       p_success: true,
       p_error_code: null,
     });
-    expect(mockRpc).toHaveBeenNthCalledWith(2, "complete_storage_operation", {
+    expect(mockRpc).toHaveBeenCalledWith("complete_storage_audit_reconcile", {
       p_operation_id: "op-mix-2",
+      p_lock_token: "lock-op-mix-2",
       p_success: true,
       p_error_code: null,
     });
-    expect(mockRpc).toHaveBeenNthCalledWith(3, "complete_storage_operation", {
+    expect(mockRpc).toHaveBeenCalledWith("complete_storage_audit_reconcile", {
       p_operation_id: "op-mix-3",
+      p_lock_token: "lock-op-mix-3",
       p_success: false,
       p_error_code: "RECONCILE_STATE_MISMATCH",
     });
+  });
+
+  // ============================================================
+  // Token mismatch (concurrent worker already finalized) → row
+  // NOT counted in completed/failed
+  // ============================================================
+  it("NOT_FOUND_OR_TOKEN_MISMATCH → row not counted in completed/failed", async () => {
+    const warnSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const fileName = "44444444-4444-4444-8444-444444444444.png";
+    const claimed = [
+      makeClaimedRow({
+        id: "op-token-mismatch",
+        action: "storage.upload",
+        bucket: "private-assets",
+        object_path: `products/${fileName}`,
+      }),
+    ];
+    configureRpc(claimed, ["NOT_FOUND_OR_TOKEN_MISMATCH"]);
+    mockStorage.from.mockReturnValue({
+      list: vi.fn().mockResolvedValue({
+        data: [{ name: fileName }],
+        error: null,
+      }),
+    });
+
+    const { reconcilePendingStorageAudit } = await import(
+      "@/lib/services/storage-upload"
+    );
+    const result = await reconcilePendingStorageAudit();
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      // processed counts the claim, but completed/failed are 0 because
+      // the token did not match (a concurrent worker already finalized).
+      expect(result.processed).toBe(1);
+      expect(result.completed).toBe(0);
+      expect(result.failed).toBe(0);
+    }
     warnSpy.mockRestore();
   });
 
   // ============================================================
-  // admin_storage_operations read failure → ok:false (fail-closed)
+  // claim RPC failure → ok:false (fail-closed, no complete calls)
   // ============================================================
-  it("admin_storage_operations read error → returns ok:false (fail-closed)", async () => {
+  it("claim_storage_audit_reconcile exception → returns ok:false (fail-closed)", async () => {
     const warnSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    mockFrom.mockReturnValue(
-      makeSelectChain(null, { message: "permission denied" }),
-    );
+    mockRpc.mockImplementation((name: string) => {
+      if (name === "claim_storage_audit_reconcile") {
+        throw new Error("network down");
+      }
+      return Promise.resolve({ data: null, error: null });
+    });
 
     const { reconcilePendingStorageAudit } = await import(
       "@/lib/services/storage-upload"
@@ -788,12 +875,83 @@ describe("reconcilePendingStorageAudit — 4-state machine (mocked)", () => {
     if (!result.ok) {
       expect(result.code).toBe("ADMIN_WRITE_FAILED");
     }
-    // No audit mutation attempted.
     expect(mockRpc).not.toHaveBeenCalledWith(
-      "complete_storage_operation",
+      "complete_storage_audit_reconcile",
       expect.anything(),
     );
     warnSpy.mockRestore();
+  });
+
+  // ============================================================
+  // Section 10: full parent directory used for multi-segment paths
+  // ============================================================
+  it("uses full parent directory for multi-segment paths (Section 10)", async () => {
+    const fileName = "55555555-5555-5555-8555-555555555555.png";
+    // Two-segment parent: "products/covers"
+    const claimed = [
+      makeClaimedRow({
+        id: "op-multi-segment",
+        action: "storage.upload",
+        bucket: "public-assets",
+        object_path: `products/covers/${fileName}`,
+      }),
+    ];
+    configureRpc(claimed, ["completed"]);
+    const listMock = vi.fn().mockResolvedValue({
+      data: [{ name: fileName }],
+      error: null,
+    });
+    mockStorage.from.mockReturnValue({ list: listMock });
+
+    const { reconcilePendingStorageAudit } = await import(
+      "@/lib/services/storage-upload"
+    );
+    await reconcilePendingStorageAudit();
+
+    // list must be called with the FULL parent directory "products/covers",
+    // NOT just the first segment "products".
+    expect(listMock).toHaveBeenCalledWith(
+      "products/covers",
+      expect.objectContaining({ search: fileName, limit: 1 }),
+    );
+  });
+
+  // ============================================================
+  // Section 10: exact name match rejects directory entries
+  // ============================================================
+  it("rejects directory entries with the same name (exact match)", async () => {
+    const fileName = "66666666-6666-6666-8666-666666666666.png";
+    const claimed = [
+      makeClaimedRow({
+        id: "op-dir-match",
+        action: "storage.upload",
+        bucket: "private-assets",
+        object_path: `products/${fileName}`,
+      }),
+    ];
+    configureRpc(claimed, ["failed"]);
+    // list returns an entry whose name matches but isDir=true (a
+    // directory, not the file we are looking for).
+    mockStorage.from.mockReturnValue({
+      list: vi.fn().mockResolvedValue({
+        data: [{ name: fileName, isDir: true }],
+        error: null,
+      }),
+    });
+
+    const { reconcilePendingStorageAudit } = await import(
+      "@/lib/services/storage-upload"
+    );
+    const result = await reconcilePendingStorageAudit();
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      // The directory entry is NOT the file → treated as missing →
+      // upload audit completed as failed (object was compensated).
+      expect(result.processed).toBe(1);
+      expect(result.completed).toBe(0);
+      expect(result.failed).toBe(1);
+    }
   });
 });
 

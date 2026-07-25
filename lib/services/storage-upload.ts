@@ -1594,20 +1594,33 @@ export type ReconcileResult =
  * 该函数不依赖日志，所有状态由 admin_storage_operations 表持久化。
  * 调用方应定期（如每小时）调用此函数处理长期 pending 操作。
  *
- * 安全：
- *   - 仅处理超过 minAgeSeconds 的 pending 操作，避免与正在进行的操作冲突
- *   - 使用 service_role 直接查询/更新 admin_storage_operations
- *   - 不删除对象、不入队 cleanup queue（仅补全审计状态）
- *   - 返回粗粒度计数，不泄露内部错误
+ * 安全（Section 10 修复）：
+ *   - 使用 `claim_storage_audit_reconcile` RPC 原子领取（FOR UPDATE SKIP
+ *     LOCKED + per-row lock_token），多 Worker 不会重复处理同一行。
+ *   - 使用 `complete_storage_audit_reconcile` RPC 完成审计，强制 token 校验。
+ *   - 路径存在性检查使用完整父目录（split 全部段，最后一段为 filename），
+ *     不再只取第一段目录。
+ *   - 使用精确对象路径匹配（item.name === filename && !item.isDir），
+ *     不依赖模糊 search 结果。
+ *   - `processed` 仅累计真正被 claim 的行数；claim 之前因 RPC 失败而未处理
+ *     的行不计入 processed。
+ *   - stale-lock recovery 由 `claim_storage_audit_reconcile` 内置：
+ *     reconcile_locked_at 超过 stale_timeout 的行会被重新领取。
+ *   - 仅处理超过 minAgeSeconds 的 pending 操作，避免与正在进行的操作冲突。
+ *   - 使用 service_role 直接调用 RPC；不删除对象、不入队 cleanup queue。
+ *   - 返回粗粒度计数，不泄露内部错误。
  */
 export async function reconcilePendingStorageAudit(options?: {
   /** 仅处理 pending 时间超过此阈值（秒）的操作，默认 300s（5 分钟）。 */
   minAgeSeconds?: number;
   /** 单次处理上限，默认 50。 */
   limit?: number;
+  /** Stale-lock 恢复阈值（秒），默认 300s。 */
+  staleTimeoutSeconds?: number;
 }): Promise<ReconcileResult> {
   const minAge = Math.max(options?.minAgeSeconds ?? 300, 60);
   const limit = Math.min(Math.max(options?.limit ?? 50, 1), 200);
+  const staleTimeout = Math.max(options?.staleTimeoutSeconds ?? 300, 60);
 
   let client: SupabaseClient<Database>;
   try {
@@ -1616,41 +1629,51 @@ export async function reconcilePendingStorageAudit(options?: {
     return { ok: false, code: "ADMIN_WRITE_FAILED" };
   }
 
-  // 1. 读取长期 pending 的操作
-  let pendingOps: Array<{
+  // 1. 调用 claim_storage_audit_reconcile 原子领取待处理行
+  //    - FOR UPDATE SKIP LOCKED 防并发冲突
+  //    - 每行生成独立 lock_token，complete 时必须 token 匹配
+  //    - reconcile_locked_at 早于 stale_cutoff 的行会被重新领取（stale recovery）
+  let claimedOps: Array<{
     id: string;
     action: string;
     bucket: string;
     object_path: string;
+    lock_token: string;
   }> = [];
 
   try {
-    const { data, error } = await client
-      .from("admin_storage_operations")
-      .select("id, action, bucket, object_path")
-      .eq("status", "pending")
-      .lt(
-        "created_at",
-        new Date(Date.now() - minAge * 1000).toISOString(),
-      )
-      .order("created_at", { ascending: true })
-      .limit(limit);
+    const { data, error } = await client.rpc("claim_storage_audit_reconcile", {
+      p_min_age_seconds: minAge,
+      p_limit: limit,
+      p_stale_timeout_seconds: staleTimeout,
+    });
 
     if (error) {
-      console.error("RECONCILE_READ_FAILED", {
+      console.error("RECONCILE_CLAIM_FAILED", {
         code: "ADMIN_WRITE_FAILED",
       });
       return { ok: false, code: "ADMIN_WRITE_FAILED" };
     }
-    pendingOps = (data as typeof pendingOps) || [];
+    if (Array.isArray(data)) {
+      claimedOps = data.map((op: unknown) => {
+        const row = op as Record<string, unknown>;
+        return {
+          id: String(row.id),
+          action: String(row.action),
+          bucket: String(row.bucket),
+          object_path: String(row.object_path),
+          lock_token: String(row.reconcile_lock_token),
+        };
+      });
+    }
   } catch {
-    console.error("RECONCILE_READ_EXCEPTION", {
+    console.error("RECONCILE_CLAIM_EXCEPTION", {
       code: "ADMIN_WRITE_FAILED",
     });
     return { ok: false, code: "ADMIN_WRITE_FAILED" };
   }
 
-  if (pendingOps.length === 0) {
+  if (claimedOps.length === 0) {
     return { ok: true, processed: 0, completed: 0, failed: 0 };
   }
 
@@ -1658,19 +1681,29 @@ export async function reconcilePendingStorageAudit(options?: {
   let failed = 0;
 
   // 2. 逐个检查对象是否存在并补全审计
-  for (const op of pendingOps) {
+  for (const op of claimedOps) {
+    // 完整父目录：split 全部段，最后一段为 filename，其余为目录。
+    // Section 10 明确要求"多级路径存在性检查必须使用完整父目录"。
+    const pathSegments = op.object_path.split("/");
+    const fileName = pathSegments.pop() || "";
+    // 当 path 为 "products/abc.jpg" 时 parentDir = "products"
+    // 当 path 为 "products/covers/abc.jpg" 时 parentDir = "products/covers"
+    // 当 path 只有一段时 parentDir = ""（root listing）
+    const parentDir = pathSegments.join("/");
+
     let objectExists: boolean;
     try {
       // 使用 list 检查对象是否存在（避免 download 大文件）
+      // parentDir 为空字符串时 list bucket root
       const listResult = await client.storage
         .from(op.bucket)
-        .list(op.object_path.split("/")[0], {
-          search: op.object_path.split("/").pop() || "",
+        .list(parentDir || undefined, {
+          search: fileName,
           limit: 1,
         });
 
       if (listResult.error) {
-        // list 失败 → 跳过此操作，下次重试
+        // list 失败 → 跳过此操作（行仍为 'claimed'，stale recovery 后续重试）
         console.error("RECONCILE_LIST_FAILED", {
           operationId: op.id,
           code: "RECONCILE_LIST_FAILED",
@@ -1678,12 +1711,17 @@ export async function reconcilePendingStorageAudit(options?: {
         continue;
       }
 
-      const matchName = op.object_path.split("/").pop() || "";
-      objectExists = (listResult.data || []).some(
-        (item) => item.name === matchName,
-      );
+      // 精确匹配：name 完全相等且不是目录。
+      // Supabase Storage .list() 在运行时返回的 FileObject 含有 `isDir`
+      // 字段（目录条目），但 @supabase/storage-js 类型定义未暴露。
+      // 通过类型断言读取该字段；缺失时视为非目录（兼容旧 SDK）。
+      objectExists = (listResult.data || []).some((item) => {
+        if (item.name !== fileName) return false;
+        const isDir = (item as { isDir?: boolean }).isDir === true;
+        return !isDir;
+      });
     } catch {
-      // 异常 → 跳过，下次重试
+      // 异常 → 跳过，下次重试（stale recovery）
       console.error("RECONCILE_LIST_EXCEPTION", {
         operationId: op.id,
         code: "RECONCILE_LIST_EXCEPTION",
@@ -1700,28 +1738,44 @@ export async function reconcilePendingStorageAudit(options?: {
       // 删除：对象不存在 = 成功；对象存在 = 失败（删除未生效）
       auditSuccess = !objectExists;
     } else {
-      // 未知 action → 跳过
+      // 未知 action → 跳过（行仍为 'claimed'，stale recovery 后续重试）
       continue;
     }
 
     try {
-      const auditEnd = await completeStorageAudit(
-        client,
-        op.id,
-        auditSuccess,
-        auditSuccess ? undefined : "RECONCILE_STATE_MISMATCH",
+      // 使用 complete_storage_audit_reconcile RPC 完成审计
+      //   - RPC 内部校验 lock_token 匹配
+      //   - RPC 内部校验 status='pending'
+      //   - token 不匹配或已被并发完成 → 返回 'NOT_FOUND_OR_TOKEN_MISMATCH'
+      //   - 该 worker 不声称完成了它未真正完成的工作
+      const { data: resultData, error: rpcError } = await client.rpc(
+        "complete_storage_audit_reconcile",
+        {
+          p_operation_id: op.id,
+          p_lock_token: op.lock_token,
+          p_success: auditSuccess,
+          p_error_code: auditSuccess ? null : "RECONCILE_STATE_MISMATCH",
+        },
       );
 
-      if (auditEnd.ok) {
-        if (auditSuccess) {
-          completed++;
-        } else {
-          failed++;
-        }
+      if (rpcError) {
+        console.error("RECONCILE_COMPLETE_FAILED", {
+          operationId: op.id,
+          code: "RECONCILE_COMPLETE_FAILED",
+        });
+        continue;
       }
-      // auditEnd 失败时跳过，下次重试
+
+      const finalStatus = typeof resultData === "string" ? resultData : "";
+      if (finalStatus === "completed") {
+        completed++;
+      } else if (finalStatus === "failed") {
+        failed++;
+      }
+      // 'NOT_FOUND_OR_TOKEN_MISMATCH' / 'INVALID_PARAMS' → 不计入 completed/failed
+      // 行可能已被另一 worker 处理或 token 失效，跳过
     } catch {
-      // 异常 → 跳过，下次重试
+      // 异常 → 跳过，下次重试（stale recovery）
       console.error("RECONCILE_COMPLETE_EXCEPTION", {
         operationId: op.id,
         code: "RECONCILE_COMPLETE_EXCEPTION",
@@ -1731,7 +1785,8 @@ export async function reconcilePendingStorageAudit(options?: {
 
   return {
     ok: true,
-    processed: pendingOps.length,
+    // processed = 真正被 claim 的行数；不包括 claim 之前因 RPC 失败而未处理的行
+    processed: claimedOps.length,
     completed,
     failed,
   };
