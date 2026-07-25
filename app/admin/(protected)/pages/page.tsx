@@ -1,11 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { createBrowserSupabaseClient } from "@/lib/supabase/client";
 import { useToast } from "@/components/admin/Toast";
 import { Button } from "@/components/ui/Button";
 import { Input, Textarea } from "@/components/ui/Input";
 import type { PageContent, PageSection } from "@/types/database";
+import {
+  listPagesApi,
+  savePageApi,
+} from "@/lib/services/admin-fetch";
 import {
   Loader2,
   Plus,
@@ -25,6 +28,21 @@ const PAGE_KEY_LABELS: Record<string, string> = {
   contact: "联系我们",
   products: "产品中心",
 };
+
+const CONTENT_ERROR_TEXT: Record<string, string> = {
+  ADMIN_WRITE_UNAUTHORIZED: "未登录或会话已过期",
+  ADMIN_WRITE_FORBIDDEN_ORIGIN: "请求来源被拒绝",
+  ADMIN_WRITE_FORBIDDEN_ROLE: "权限不足",
+  ADMIN_WRITE_BAD_REQUEST: "参数错误",
+  ADMIN_WRITE_CONFLICT: "数据已被他人更新，请刷新后重试",
+  ADMIN_WRITE_FAILED: "操作失败",
+  ADMIN_WRITE_NETWORK: "网络错误",
+  ADMIN_WRITE_DEMO: "Demo 模式下不可写",
+};
+
+function errorText(code: string): string {
+  return CONTENT_ERROR_TEXT[code] ?? "操作失败";
+}
 
 // 区块编辑单元：PageSection + items 多行文本（每行一项）
 interface SectionEdit {
@@ -54,7 +72,6 @@ function sectionEditsToPayload(edits: SectionEdit[]): PageSection[] {
 }
 
 export default function PagesPage() {
-  const supabase = createBrowserSupabaseClient();
   const { show } = useToast();
 
   const [list, setList] = useState<PageContent[]>([]);
@@ -63,13 +80,15 @@ export default function PagesPage() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const { data } = await supabase
-      .from("page_content")
-      .select("*")
-      .order("page_key", { ascending: true });
-    setList((data as PageContent[] | null) || []);
+    const result = await listPagesApi();
+    if (result.ok) {
+      setList(result.data.pages);
+    } else {
+      show(errorText(result.code), "error");
+      setList([]);
+    }
     setLoading(false);
-  }, [supabase]);
+  }, [show]);
 
   useEffect(() => {
     load();
@@ -79,18 +98,23 @@ export default function PagesPage() {
   const missingKeys = STANDARD_PAGE_KEYS.filter((k) => !existingKeys.has(k));
 
   async function createBlank(pageKey: string) {
-    const { data, error } = await supabase
-      .from("page_content")
-      .insert({ page_key: pageKey })
-      .select("*")
-      .single();
-    if (error || !data) {
-      show(error?.message || "创建失败", "error");
+    const result = await savePageApi({
+      payload: { page_key: pageKey },
+    });
+    if (!result.ok) {
+      show(errorText(result.code), "error");
       return;
     }
     show(`已创建页面：${pageKey}`, "success");
     await load();
-    setSelected(data as PageContent);
+    // Select the newly created page (find by id returned from API)
+    const listResult = await listPagesApi();
+    if (listResult.ok) {
+      const created = listResult.data.pages.find(
+        (p) => p.id === result.data.id,
+      );
+      if (created) setSelected(created);
+    }
   }
 
   async function handleSaved() {
@@ -210,7 +234,6 @@ function PageEditor({
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const supabase = createBrowserSupabaseClient();
   const { show } = useToast();
 
   const [form, setForm] = useState<EditorForm>({
@@ -306,14 +329,15 @@ function PageEditor({
       sections_en: sectionEditsToPayload(sectionsEn),
     };
 
-    const { error } = await supabase
-      .from("page_content")
-      .update(payload)
-      .eq("id", initial.id);
+    const result = await savePageApi({
+      id: initial.id,
+      expectedUpdatedAt: initial.updated_at,
+      payload,
+    });
 
     setSaving(false);
-    if (error) {
-      show(error.message, "error");
+    if (!result.ok) {
+      show(errorText(result.code), "error");
       return;
     }
     show("页面内容已保存", "success");
