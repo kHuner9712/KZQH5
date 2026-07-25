@@ -228,18 +228,17 @@ function AssetModal({ initial, onClose, onSaved }: { initial: ProductAsset | nul
       return;
     }
 
-    const sourceRef = draftSourceRef ?? {
-      bucket: "private-assets" as const,
-      path: initial?.source_object_path ?? "",
-      publicUrl: null,
-      mimeType: initial?.mime_type ?? null,
-      size: initial?.file_size ?? null,
-    };
-
-    if (!sourceRef.path) {
-      show("缺少 private-assets 草稿路径", "error");
-      return;
-    }
+    // A new source upload (draftSourceRef !== null) means the user
+    // picked a fresh private-assets object. We must go through
+    // saveProductAssetApi so the server RPC atomically:
+    //   - locks the row (optimistic lock)
+    //   - saves the new source ref (source_bucket / source_object_path)
+    //   - marks the OLD source ref as superseded
+    //   - enqueues the old private object for cleanup
+    //   - writes audit
+    // Without a new upload, we only update non-storage metadata via
+    // updateProductAssetApi (PATCH), which cannot change the source ref.
+    const hasNewSource = draftSourceRef !== null;
 
     const payload = {
       product_id: form.product_id || null,
@@ -265,27 +264,47 @@ function AssetModal({ initial, onClose, onSaved }: { initial: ProductAsset | nul
 
     setSaving(true);
 
-    const apiPayload = {
-      id: initial?.id,
-      expectedUpdatedAt: initial?.updated_at ?? null,
-      payload: payload as unknown as Record<string, unknown>,
-      sourceBucket: "private-assets" as const,
-      sourceObjectPath: sourceRef.path,
-      mimeType: sourceRef.mimeType ?? null,
-      fileSize: sourceRef.size ?? null,
-      sha256: null,
-      accessLevel: "public" as const,
-      sourceType: "official" as const,
-    };
+    let result: AdminFetchResult<ProductAssetSaveResponse>;
 
-    const result: AdminFetchResult<ProductAssetSaveResponse> = initial
-      ? await updateProductAssetApi(initial.id, {
-          expectedUpdatedAt: initial.updated_at,
-          payload: apiPayload.payload,
-          accessLevel: "public",
-          sourceType: "official",
-        })
-      : await saveProductAssetApi(apiPayload);
+    if (initial && !hasNewSource) {
+      // Edit existing row, no new source file: metadata-only update.
+      result = await updateProductAssetApi(initial.id, {
+        expectedUpdatedAt: initial.updated_at,
+        payload: payload as unknown as Record<string, unknown>,
+        accessLevel: "public",
+        sourceType: "official",
+      });
+    } else {
+      // Create OR edit-with-new-source: full draft save (server RPC
+      // persists the new source ref and replaces the old one
+      // atomically).
+      const sourceRef = draftSourceRef ?? {
+        bucket: "private-assets" as const,
+        path: initial?.source_object_path ?? "",
+        publicUrl: null,
+        mimeType: initial?.mime_type ?? null,
+        size: initial?.file_size ?? null,
+      };
+
+      if (!sourceRef.path) {
+        setSaving(false);
+        show("缺少 private-assets 草稿路径", "error");
+        return;
+      }
+
+      result = await saveProductAssetApi({
+        id: initial?.id,
+        expectedUpdatedAt: initial?.updated_at ?? null,
+        payload: payload as unknown as Record<string, unknown>,
+        sourceBucket: "private-assets",
+        sourceObjectPath: sourceRef.path,
+        mimeType: sourceRef.mimeType ?? null,
+        fileSize: sourceRef.size ?? null,
+        sha256: null,
+        accessLevel: "public",
+        sourceType: "official",
+      });
+    }
 
     setSaving(false);
 
@@ -315,7 +334,14 @@ function AssetModal({ initial, onClose, onSaved }: { initial: ProductAsset | nul
               onUploaded={() => { /* ref captured via onUploadedRef below */ }}
               onUploadedRef={(ref) => {
                 setDraftSourceRef(ref);
-                if (ref.mimeType) update("cover_image_url" as never, ref.mimeType as never);
+                // NOTE: Do NOT write ref.mimeType into cover_image_url.
+                // cover_image_url must be an HTTPS URL or an empty
+                // string; the catalog file's MIME type is persisted
+                // into the product_assets.mime_type column and the
+                // storage_object_refs.mime_type column by the server
+                // RPC. Writing the MIME string into cover_image_url
+                // produced rows where cover_image_url =
+                // 'application/pdf', which is not a valid URL.
               }}
               label="上传 Catalog 草稿"
               hint="PDF/JPG/PNG/WebP，最大 20MB；保存为 private-assets 草稿，需单独发布到 public-assets。"
