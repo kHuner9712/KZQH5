@@ -141,9 +141,13 @@ test.describe("Demo public acceptance", () => {
     // before committing the URL change. Use Promise.all so the wait is
     // armed BEFORE the click fires — otherwise on a fast localhost render
     // the URL can change before waitForURL is registered, causing a
-    // 30s timeout.
+    // 30s timeout. waitUntil 'domcontentloaded' avoids the flaky
+    // 'load' wait on Next.js RSC streaming pages.
     await Promise.all([
-      page.waitForURL(/\/products\/[^/?]+$/, { timeout: 30_000 }),
+      page.waitForURL(/\/products\/[^/?]+$/, {
+        timeout: 30_000,
+        waitUntil: "domcontentloaded",
+      }),
       productLink.click(),
     ]);
     await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
@@ -212,8 +216,15 @@ test.describe("Demo public acceptance", () => {
       .first();
     await expect(productLink).toBeVisible({ timeout: 30_000 });
     // Promise.all to arm the URL wait before the click fires.
+    // waitUntil 'domcontentloaded' avoids the flaky 'load' wait on
+    // Next.js RSC streaming pages, where the load event can be
+    // delayed by deferred chunks / images long after the route is
+    // interactive.
     await Promise.all([
-      page.waitForURL(/\/en\/products\/[^/?]+$/, { timeout: 30_000 }),
+      page.waitForURL(/\/en\/products\/[^/?]+$/, {
+        timeout: 30_000,
+        waitUntil: "domcontentloaded",
+      }),
       productLink.click(),
     ]);
     await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
@@ -253,7 +264,10 @@ test.describe("Demo public acceptance", () => {
     const mobileProductLink = page.locator('article a[href^="/products/"]').first();
     await expect(mobileProductLink).toBeVisible({ timeout: 30_000 });
     await Promise.all([
-      page.waitForURL(/\/products\/[^/?]+$/, { timeout: 30_000 }),
+      page.waitForURL(/\/products\/[^/?]+$/, {
+        timeout: 30_000,
+        waitUntil: "domcontentloaded",
+      }),
       mobileProductLink.click(),
     ]);
     // MobileNavController hides BottomNav on /products/[slug] via
