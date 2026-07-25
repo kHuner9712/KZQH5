@@ -157,6 +157,8 @@ describe("processInquiryOutbox — AbortSignal cancellation (Section 11)", () =>
       sent: 0,
       failed: 0,
       deadLettered: 0,
+      aborted: true,
+      skippedDueToAbort: 0,
     });
   });
 

@@ -88,6 +88,26 @@ export interface OutboxProcessingResult {
   sent: number;
   failed: number;
   deadLettered: number;
+  /**
+   * Section 10 — explicit abort state.
+   *
+   * `aborted=true` means the AbortSignal fired during processing.
+   * The route MUST translate this into HTTP 504 — it MUST NOT
+   * return 200 with `aborted=true`. The processor never throws on
+   * abort (it stops cleanly), so the route cannot rely on a thrown
+   * AbortError to detect the timeout.
+   *
+   * `aborted=false` is the normal case: the signal never fired, OR
+   * no signal was supplied.
+   */
+  aborted: boolean;
+  /**
+   * Section 10 — count of claimed delivery rows we never touched
+   * because the signal aborted mid-batch. These rows stay 'claimed'
+   * and are re-claimed by stale recovery (default 300s). The route
+   * surfaces this in the 504 body for observability.
+   */
+  skippedDueToAbort: number;
 }
 
 interface ClaimedDelivery {
@@ -307,6 +327,8 @@ export async function processInquiryOutbox(
       sent: 0,
       failed: 0,
       deadLettered: 0,
+      aborted: true,
+      skippedDueToAbort: 0,
     };
   }
 
@@ -327,6 +349,8 @@ export async function processInquiryOutbox(
       sent: 0,
       failed: 0,
       deadLettered: 0,
+      aborted: true,
+      skippedDueToAbort: 0,
     };
   }
   const claimed = await claimDeliveries(
@@ -341,6 +365,8 @@ export async function processInquiryOutbox(
       sent: 0,
       failed: 0,
       deadLettered: 0,
+      aborted: false,
+      skippedDueToAbort: 0,
     };
   }
 
@@ -502,15 +528,18 @@ export async function processInquiryOutbox(
 
   // `skippedDueToAbort` is intentionally NOT added to `failed` — those
   // rows are still 'claimed' and will be re-claimed by stale recovery.
-  // We surface the count in the result so the route can log it.
+  // We surface the count in the result so the route can return 504
+  // (Section 10) and include it in the response body for observability.
   // The `claimed` counter reflects what we picked up (not what we
   // finished), so the route can compute `claimed - skipped` if needed.
-  void skippedDueToAbort;
+  const aborted = externalSignal?.aborted === true;
   return {
     initialized,
     claimed: claimed.length,
     sent,
     failed,
     deadLettered,
+    aborted,
+    skippedDueToAbort,
   };
 }

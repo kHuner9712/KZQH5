@@ -249,6 +249,77 @@ describe("POST /api/internal/outbox/dispatch — fail-closed dispatcher entrypoi
     expect(JSON.stringify(json)).not.toContain("aborted");
   });
 
+  it("returns 504 when processor returns aborted=true (Section 10 contract)", async () => {
+    // Section 10: processInquiryOutbox returns a structured result
+    // with aborted=true when the signal fired mid-batch. The route
+    // MUST translate this into 504 — it MUST NOT return 200 with
+    // aborted=true. The processor never throws on abort, so the
+    // route cannot rely on a thrown AbortError to detect the timeout.
+    processInquiryOutbox.mockResolvedValue({
+      initialized: 1,
+      claimed: 3,
+      sent: 1,
+      failed: 0,
+      deadLettered: 0,
+      aborted: true,
+      skippedDueToAbort: 2,
+    });
+    const { POST } = await import("@/app/api/internal/outbox/dispatch/route");
+    const response = await POST(
+      dispatchRequest(
+        { batchSize: 5 },
+        { Authorization: `Bearer ${VALID_SECRET}` },
+      ),
+    );
+    expect(response.status).toBe(504);
+    const json = await response.json();
+    expect(json.ok).toBe(false);
+    expect(json.error).toBe("dispatch_timeout");
+    // The 504 body surfaces coarse counters for observability.
+    expect(json.result).toMatchObject({
+      initialized: 1,
+      claimed: 3,
+      sent: 1,
+      failed: 0,
+      deadLettered: 0,
+      skippedDueToAbort: 2,
+    });
+    // The aborted flag itself is NOT echoed in the 504 body — it is
+    // implied by the 504 status. This keeps the response schema stable
+    // regardless of how the timeout was detected.
+    expect(json.result.aborted).toBeUndefined();
+    // Never leak inquiry PII / lock tokens / delivery row ids.
+    const serialized = JSON.stringify(json);
+    expect(serialized).not.toMatch(/inquiry[_-]?id/i);
+    expect(serialized).not.toMatch(/lock[_-]?token/i);
+    expect(serialized).not.toMatch(/delivery[_-]?id/i);
+  });
+
+  it("returns 200 with aborted=false on normal completion (Section 10 contract)", async () => {
+    processInquiryOutbox.mockResolvedValue({
+      initialized: 1,
+      claimed: 2,
+      sent: 2,
+      failed: 0,
+      deadLettered: 0,
+      aborted: false,
+      skippedDueToAbort: 0,
+    });
+    const { POST } = await import("@/app/api/internal/outbox/dispatch/route");
+    const response = await POST(
+      dispatchRequest(
+        { batchSize: 5 },
+        { Authorization: `Bearer ${VALID_SECRET}` },
+      ),
+    );
+    expect(response.status).toBe(200);
+    const json = await response.json();
+    expect(json.ok).toBe(true);
+    expect(json.processed).toBe(true);
+    expect(json.result.aborted).toBe(false);
+    expect(json.result.skippedDueToAbort).toBe(0);
+  });
+
   it("passes an AbortSignal that is NOT yet aborted on normal dispatch (Section 11)", async () => {
     processInquiryOutbox.mockResolvedValue({
       initialized: 0,

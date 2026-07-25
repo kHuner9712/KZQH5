@@ -142,6 +142,25 @@ export interface Certificate {
   sort_order: number;
   created_at: string;
   updated_at: string;
+  // Phase 15 (Section 6): structured storage ref + publish state machine.
+  // See migration 20260725170000 + 20260725190000.
+  source_bucket?: "public-assets" | "private-assets" | null;
+  source_object_path?: string | null;
+  published_bucket?: "public-assets" | "private-assets" | null;
+  published_object_path?: string | null;
+  publish_status?: "draft" | "publishing" | "published" | "publish_failed" | "unpublishing";
+  publish_token?: string | null;
+  publish_started_at?: string | null;
+  publish_error_code?: string | null;
+  candidate_public_bucket?: "public-assets" | "private-assets" | null;
+  candidate_public_path?: string | null;
+  candidate_sha256?: string | null;
+  last_publish_error_code?: string | null;
+  file_size?: number | null;
+  mime_type?: string | null;
+  access_level?: "public" | "private";
+  source_type?: "official" | "self-produced" | "licensed" | "public-domain" | null;
+  authorization_status?: "confirmed" | "pending" | "restricted";
 }
 
 export type InquiryStatus = "new" | "contacted" | "closed";
@@ -215,6 +234,28 @@ export interface ProductAsset {
   created_at: string;
   updated_at: string;
   product?: Pick<Product, "id" | "slug" | "name_cn" | "name_en"> | null;
+  // Phase 12+: catalog authorization fields (existing).
+  catalog_topic_id?: string | null;
+  cover_image_url?: string | null;
+  published_at?: string | null;
+  content_hash?: string | null;
+  access_level?: ProductAssetAccessLevel;
+  source_type?: ProductAssetSourceType | null;
+  authorization_status?: ProductAssetAuthorizationStatus;
+  // Phase 15 (Section 3/4/5): structured storage ref + publish state machine.
+  // See migration 20260725170000 + 20260725190000.
+  source_bucket?: "public-assets" | "private-assets" | null;
+  source_object_path?: string | null;
+  published_bucket?: "public-assets" | "private-assets" | null;
+  published_object_path?: string | null;
+  publish_status?: "draft" | "publishing" | "published" | "publish_failed" | "unpublishing";
+  publish_token?: string | null;
+  publish_started_at?: string | null;
+  publish_error_code?: string | null;
+  candidate_public_bucket?: "public-assets" | "private-assets" | null;
+  candidate_public_path?: string | null;
+  candidate_sha256?: string | null;
+  last_publish_error_code?: string | null;
 }
 
 export interface Project {
@@ -916,6 +957,157 @@ export type Database = {
           p_error_code?: string | null;
         };
         Returns: string;
+      };
+      // Phase 15 (Section 4/5/6): Catalog + Certificate publish close loop.
+      // See migration 20260725190000_catalog_certificate_publish_close_loop.sql.
+      authorize_product_asset: {
+        Args: {
+          p_asset_id: string;
+          p_expected_updated_at: string;
+          p_actor_id?: string | null;
+          p_actor_email?: string | null;
+          p_actor_role?: string | null;
+        };
+        Returns: string;
+      };
+      save_product_asset_draft: {
+        Args: {
+          p_id: string | null;
+          p_payload: unknown;
+          p_source_bucket: string;
+          p_source_object_path: string;
+          p_mime_type?: string | null;
+          p_file_size?: number | null;
+          p_sha256?: string | null;
+          p_expected_updated_at?: string | null;
+          p_actor_id?: string | null;
+          p_actor_email?: string | null;
+          p_actor_role?: string | null;
+        };
+        Returns: unknown;
+      };
+      update_product_asset_metadata: {
+        Args: {
+          p_id: string;
+          p_payload: unknown;
+          p_expected_updated_at: string;
+          p_actor_id?: string | null;
+          p_actor_email?: string | null;
+          p_actor_role?: string | null;
+        };
+        Returns: unknown;
+      };
+      delete_product_asset_with_cleanup: {
+        Args: {
+          p_id: string;
+          p_expected_updated_at: string;
+          p_actor_id?: string | null;
+          p_actor_email?: string | null;
+          p_actor_role?: string | null;
+        };
+        Returns: unknown;
+      };
+      unpublish_catalog_asset: {
+        Args: {
+          p_id: string;
+          p_expected_updated_at: string;
+          p_actor_id?: string | null;
+          p_actor_email?: string | null;
+          p_actor_role?: string | null;
+        };
+        Returns: unknown;
+      };
+      save_certificate_draft: {
+        Args: {
+          p_id: string | null;
+          p_payload: unknown;
+          p_source_bucket: string;
+          p_source_object_path: string;
+          p_mime_type?: string | null;
+          p_file_size?: number | null;
+          p_sha256?: string | null;
+          p_expected_updated_at?: string | null;
+          p_actor_id?: string | null;
+          p_actor_email?: string | null;
+          p_actor_role?: string | null;
+        };
+        Returns: unknown;
+      };
+      update_certificate_metadata: {
+        Args: {
+          p_id: string;
+          p_payload: unknown;
+          p_expected_updated_at: string;
+          p_actor_id?: string | null;
+          p_actor_email?: string | null;
+          p_actor_role?: string | null;
+        };
+        Returns: unknown;
+      };
+      authorize_certificate: {
+        Args: {
+          p_id: string;
+          p_expected_updated_at: string;
+          p_actor_id?: string | null;
+          p_actor_email?: string | null;
+          p_actor_role?: string | null;
+        };
+        Returns: string;
+      };
+      claim_certificate_publish: {
+        Args: {
+          p_id: string;
+          p_expected_updated_at?: string | null;
+          p_actor_id?: string | null;
+          p_actor_email?: string | null;
+          p_actor_role?: string | null;
+        };
+        Returns: unknown;
+      };
+      finalize_certificate_publish: {
+        Args: {
+          p_id: string;
+          p_publish_token: string;
+          p_public_bucket: string;
+          p_public_object_path: string;
+          p_public_url: string;
+          p_mime_type?: string | null;
+          p_size_bytes?: number | null;
+          p_sha256?: string | null;
+          p_actor_id?: string | null;
+          p_actor_email?: string | null;
+          p_actor_role?: string | null;
+        };
+        Returns: unknown;
+      };
+      unpublish_certificate: {
+        Args: {
+          p_id: string;
+          p_expected_updated_at: string;
+          p_actor_id?: string | null;
+          p_actor_email?: string | null;
+          p_actor_role?: string | null;
+        };
+        Returns: unknown;
+      };
+      delete_certificate_with_cleanup: {
+        Args: {
+          p_id: string;
+          p_expected_updated_at: string;
+          p_actor_id?: string | null;
+          p_actor_email?: string | null;
+          p_actor_role?: string | null;
+        };
+        Returns: unknown;
+      };
+      recover_stale_certificate_publish: {
+        Args: {
+          p_timeout_seconds?: number;
+          p_actor_id?: string | null;
+          p_actor_email?: string | null;
+          p_actor_role?: string | null;
+        };
+        Returns: number;
       };
     };
     Enums: Record<string, never>;

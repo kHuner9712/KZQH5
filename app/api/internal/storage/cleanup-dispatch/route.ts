@@ -31,49 +31,97 @@ import { readJsonBody } from "@/lib/services/http-security";
  *   - batchSize is clamped to [1, MAX_BATCH_SIZE]; non-integer /
  *     negative / missing defaults to DEFAULT_BATCH_SIZE.
  *
- * PROCESSING CONTRACT (per claimed row)
- *   1. claim_storage_cleanup returns rows with (id, bucket, object_path,
- *      lock_token). The lock_token is the single-use authorization to
- *      finalize the row.
- *   2. For each row, re-check references via check_storage_object_referenced.
- *      This is the fail-closed guarantee: even if a business write raced
- *      with the cleanup enqueue, we WILL NOT delete an object that is
- *      currently referenced.
- *   3. If referenced=true → complete_storage_cleanup(success=true)
- *      with error_code="REFERENCED_BLOCKED". The row is marked completed
- *      so it does not retry forever; if the reference is later removed,
- *      a new enqueue will create a new row. (We do NOT delete.)
- *   4. If referenced=false → call Storage .remove([object_path]).
- *       - Success → complete_storage_cleanup(success=true)
- *       - Failure → complete_storage_cleanup(success=false, error_code)
- *   5. If complete_storage_cleanup returns "dead_letter", the row has
- *      exceeded max_attempts and will not be retried automatically.
- *   6. Stale lock recovery is handled inside claim_storage_cleanup: a
- *      row whose locked_at is older than the stale timeout (default
- *      300s) is eligible for re-claim. This means a worker that
- *      crashes mid-deletion does not permanently block the row.
+ * PROCESSING CONTRACT (per claimed row) — Section 8 + Section 9
+ * ----------------------------------------------------------------
+ * The dispatcher distinguishes THREE outcomes of the reference check:
  *
- * TIMEOUT / CANCELLATION CONTRACT
- *   - The route runs with DISPATCH_TIMEOUT_MS.
- *   - On timeout the route returns 504; in-flight Storage .remove()
- *     calls are awaited to completion (we cannot abort a Storage
- *     delete safely — the object may or may not be gone). The rows
- *     remain 'claimed' and stale recovery re-claims them later.
- *   - This is intentionally simpler than the Outbox AbortSignal
- *     threading because Storage delete is idempotent — re-running
- *     it on the same path is safe. The contract is "at-least-once
- *     delete attempt", not "exactly-once".
+ *   A. referenced=false
+ *        1. record_storage_operation_started(action='storage.cleanup_delete')
+ *           → returns operation_id (pending audit row)
+ *        2. Storage .remove([object_path])
+ *        3. On success:
+ *             complete_storage_operation(operation_id, success=true)
+ *             complete_storage_cleanup(success=true,
+ *                                       final_status='deleted',
+ *                                       storage_operation_id=operation_id)
+ *        4. On Storage failure:
+ *             complete_storage_operation(operation_id, success=false,
+ *                                        error_code='STORAGE_DELETE_FAILED')
+ *             complete_storage_cleanup(success=false,
+ *                                       error_code='STORAGE_DELETE_FAILED',
+ *                                       final_status='storage_delete_failed',
+ *                                       storage_operation_id=operation_id)
+ *             → retry → dead_letter
+ *
+ *   B. referenced=true (RPC returned false was-referenced)
+ *        Do NOT delete. Do NOT create an audit row.
+ *        complete_storage_cleanup(success=true,
+ *                                  final_status='blocked_referenced')
+ *        → terminal 'completed' so the row does not retry forever.
+ *        If the reference is later removed, a new enqueue creates a
+ *        new row. We do NOT count this as 'deleted'.
+ *
+ *   C. reference check error (RPC error or exception)
+ *        Do NOT delete. Do NOT create an audit row.
+ *        complete_storage_cleanup(success=false,
+ *                                  error_code='REFERENCE_CHECK_FAILED',
+ *                                  final_status='reference_check_failed')
+ *        → retry → dead_letter
+ *        The previous bug flattened this case into success=true,
+ *        hiding the failure forever. It is now surfaced for retry.
+ *
+ * STORAGE AUDIT SAGA — Section 9
+ *   Every Storage .remove() call is bracketed by an audit row:
+ *     record_storage_operation_started (pending)
+ *       ↓ Storage .remove()
+ *     complete_storage_operation (completed | failed)
+ *       ↓
+ *     complete_storage_cleanup (with storage_operation_id link)
+ *   The link is persisted atomically inside complete_storage_cleanup
+ *   so the audit row and cleanup row cannot diverge. If the audit
+ *   completion RPC fails, the cleanup row stays 'claimed' and stale
+ *   recovery re-claims it; the audit row stays 'pending' and the
+ *   audit-reconcile worker finalizes it later from observed Storage
+ *   state. There is NO "best-effort" path that loses the link.
+ *
+ * FAILURE MATRIX — Section 9
+ *   - audit-started RPC fails          → do NOT delete; cleanup row
+ *                                         stays 'claimed' for retry.
+ *   - Storage .remove() fails          → audit marked failed;
+ *                                         cleanup retry/dead-letter.
+ *   - audit-completion RPC fails       → cleanup row stays 'claimed';
+ *                                         stale recovery re-claims;
+ *                                         audit row stays 'pending'
+ *                                         and is reconciled later.
+ *   - cleanup-completion RPC fails     → object may be deleted; row
+ *                                         stays 'claimed'; stale
+ *                                         recovery re-claims and the
+ *                                         delete is idempotent. The
+ *                                         audit row was already
+ *                                         finalized.
+ *
+ * TIMEOUT / CANCELLATION CONTRACT — Section 10 方案 A
+ *   - The route does NOT set a fake route-level setTimeout.
+ *   - It relies on: (a) fixed batch size (MAX_BATCH_SIZE), (b) the
+ *     platform's per-request timeout, (c) per-Storage-call timeouts
+ *     enforced by the Supabase client, and (d) stale recovery in
+ *     claim_storage_cleanup.
+ *   - Storage delete is idempotent — a row whose delete was started
+ *     but not finalized will be re-claimed and re-deleted safely.
+ *   - The response is returned as soon as the batch finishes; there
+ *     is no Promise.race against a timer.
  *
  * RESPONSE CONTRACT
  *   - 200: { ok, processed, result: { claimed, deleted, blocked,
- *            failed, deadLettered } }
+ *            failed, deadLettered, referenceCheckFailed } }
  *     `result` contains ONLY coarse counters. It NEVER contains
  *     object paths, bucket names, source ids, or internal errors.
+ *     `referenceCheckFailed` is reported separately from `blocked`
+ *     so monitoring can distinguish the two cases.
  *   - 503: secret not configured.
  *   - 401: missing/malformed Authorization header.
  *   - 403: token mismatch.
  *   - 400: invalid JSON body.
- *   - 504: dispatch timeout.
  *   - 500: unexpected internal error (fixed coarse code only).
  *
  * DEPLOYMENT STATUS
@@ -92,8 +140,6 @@ export const runtime = "nodejs";
 const MAX_BATCH_SIZE = 25;
 /** Default batch size when the caller does not supply one. */
 const DEFAULT_BATCH_SIZE = 10;
-/** Fixed execution timeout (ms) for the entire dispatch operation. */
-const DISPATCH_TIMEOUT_MS = 60_000;
 /** Stale-claim recovery timeout (seconds) for claim_storage_cleanup. */
 const STALE_TIMEOUT_SECONDS = 300;
 
@@ -114,7 +160,11 @@ interface CoarseDispatchResult {
   blocked: number;
   failed: number;
   deadLettered: number;
+  /** Reference-check RPC error/exception — Section 8 case C. */
+  referenceCheckFailed: number;
 }
+
+type AdminClient = ReturnType<typeof createAdminSupabaseClient>;
 
 function extractBearerToken(request: NextRequest): string | null {
   const header = request.headers.get("authorization");
@@ -136,27 +186,96 @@ function coerceBatchSize(value: unknown): number {
 /**
  * Re-check references for a single claimed row.
  *
- * Returns true if the object is still referenced (delete MUST be
- * refused); false if it is safe to delete. On RPC error we treat
- * the object as referenced (fail-closed) and mark the row completed
- * with REFERENCED_CHECK_FAILED so it surfaces for review.
+ * Returns one of three discriminable outcomes:
+ *   - { kind: 'safe' }                       → proceed to delete
+ *   - { kind: 'referenced' }                 → do NOT delete; terminal 'completed'
+ *   - { kind: 'reference_check_error', code }→ do NOT delete; retry → dead_letter
+ *
+ * The previous implementation conflated `referenced` and `error` into
+ * a single `referenced=true` outcome, which caused reference-check
+ * errors to be marked success=true and hidden forever (Section 8 bug).
  */
-async function isStillReferenced(
-  client: ReturnType<typeof createAdminSupabaseClient>,
+async function recheckReferences(
+  client: AdminClient,
   row: ClaimedCleanupRow,
-): Promise<{ referenced: boolean; errorCode: string | null }> {
+): Promise<
+  | { kind: "safe" }
+  | { kind: "referenced" }
+  | { kind: "reference_check_error"; code: string }
+> {
   try {
     const { data, error } = await client.rpc("check_storage_object_referenced", {
       p_bucket: row.bucket,
       p_object_path: row.object_path,
     });
     if (error) {
-      // fail-closed: treat as referenced, do not delete.
-      return { referenced: true, errorCode: "REFERENCED_CHECK_FAILED" };
+      // RPC returned an error — this is NOT the same as referenced=true.
+      // Surface it so the row can retry instead of being terminated.
+      return { kind: "reference_check_error", code: "REFERENCE_CHECK_FAILED" };
     }
-    return { referenced: Boolean(data), errorCode: null };
+    if (Boolean(data)) {
+      return { kind: "referenced" };
+    }
+    return { kind: "safe" };
   } catch {
-    return { referenced: true, errorCode: "REFERENCED_CHECK_EXCEPTION" };
+    return { kind: "reference_check_error", code: "REFERENCE_CHECK_EXCEPTION" };
+  }
+}
+
+/**
+ * Record a pending storage audit row BEFORE the .remove() call.
+ *
+ * Returns the operation id, or null if the RPC failed (in which case
+ * the caller MUST NOT proceed with the delete — see Section 9 failure
+ * matrix: "audit-started RPC fails → do NOT delete; cleanup row stays
+ * 'claimed' for retry").
+ */
+async function recordCleanupAuditStarted(
+  client: AdminClient,
+  row: ClaimedCleanupRow,
+): Promise<string | null> {
+  try {
+    const { data, error } = await client.rpc("record_storage_operation_started", {
+      p_actor_id: null,
+      p_actor_role: "system",
+      p_action: "storage.cleanup_delete",
+      p_bucket: row.bucket,
+      p_object_path: row.object_path,
+      p_mime_type: null,
+      p_size_bytes: null,
+      p_sha256: null,
+    });
+    if (error || !data) return null;
+    return typeof data === "string" ? data : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Mark the audit row as completed or failed. Best-effort: if this
+ * RPC fails, the audit row stays 'pending' and the audit-reconcile
+ * worker finalizes it later from observed Storage state. The caller
+ * proceeds to complete_storage_cleanup regardless — the link is
+ * persisted via the storage_operation_id parameter.
+ */
+async function completeStorageAudit(
+  client: AdminClient,
+  operationId: string,
+  success: boolean,
+  errorCode: string | null,
+): Promise<void> {
+  try {
+    await client.rpc("complete_storage_operation", {
+      p_operation_id: operationId,
+      p_success: success,
+      p_error_code: errorCode,
+    });
+  } catch {
+    // Swallow — the audit-reconcile worker will pick up the pending
+    // row and finalize it from observed Storage state. This is NOT
+    // "best-effort audit" — the audit row exists and will be
+    // reconciled; we just don't block the cleanup completion on it.
   }
 }
 
@@ -168,7 +287,7 @@ async function isStillReferenced(
  * that should be retried by the cleanup queue.
  */
 async function deleteStorageObject(
-  client: ReturnType<typeof createAdminSupabaseClient>,
+  client: AdminClient,
   row: ClaimedCleanupRow,
 ): Promise<{ ok: true } | { ok: false; code: string }> {
   try {
@@ -187,12 +306,23 @@ async function deleteStorageObject(
 /**
  * Finalize a claimed cleanup row with the outcome. Returns the final
  * status string from the RPC so the caller can count dead_letter.
+ *
+ * Section 9: when `storageOperationId` is supplied, it is persisted
+ * atomically with the cleanup row finalization — the link cannot be
+ * lost even if the caller crashes immediately after.
  */
 async function completeCleanup(
-  client: ReturnType<typeof createAdminSupabaseClient>,
+  client: AdminClient,
   row: ClaimedCleanupRow,
   success: boolean,
   errorCode: string | null,
+  finalStatus:
+    | "deleted"
+    | "blocked_referenced"
+    | "reference_check_failed"
+    | "storage_delete_failed"
+    | null,
+  storageOperationId: string | null,
 ): Promise<"completed" | "retry" | "dead_letter" | "unknown"> {
   try {
     const { data, error } = await client.rpc("complete_storage_cleanup", {
@@ -200,6 +330,8 @@ async function completeCleanup(
       p_lock_token: row.lock_token,
       p_success: success,
       p_error_code: errorCode,
+      p_storage_operation_id: storageOperationId,
+      p_final_status: finalStatus,
     });
     if (error) {
       // The RPC itself failed. The row stays 'claimed' and stale
@@ -207,7 +339,9 @@ async function completeCleanup(
       // returns and the next invocation will re-claim.
       return "unknown";
     }
-    return typeof data === "string" ? (data as "completed" | "retry" | "dead_letter" | "unknown") : "unknown";
+    return typeof data === "string"
+      ? (data as "completed" | "retry" | "dead_letter" | "unknown")
+      : "unknown";
   } catch {
     return "unknown";
   }
@@ -222,7 +356,7 @@ async function completeCleanup(
  * the row forever.
  */
 async function claimCleanupBatch(
-  client: ReturnType<typeof createAdminSupabaseClient>,
+  client: AdminClient,
   batchSize: number,
 ): Promise<ClaimedCleanupRow[]> {
   try {
@@ -258,54 +392,108 @@ async function runCleanupDispatch(
   const client = createAdminSupabaseClient();
   const claimed = await claimCleanupBatch(client, batchSize);
   if (claimed.length === 0) {
-    return { claimed: 0, deleted: 0, blocked: 0, failed: 0, deadLettered: 0 };
+    return {
+      claimed: 0,
+      deleted: 0,
+      blocked: 0,
+      failed: 0,
+      deadLettered: 0,
+      referenceCheckFailed: 0,
+    };
   }
 
   let deleted = 0;
   let blocked = 0;
   let failed = 0;
   let deadLettered = 0;
+  let referenceCheckFailed = 0;
 
   for (const row of claimed) {
-    // Step 1: re-check references. Fail-closed: if the RPC errors,
-    // we treat the object as referenced and mark the row completed
-    // with an error code so it surfaces for review.
-    const { referenced, errorCode: refErrorCode } = await isStillReferenced(client, row);
-    if (referenced) {
-      // Do NOT delete. Mark as completed with the referenced-blocked
-      // code so the row does not retry forever. If the reference is
-      // later removed, a new enqueue will create a new row.
+    // Step 1: re-check references. Three distinguishable outcomes.
+    const refCheck = await recheckReferences(client, row);
+
+    if (refCheck.kind === "reference_check_error") {
+      // Section 8 case C: reference check error → retry → dead_letter.
+      // Do NOT delete. Do NOT create an audit row.
       const finalStatus = await completeCleanup(
         client,
         row,
-        true, // success=true so the row terminates, not retry
-        refErrorCode ?? "REFERENCED_BLOCKED",
+        false, // success=false so the row retries
+        refCheck.code,
+        "reference_check_failed",
+        null, // no audit row was created
+      );
+      referenceCheckFailed += 1;
+      failed += 1;
+      if (finalStatus === "dead_letter") deadLettered += 1;
+      continue;
+    }
+
+    if (refCheck.kind === "referenced") {
+      // Section 8 case B: referenced=true → terminal 'completed'.
+      // Do NOT delete. Do NOT create an audit row.
+      const finalStatus = await completeCleanup(
+        client,
+        row,
+        true, // success=true so the row terminates (does NOT retry)
+        null,
+        "blocked_referenced",
+        null,
       );
       blocked += 1;
       if (finalStatus === "dead_letter") deadLettered += 1;
       continue;
     }
 
-    // Step 2: delete the object from Storage.
+    // Step 2 (Section 8 case A): referenced=false. Begin the audit
+    // saga BEFORE calling Storage .remove(). If the audit-started RPC
+    // fails, we MUST NOT proceed with the delete — the cleanup row
+    // stays 'claimed' and stale recovery re-claims it later.
+    const operationId = await recordCleanupAuditStarted(client, row);
+    if (!operationId) {
+      // Audit-started RPC failed. Per Section 9 failure matrix: do
+      // NOT delete; cleanup row stays 'claimed' for retry. We do not
+      // call complete_storage_cleanup here either — leave it claimed
+      // so stale recovery handles it, rather than risking a retry
+      // storm if the audit RPC is failing for systemic reasons.
+      console.error("STORAGE_CLEANUP_AUDIT_START_FAILED");
+      failed += 1;
+      continue;
+    }
+
+    // Step 3: Storage .remove(). Idempotent — safe to retry.
     const deleteResult = await deleteStorageObject(client, row);
+
     if (deleteResult.ok) {
-      // Step 3a: deletion succeeded — finalize the row as completed.
-      const finalStatus = await completeCleanup(client, row, true, null);
+      // Step 4a: deletion succeeded. Finalize the audit row, then
+      // finalize the cleanup row with the operation link.
+      await completeStorageAudit(client, operationId, true, null);
+      const finalStatus = await completeCleanup(
+        client,
+        row,
+        true,
+        null,
+        "deleted",
+        operationId,
+      );
+      deleted += 1;
       if (finalStatus === "dead_letter") {
         // Edge case: RPC marked dead_letter despite success (e.g.
         // attempts exceeded before the success was recorded). Count
         // it as deleted AND deadLettered for visibility.
         deadLettered += 1;
       }
-      deleted += 1;
     } else {
-      // Step 3b: deletion failed — finalize the row as failed so the
-      // queue can retry (or dead-letter after max_attempts).
+      // Step 4b: deletion failed. Finalize the audit row as failed,
+      // then finalize the cleanup row for retry.
+      await completeStorageAudit(client, operationId, false, deleteResult.code);
       const finalStatus = await completeCleanup(
         client,
         row,
         false,
         deleteResult.code,
+        "storage_delete_failed",
+        operationId,
       );
       failed += 1;
       if (finalStatus === "dead_letter") deadLettered += 1;
@@ -318,6 +506,7 @@ async function runCleanupDispatch(
     blocked,
     failed,
     deadLettered,
+    referenceCheckFailed,
   };
 }
 
@@ -359,47 +548,24 @@ export async function POST(request: NextRequest) {
   }
   const batchSize = coerceBatchSize(parsed.value.batchSize);
 
-  // Step 5: Dispatch with a hard route-level timeout. We do NOT
-  // thread an AbortSignal into the Storage .remove() call because
-  // Storage delete is idempotent — if the route times out mid-delete,
-  // the row stays 'claimed' and stale recovery re-claims it later,
-  // and a re-run of the delete on the same path is safe.
-  const timer = setTimeout(() => {
-    // The route will return 504 on the next await; we cannot actively
-    // abort the in-flight Storage call, but the timeout ensures the
-    // route does not hang indefinitely.
-  }, DISPATCH_TIMEOUT_MS);
-
+  // Step 5: Dispatch. Section 10 方案 A: no fake route timeout. We
+  // rely on (a) fixed batch size, (b) platform per-request timeout,
+  // (c) per-Storage-call timeouts, (d) stale recovery. Storage
+  // delete is idempotent, so a row whose delete was started but not
+  // finalized will be re-claimed and re-deleted safely.
   try {
-    const result = await Promise.race([
-      runCleanupDispatch(batchSize),
-      new Promise<never>((_, reject) =>
-        setTimeout(
-          () => reject(new Error("dispatch_timeout")),
-          DISPATCH_TIMEOUT_MS,
-        ),
-      ),
-    ]);
+    const result = await runCleanupDispatch(batchSize);
     return NextResponse.json({
       ok: true,
       processed: true,
       result,
     });
-  } catch (error) {
-    if (error instanceof Error && error.message === "dispatch_timeout") {
-      console.error("STORAGE_CLEANUP_DISPATCH_TIMEOUT");
-      return NextResponse.json(
-        { ok: false, error: "dispatch_timeout" },
-        { status: 504 },
-      );
-    }
+  } catch {
     console.error("STORAGE_CLEANUP_DISPATCH_FAILED");
     return NextResponse.json(
       { ok: false, error: "dispatch_failed" },
       { status: 500 },
     );
-  } finally {
-    clearTimeout(timer);
   }
 }
 

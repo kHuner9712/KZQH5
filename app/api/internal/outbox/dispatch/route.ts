@@ -111,6 +111,18 @@ interface CoarseDispatchResult {
   sent: number;
   failed: number;
   deadLettered: number;
+  /**
+   * Section 10 — surfaces OutboxProcessingResult.aborted.
+   * When true, the route MUST return 504, not 200.
+   */
+  aborted: boolean;
+  /**
+   * Section 10 — claimed delivery rows we never touched because the
+   * signal aborted mid-batch. Surfaced in the 504 body so monitoring
+   * can distinguish "timed out before any send" from "timed out
+   * mid-batch with N rows still claimed".
+   */
+  skippedDueToAbort: number;
 }
 
 function extractBearerToken(request: NextRequest): string | null {
@@ -134,7 +146,7 @@ function coerceBatchSize(value: unknown): number {
 async function runDispatchWithTimeout(
   batchSize: number,
 ): Promise<CoarseDispatchResult> {
-  // AbortController-based timeout (Section 11 方案 B).
+  // AbortController-based timeout (Section 10 方案 B / Section 11).
   // The signal is threaded through processInquiryOutbox → adapter.send
   // → postJson AbortSignal.any so a timeout actually cancels the
   // in-flight HTTP send, not just the route-level await.
@@ -153,6 +165,8 @@ async function runDispatchWithTimeout(
       sent: result.sent,
       failed: result.failed,
       deadLettered: result.deadLettered,
+      aborted: result.aborted,
+      skippedDueToAbort: result.skippedDueToAbort,
     };
   } finally {
     clearTimeout(timer);
@@ -231,6 +245,34 @@ export async function POST(request: NextRequest) {
   // Step 5: Dispatch with AbortController-driven timeout.
   try {
     const result = await runDispatchWithTimeout(batchSize);
+
+    // Section 10: when the AbortSignal fired during processing, the
+    // processor returns aborted=true with the partial counters it
+    // collected before the abort. The route MUST translate this into
+    // HTTP 504 — it MUST NOT return 200 with aborted=true. The
+    // remaining claimed rows stay 'claimed' and are re-claimed by
+    // stale recovery (default 300s).
+    if (result.aborted) {
+      console.error("OUTBOX_DISPATCH_TIMEOUT");
+      // The 504 body surfaces ONLY coarse counters. It NEVER contains
+      // inquiry PII, lock tokens, or delivery row ids.
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "dispatch_timeout",
+          result: {
+            initialized: result.initialized,
+            claimed: result.claimed,
+            sent: result.sent,
+            failed: result.failed,
+            deadLettered: result.deadLettered,
+            skippedDueToAbort: result.skippedDueToAbort,
+          },
+        },
+        { status: 504 },
+      );
+    }
+
     return NextResponse.json({
       ok: true,
       processed: true,

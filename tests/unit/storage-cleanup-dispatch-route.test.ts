@@ -38,6 +38,37 @@ function dispatchRequest(
   );
 }
 
+/**
+ * Default RPC mock that handles the Storage Audit Saga RPCs
+ * (record_storage_operation_started, complete_storage_operation)
+ * which the rewritten dispatcher (Section 9) now invokes around every
+ * Storage .remove() call.
+ *
+ * Individual tests override specific RPCs to drive edge cases.
+ */
+function defaultRpcMock(claimed: unknown[]) {
+  return (name: string) => {
+    if (name === "claim_storage_cleanup") {
+      return Promise.resolve({ data: claimed, error: null });
+    }
+    if (name === "check_storage_object_referenced") {
+      return Promise.resolve({ data: false, error: null });
+    }
+    if (name === "record_storage_operation_started") {
+      // Section 9: return a fake operation id so the dispatcher
+      // proceeds with the delete and links it back.
+      return Promise.resolve({ data: "op-uuid-1234", error: null });
+    }
+    if (name === "complete_storage_operation") {
+      return Promise.resolve({ data: true, error: null });
+    }
+    if (name === "complete_storage_cleanup") {
+      return Promise.resolve({ data: "completed", error: null });
+    }
+    return Promise.resolve({ data: null, error: null });
+  };
+}
+
 describe("POST /api/internal/storage/cleanup-dispatch — fail-closed dispatcher entrypoint", () => {
   beforeEach(() => {
     mockRpc.mockReset();
@@ -151,12 +182,15 @@ describe("POST /api/internal/storage/cleanup-dispatch — fail-closed dispatcher
     const json = await response.json();
     expect(json.ok).toBe(true);
     expect(json.processed).toBe(true);
+    // Section 8: result now includes `referenceCheckFailed` counter
+    // so monitoring can distinguish case C from case B.
     expect(json.result).toEqual({
       claimed: 0,
       deleted: 0,
       blocked: 0,
       failed: 0,
       deadLettered: 0,
+      referenceCheckFailed: 0,
     });
     // claim_storage_cleanup was called with the clamped batch size and
     // the stale timeout in seconds.
@@ -166,7 +200,7 @@ describe("POST /api/internal/storage/cleanup-dispatch — fail-closed dispatcher
     });
   });
 
-  it("deletes a row when reference check returns false", async () => {
+  it("Section 8 case A: deletes a row + writes Storage Audit Saga when reference check returns false", async () => {
     const claimed = [
       {
         id: "c1",
@@ -175,18 +209,7 @@ describe("POST /api/internal/storage/cleanup-dispatch — fail-closed dispatcher
         lock_token: "t1",
       },
     ];
-    mockRpc.mockImplementation((name: string) => {
-      if (name === "claim_storage_cleanup") {
-        return Promise.resolve({ data: claimed, error: null });
-      }
-      if (name === "check_storage_object_referenced") {
-        return Promise.resolve({ data: false, error: null });
-      }
-      if (name === "complete_storage_cleanup") {
-        return Promise.resolve({ data: "completed", error: null });
-      }
-      return Promise.resolve({ data: null, error: null });
-    });
+    mockRpc.mockImplementation(defaultRpcMock(claimed));
     mockStorageRemove.mockResolvedValue({ data: [], error: null });
 
     const { POST } = await import(
@@ -206,20 +229,44 @@ describe("POST /api/internal/storage/cleanup-dispatch — fail-closed dispatcher
       blocked: 0,
       failed: 0,
       deadLettered: 0,
+      referenceCheckFailed: 0,
     });
     // Storage .remove was called once with the path.
     expect(mockStorageRemove).toHaveBeenCalledTimes(1);
     expect(mockStorageRemove).toHaveBeenCalledWith(["products/abc.jpg"]);
-    // complete_storage_cleanup was called with success=true.
+
+    // Section 9: record_storage_operation_started was called BEFORE
+    // the .remove() with action='storage.cleanup_delete'.
+    expect(mockRpc).toHaveBeenCalledWith(
+      "record_storage_operation_started",
+      expect.objectContaining({
+        p_action: "storage.cleanup_delete",
+        p_bucket: "public-assets",
+        p_object_path: "products/abc.jpg",
+      }),
+    );
+
+    // Section 9: complete_storage_operation was called with success=true.
+    expect(mockRpc).toHaveBeenCalledWith("complete_storage_operation", {
+      p_operation_id: "op-uuid-1234",
+      p_success: true,
+      p_error_code: null,
+    });
+
+    // Section 9: complete_storage_cleanup was called with the audit
+    // link + final_status='deleted' so the cleanup row and audit row
+    // cannot diverge.
     expect(mockRpc).toHaveBeenCalledWith("complete_storage_cleanup", {
       p_cleanup_id: "c1",
       p_lock_token: "t1",
       p_success: true,
       p_error_code: null,
+      p_storage_operation_id: "op-uuid-1234",
+      p_final_status: "deleted",
     });
   });
 
-  it("blocks deletion (does not call .remove) when reference check returns true", async () => {
+  it("Section 8 case B: blocks deletion (no .remove, no audit) when reference check returns true", async () => {
     const claimed = [
       {
         id: "c2",
@@ -260,19 +307,35 @@ describe("POST /api/internal/storage/cleanup-dispatch — fail-closed dispatcher
       blocked: 1,
       failed: 0,
       deadLettered: 0,
+      referenceCheckFailed: 0,
     });
     expect(mockStorageRemove).not.toHaveBeenCalled();
-    // complete_storage_cleanup was called with success=true and
-    // the REFERENCED_BLOCKED code so the row terminates.
+    // Section 9: NO audit row should be created when no delete is attempted.
+    expect(mockRpc).not.toHaveBeenCalledWith(
+      "record_storage_operation_started",
+      expect.anything(),
+    );
+    expect(mockRpc).not.toHaveBeenCalledWith(
+      "complete_storage_operation",
+      expect.anything(),
+    );
+    // complete_storage_cleanup was called with success=true (terminal)
+    // and final_status='blocked_referenced' so the row does NOT retry.
     expect(mockRpc).toHaveBeenCalledWith("complete_storage_cleanup", {
       p_cleanup_id: "c2",
       p_lock_token: "t2",
       p_success: true,
-      p_error_code: "REFERENCED_BLOCKED",
+      p_error_code: null,
+      p_storage_operation_id: null,
+      p_final_status: "blocked_referenced",
     });
   });
 
-  it("fail-closed: treats object as referenced when check RPC errors", async () => {
+  it("Section 8 case C: reference-check RPC error → retry (NOT success=true) — fixes the prior bug", async () => {
+    // The previous implementation conflated `referenced=true` and
+    // `reference_check_error` into a single `referenced=true` outcome
+    // and marked the row success=true, hiding the failure forever.
+    // The new behavior surfaces the error for retry → dead_letter.
     const claimed = [
       {
         id: "c3",
@@ -286,11 +349,11 @@ describe("POST /api/internal/storage/cleanup-dispatch — fail-closed dispatcher
         return Promise.resolve({ data: claimed, error: null });
       }
       if (name === "check_storage_object_referenced") {
-        // RPC error: fail-closed (treat as referenced).
+        // RPC error: surface as reference_check_error, NOT as referenced.
         return Promise.resolve({ data: null, error: { message: "rpc failed" } });
       }
       if (name === "complete_storage_cleanup") {
-        return Promise.resolve({ data: "completed", error: null });
+        return Promise.resolve({ data: "retry", error: null });
       }
       return Promise.resolve({ data: null, error: null });
     });
@@ -310,22 +373,131 @@ describe("POST /api/internal/storage/cleanup-dispatch — fail-closed dispatcher
     expect(json.result).toEqual({
       claimed: 1,
       deleted: 0,
-      blocked: 1,
-      failed: 0,
+      blocked: 0, // NOT blocked — this is a reference-check failure, not a referenced=true
+      failed: 1, // counts as a failure for retry accounting
       deadLettered: 0,
+      referenceCheckFailed: 1, // surfaced separately from `blocked`
     });
-    // .remove was NOT called because we fail-closed.
+    // .remove was NOT called — we never delete on a reference-check error.
     expect(mockStorageRemove).not.toHaveBeenCalled();
-    // The error code is REFERENCED_CHECK_FAILED.
+    // Section 9: NO audit row should be created when no delete is attempted.
+    expect(mockRpc).not.toHaveBeenCalledWith(
+      "record_storage_operation_started",
+      expect.anything(),
+    );
+    // complete_storage_cleanup was called with success=false (retry)
+    // and final_status='reference_check_failed'.
     expect(mockRpc).toHaveBeenCalledWith("complete_storage_cleanup", {
       p_cleanup_id: "c3",
       p_lock_token: "t3",
-      p_success: true,
-      p_error_code: "REFERENCED_CHECK_FAILED",
+      p_success: false, // KEY FIX: was true in the prior implementation
+      p_error_code: "REFERENCE_CHECK_FAILED",
+      p_storage_operation_id: null,
+      p_final_status: "reference_check_failed",
     });
   });
 
-  it("marks row as failed when Storage .remove returns an error", async () => {
+  it("Section 8 case C: reference-check exception → retry (NOT success=true)", async () => {
+    const claimed = [
+      {
+        id: "c3b",
+        bucket: "private-assets",
+        object_path: "catalogs/draft2.pdf",
+        lock_token: "t3b",
+      },
+    ];
+    mockRpc.mockImplementation((name: string) => {
+      if (name === "claim_storage_cleanup") {
+        return Promise.resolve({ data: claimed, error: null });
+      }
+      if (name === "check_storage_object_referenced") {
+        // Synchronous exception inside the RPC layer.
+        throw new Error("network unreachable");
+      }
+      if (name === "complete_storage_cleanup") {
+        return Promise.resolve({ data: "retry", error: null });
+      }
+      return Promise.resolve({ data: null, error: null });
+    });
+    mockStorageRemove.mockResolvedValue({ data: [], error: null });
+
+    const { POST } = await import(
+      "@/app/api/internal/storage/cleanup-dispatch/route"
+    );
+    const response = await POST(
+      dispatchRequest(
+        { batchSize: 5 },
+        { Authorization: `Bearer ${VALID_SECRET}` },
+      ),
+    );
+    expect(response.status).toBe(200);
+    const json = await response.json();
+    expect(json.result.referenceCheckFailed).toBe(1);
+    expect(json.result.blocked).toBe(0);
+    expect(json.result.failed).toBe(1);
+    expect(mockStorageRemove).not.toHaveBeenCalled();
+    expect(mockRpc).toHaveBeenCalledWith("complete_storage_cleanup", {
+      p_cleanup_id: "c3b",
+      p_lock_token: "t3b",
+      p_success: false,
+      p_error_code: "REFERENCE_CHECK_EXCEPTION",
+      p_storage_operation_id: null,
+      p_final_status: "reference_check_failed",
+    });
+  });
+
+  it("Section 9 failure matrix: audit-started RPC fails → do NOT delete; row stays claimed", async () => {
+    const claimed = [
+      {
+        id: "c-audit-fail",
+        bucket: "public-assets",
+        object_path: "products/audit-fail.jpg",
+        lock_token: "t-audit-fail",
+      },
+    ];
+    mockRpc.mockImplementation((name: string) => {
+      if (name === "claim_storage_cleanup") {
+        return Promise.resolve({ data: claimed, error: null });
+      }
+      if (name === "check_storage_object_referenced") {
+        return Promise.resolve({ data: false, error: null });
+      }
+      if (name === "record_storage_operation_started") {
+        // Audit-started RPC failed — the dispatcher MUST NOT proceed
+        // with the delete.
+        return Promise.resolve({ data: null, error: { message: "rpc down" } });
+      }
+      if (name === "complete_storage_cleanup") {
+        return Promise.resolve({ data: "completed", error: null });
+      }
+      return Promise.resolve({ data: null, error: null });
+    });
+    mockStorageRemove.mockResolvedValue({ data: [], error: null });
+
+    const { POST } = await import(
+      "@/app/api/internal/storage/cleanup-dispatch/route"
+    );
+    const response = await POST(
+      dispatchRequest(
+        { batchSize: 5 },
+        { Authorization: `Bearer ${VALID_SECRET}` },
+      ),
+    );
+    expect(response.status).toBe(200);
+    const json = await response.json();
+    // The row is counted as failed (we did NOT delete). The cleanup
+    // row stays 'claimed' (complete_storage_cleanup was NOT called)
+    // so stale recovery re-claims it later.
+    expect(json.result.deleted).toBe(0);
+    expect(json.result.failed).toBe(1);
+    expect(mockStorageRemove).not.toHaveBeenCalled();
+    expect(mockRpc).not.toHaveBeenCalledWith(
+      "complete_storage_cleanup",
+      expect.anything(),
+    );
+  });
+
+  it("Section 9: marks audit row failed + cleanup retry when Storage .remove returns an error", async () => {
     const claimed = [
       {
         id: "c4",
@@ -340,6 +512,12 @@ describe("POST /api/internal/storage/cleanup-dispatch — fail-closed dispatcher
       }
       if (name === "check_storage_object_referenced") {
         return Promise.resolve({ data: false, error: null });
+      }
+      if (name === "record_storage_operation_started") {
+        return Promise.resolve({ data: "op-uuid-4567", error: null });
+      }
+      if (name === "complete_storage_operation") {
+        return Promise.resolve({ data: true, error: null });
       }
       if (name === "complete_storage_cleanup") {
         return Promise.resolve({ data: "retry", error: null });
@@ -369,13 +547,22 @@ describe("POST /api/internal/storage/cleanup-dispatch — fail-closed dispatcher
       blocked: 0,
       failed: 1,
       deadLettered: 0,
+      referenceCheckFailed: 0,
     });
-    // complete_storage_cleanup was called with success=false.
+    // Section 9: audit row was marked failed with the delete error code.
+    expect(mockRpc).toHaveBeenCalledWith("complete_storage_operation", {
+      p_operation_id: "op-uuid-4567",
+      p_success: false,
+      p_error_code: "STORAGE_DELETE_FAILED",
+    });
+    // complete_storage_cleanup was called with success=false + link.
     expect(mockRpc).toHaveBeenCalledWith("complete_storage_cleanup", {
       p_cleanup_id: "c4",
       p_lock_token: "t4",
       p_success: false,
       p_error_code: "STORAGE_DELETE_FAILED",
+      p_storage_operation_id: "op-uuid-4567",
+      p_final_status: "storage_delete_failed",
     });
   });
 
@@ -394,6 +581,12 @@ describe("POST /api/internal/storage/cleanup-dispatch — fail-closed dispatcher
       }
       if (name === "check_storage_object_referenced") {
         return Promise.resolve({ data: false, error: null });
+      }
+      if (name === "record_storage_operation_started") {
+        return Promise.resolve({ data: "op-uuid-5678", error: null });
+      }
+      if (name === "complete_storage_operation") {
+        return Promise.resolve({ data: true, error: null });
       }
       if (name === "complete_storage_cleanup") {
         return Promise.resolve({ data: "dead_letter", error: null });
@@ -472,18 +665,7 @@ describe("POST /api/internal/storage/cleanup-dispatch — fail-closed dispatcher
         lock_token: "t6",
       },
     ];
-    mockRpc.mockImplementation((name: string) => {
-      if (name === "claim_storage_cleanup") {
-        return Promise.resolve({ data: claimed, error: null });
-      }
-      if (name === "check_storage_object_referenced") {
-        return Promise.resolve({ data: false, error: null });
-      }
-      if (name === "complete_storage_cleanup") {
-        return Promise.resolve({ data: "completed", error: null });
-      }
-      return Promise.resolve({ data: null, error: null });
-    });
+    mockRpc.mockImplementation(defaultRpcMock(claimed));
     mockStorageRemove.mockResolvedValue({ data: [], error: null });
 
     const { POST } = await import(

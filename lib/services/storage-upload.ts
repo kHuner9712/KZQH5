@@ -1181,10 +1181,21 @@ export async function enqueueStorageCleanup(input: {
 /**
  * Catalog 发布应用层流程结果。
  *
- * 服务端从 private-assets 读取源对象字节，重新校验 MIME / Magic Bytes /
- * 大小，写入 public-assets，再调用 publish_catalog_asset RPC 在同一事务中
- * 更新 product_assets 行并写审计。RPC 失败时补偿删除新 public 副本；RPC
- * 成功后把旧 private 源加入 cleanup queue。
+ * Section 5 重写：使用 claim_catalog_asset_publish + finalize_catalog_asset_publish
+ * 两阶段协议。旧 publish_catalog_asset RPC 不再被生产代码调用。
+ *
+ * 流程：
+ *   1. claim_catalog_asset_publish(assetId, expected_updated_at) — 强制乐观锁
+ *      返回可信 source_bucket / source_object_path / publish_token。
+ *   2. 从 private-assets 下载字节（使用 RPC 返回的可信 path，不读 file_url）
+ *   3. 服务端重新校验 Magic Bytes / MIME / size / SHA-256
+ *   4. 上传到 public-assets（fail-closed 审计 Saga）
+ *   5. finalize_catalog_asset_publish(assetId, token, public_ref, ...)
+ *      — 原子事务：更新 published ref + publish_status=published + cleanup enqueue + audit
+ *   6. finalize 失败 → 补偿删除新 public 对象
+ *   7. 补偿删除失败 → 入队 cleanup queue 让 dispatcher 后续处理
+ *
+ * 旧 publish_catalog_asset RPC 暂时保留兼容但生产代码不再调用。
  */
 export type PublishCatalogAssetResult =
   | {
@@ -1198,29 +1209,27 @@ export type PublishCatalogAssetResult =
   | { ok: false; code: AdminWriteErrorCode };
 
 /**
- * 应用层 Catalog 发布流程。
+ * 应用层 Catalog 发布流程（两阶段 claim/finalize 协议）。
  *
- * 客户端只提交 assetId；服务端在内部完成：
- *   1. 查询 product_assets 行（service_role）
- *   2. 校验 is_published=true + access_level=public + authorization_status=confirmed
- *   3. 校验源对象在 private-assets 且路径为服务端生成格式
- *   4. 从 private-assets 下载字节
- *   5. 重新校验 MIME / Magic Bytes / 大小（不信任 private-assets 已存内容）
- *   6. 服务端生成 public-assets 目标路径
- *   7. 写入 public-assets（fail-closed 审计 Saga）
- *   8. 调用 publish_catalog_asset RPC 更新 DB 行 + 审计
- *   9. RPC 失败 → 补偿删除新 public 副本，返回错误
- *   10. RPC 成功 → 把旧 private 源加入 cleanup queue
- *   11. cleanup 入队失败 → 不静默成功，返回 PARTIAL_SUCCESS_ERROR 让调用方感知
+ * 客户端必须提交 assetId + expectedUpdatedAt（强制乐观锁）。
  *
- * 幂等性：
- *   - 同一 assetId 重复调用：RPC 通过 SELECT ... FOR UPDATE 锁住行，
- *     若 file_url 已是 public-assets URL，调用方应在上层先检查并直接返回。
- *   - 并发发布：RPC 的 FOR UPDATE 锁使并发调用串行化，第二个调用看到的
- *     是已更新的 file_url（public URL），不会复制第二份。
+ * 客户端不再提交 file_url / source path / public URL，全部由服务端从
+ * RPC 返回的可信字段读取。这样彻底切断了"客户端推断 private path"的路径。
+ *
+ * 幂等性：claim 返回 status='already_published' 时，直接返回当前 ref，
+ * 不复制第二份。
+ *
+ * 并发安全：claim 的 SELECT ... FOR UPDATE + publish_token 保证只有一个
+ * 调用方能进入 publishing 状态；其他调用方收到 40P01 并被映射为
+ * ADMIN_WRITE_CONFLICT。
  */
 export async function publishCatalogAssetFlow(input: {
   assetId: string;
+  /**
+   * 调用方读取的 product_assets.updated_at。Section 5 强制乐观锁：
+   * claim RPC 会用此值校验行版本，stale 时返回 40P01。
+   */
+  expectedUpdatedAt: string;
   options?: {
     actorId?: string | null;
     actorEmail?: string | null;
@@ -1235,6 +1244,10 @@ export async function publishCatalogAssetFlow(input: {
   ) {
     return { ok: false, code: "ADMIN_WRITE_BAD_REQUEST" };
   }
+  if (typeof input.expectedUpdatedAt !== "string" || input.expectedUpdatedAt.length === 0) {
+    // Section 5: 缺失 expected_updated_at → 22004 / ADMIN_WRITE_BAD_REQUEST
+    return { ok: false, code: "ADMIN_WRITE_BAD_REQUEST" };
+  }
 
   let client: SupabaseClient<Database>;
   try {
@@ -1243,114 +1256,121 @@ export async function publishCatalogAssetFlow(input: {
     return { ok: false, code: "ADMIN_WRITE_FAILED" };
   }
 
-  // 1. 查询 asset 行 + 验证发布前置条件
-  type PublishAssetRow = {
-    file_url: string;
-    cover_image_url: string | null;
-    title_cn: string;
-    is_published: boolean;
-    access_level: string;
-    authorization_status: string;
+  // ----------------------------------------------------------------
+  // Phase 1: claim_catalog_asset_publish
+  //   - 强制乐观锁（expected_updated_at 必填，NULL/stale 拒绝）
+  //   - 校验 is_published / access_level / authorization_status
+  //   - 返回可信 source_bucket / source_object_path / publish_token
+  // ----------------------------------------------------------------
+  type ClaimResult = {
+    status: string;
+    asset_id: string;
+    source_bucket: string | null;
+    source_object_path: string | null;
     mime_type: string | null;
+    publish_token: string | null;
+    updated_at: string;
+    // already_published 字段（status=already_published 时存在）
+    published_bucket?: string | null;
+    published_object_path?: string | null;
+    file_url?: string | null;
   };
-  let assetRow: PublishAssetRow | null = null;
+  let claimResult: ClaimResult | null = null;
 
   try {
-    const { data, error } = await client
-      .from("product_assets")
-      .select(
-        "file_url, cover_image_url, title_cn, is_published, access_level, authorization_status, mime_type",
-      )
-      .eq("id", input.assetId)
-      .maybeSingle();
+    const { data, error } = await client.rpc("claim_catalog_asset_publish", {
+      p_asset_id: input.assetId,
+      p_expected_updated_at: input.expectedUpdatedAt,
+      p_actor_id: input.options?.actorId ?? null,
+      p_actor_email: input.options?.actorEmail ?? null,
+      p_actor_role: input.options?.actorRole ?? null,
+    });
 
     if (error) {
-      console.error("PUBLISH_ASSET_READ_FAILED", {
+      const errCode = (error as { code?: string }).code ?? "";
+      // 22004 = bad request (precondition failed / expected_updated_at missing)
+      // P0002 = asset not found
+      if (errCode === "22004" || errCode === "P0002") {
+        return { ok: false, code: "ADMIN_WRITE_BAD_REQUEST" };
+      }
+      // 40P01 = stale updated_at / concurrent publish conflict
+      if (errCode === "40P01" || errCode === "40001" || errCode === "23505") {
+        return { ok: false, code: "ADMIN_WRITE_CONFLICT" };
+      }
+      console.error("PUBLISH_CLAIM_FAILED", {
         assetId: input.assetId,
+        errCode,
         code: "ADMIN_WRITE_FAILED",
       });
       return { ok: false, code: "ADMIN_WRITE_FAILED" };
     }
-    assetRow = data as PublishAssetRow | null;
-  } catch {
-    console.error("PUBLISH_ASSET_READ_EXCEPTION", {
+    claimResult = data as ClaimResult | null;
+  } catch (err) {
+    const errCode = (err as { code?: string }).code ?? "";
+    console.error("PUBLISH_CLAIM_EXCEPTION", {
+      assetId: input.assetId,
+      errCode,
+      code: "ADMIN_WRITE_FAILED",
+    });
+    return { ok: false, code: "ADMIN_WRITE_FAILED" };
+  }
+
+  if (!claimResult) {
+    return { ok: false, code: "ADMIN_WRITE_FAILED" };
+  }
+
+  // 幂等：已发布 → 直接返回当前 public ref，不复制第二份
+  if (claimResult.status === "already_published") {
+    const publishedPath = claimResult.published_object_path ?? "";
+    const publishedUrl = claimResult.file_url ?? "";
+    if (!publishedPath || !publishedUrl) {
+      // 状态不一致：声称已发布但 ref 缺失 → 拒绝（不让调用方误以为发布成功）
+      return { ok: false, code: "ADMIN_WRITE_FAILED" };
+    }
+    return {
+      ok: true,
+      ref: {
+        bucket: "public-assets",
+        path: publishedPath,
+        publicUrl: publishedUrl,
+        mimeType: claimResult.mime_type ?? "application/octet-stream",
+        size: 0,
+      },
+      oldPath: publishedPath,
+      cleanupId: null,
+    };
+  }
+
+  if (claimResult.status !== "claimed") {
+    // 未知状态 → 拒绝
+    return { ok: false, code: "ADMIN_WRITE_FAILED" };
+  }
+
+  // 从 RPC 返回的可信字段读取源 ref，不再解析客户端 file_url
+  const trustedSourcePath = claimResult.source_object_path ?? "";
+  const trustedMimeType = (claimResult.mime_type ?? "").toLowerCase().trim() ||
+    "application/octet-stream";
+  const publishToken = claimResult.publish_token ?? "";
+
+  if (!trustedSourcePath || !publishToken) {
+    // RPC 应当保证这些字段，缺失即协议错误
+    console.error("PUBLISH_CLAIM_INCOMPLETE_FIELDS", {
       assetId: input.assetId,
       code: "ADMIN_WRITE_FAILED",
     });
     return { ok: false, code: "ADMIN_WRITE_FAILED" };
   }
 
-  if (!assetRow) {
-    return { ok: false, code: "ADMIN_WRITE_BAD_REQUEST" };
-  }
-
-  // 2. 验证发布前置条件（与 RPC 中的检查对齐）
-  if (!assetRow.is_published) {
-    return { ok: false, code: "ADMIN_WRITE_BAD_REQUEST" };
-  }
-  if (assetRow.access_level !== "public") {
-    return { ok: false, code: "ADMIN_WRITE_BAD_REQUEST" };
-  }
-  if (assetRow.authorization_status !== "confirmed") {
-    return { ok: false, code: "ADMIN_WRITE_BAD_REQUEST" };
-  }
-
-  // 3. 解析源 file_url，确认它指向 private-assets 且为服务端生成路径
-  //    幂等：若 file_url 已指向 public-assets，直接返回当前 ref（不复制第二份）
-  const sourceFileUrl = assetRow.file_url;
-  const publicAssetsUrlPrefix = `${(process.env.NEXT_PUBLIC_SUPABASE_URL || "").replace(/\/+$/, "")}/storage/v1/object/public/${PUBLIC_ASSETS_BUCKET}/`;
-
-  if (sourceFileUrl.startsWith(publicAssetsUrlPrefix)) {
-    // 已发布到 public-assets → 幂等返回，不复制第二份
-    const existingPath = decodeURIComponent(
-      sourceFileUrl.slice(publicAssetsUrlPrefix.length),
-    );
-    return {
-      ok: true,
-      ref: {
-        bucket: "public-assets",
-        path: existingPath,
-        publicUrl: sourceFileUrl,
-        mimeType: assetRow.mime_type ?? "application/octet-stream",
-        size: 0,
-      },
-      oldPath: existingPath,
-      cleanupId: null,
-    };
-  }
-
-  // 解析 private-assets URL（短签名 URL 或公开 URL 形式）
-  // Supabase 短签名 URL 格式：
-  //   {supabase_url}/storage/v1/object/sign/{bucket}/{path}?token=...
-  // Supabase 公开 URL 格式（如 bucket 暂未启用 RLS）：
-  //   {supabase_url}/storage/v1/object/public/{bucket}/{path}
-  const privateSignPrefix = `${(process.env.NEXT_PUBLIC_SUPABASE_URL || "").replace(/\/+$/, "")}/storage/v1/object/sign/${PRIVATE_ASSETS_BUCKET}/`;
-  const privatePublicPrefix = `${(process.env.NEXT_PUBLIC_SUPABASE_URL || "").replace(/\/+$/, "")}/storage/v1/object/public/${PRIVATE_ASSETS_BUCKET}/`;
-
-  let sourcePath: string | null = null;
-  if (sourceFileUrl.startsWith(privateSignPrefix)) {
-    const pathAndQuery = sourceFileUrl.slice(privateSignPrefix.length);
-    // 去掉 query string
-    sourcePath = decodeURIComponent(pathAndQuery.split("?", 1)[0] || "");
-  } else if (sourceFileUrl.startsWith(privatePublicPrefix)) {
-    sourcePath = decodeURIComponent(
-      sourceFileUrl.slice(privatePublicPrefix.length),
-    );
-  }
-
-  if (!sourcePath) {
-    // 源 URL 不指向 private-assets → 拒绝发布（避免误处理外部 URL）
-    return { ok: false, code: "ADMIN_WRITE_BAD_REQUEST" };
-  }
-
-  // 校验源路径为服务端生成格式（{category}/{uuid}.{ext}）
-  const pathValidation = validatePrivateAssetPath(sourcePath);
+  // 校验 source path 格式（防 path traversal；RPC 已校验过，应用层再校验一次）
+  const pathValidation = validatePrivateAssetPath(trustedSourcePath);
   if (!pathValidation.ok) {
     return { ok: false, code: pathValidation.code };
   }
   const validatedSourcePath = pathValidation.path;
 
-  // 4. 从 private-assets 下载字节
+  // ----------------------------------------------------------------
+  // Phase 2a: 下载 private-assets 字节
+  // ----------------------------------------------------------------
   let bytes: Uint8Array;
   try {
     const downloadResponse = await client.storage
@@ -1378,38 +1398,38 @@ export async function publishCatalogAssetFlow(input: {
     return { ok: false, code: "ADMIN_WRITE_FAILED" };
   }
 
-  // 5. 重新校验 MIME / Magic Bytes / 大小
-  //    不信任 private-assets 中已存内容（可能被其他流程污染）
-  const mimeType = (assetRow.mime_type ?? "").toLowerCase().trim() ||
-    "application/octet-stream";
-
-  const mimeResult = validateMimeType(mimeType, PRIVATE_ASSETS_ALLOWED_MIME);
+  // ----------------------------------------------------------------
+  // Phase 2b: 重新校验 Magic Bytes / MIME / size
+  //   不信任 private-assets 已存内容（可能被其他流程污染）
+  // ----------------------------------------------------------------
+  const mimeResult = validateMimeType(trustedMimeType, PRIVATE_ASSETS_ALLOWED_MIME);
   if (!mimeResult.ok) {
     return { ok: false, code: "ADMIN_WRITE_UNSUPPORTED_MEDIA" };
   }
 
-  const maxSize = MIME_MAX_SIZE[mimeType] ?? 0;
+  const maxSize = MIME_MAX_SIZE[trustedMimeType] ?? 0;
   const sizeResult = validateFileSize(bytes.length, maxSize);
   if (!sizeResult.ok) {
     return { ok: false, code: "ADMIN_WRITE_PAYLOAD_TOO_LARGE" };
   }
 
-  const magicResult = verifyMagicBytes(bytes, mimeType);
+  const magicResult = verifyMagicBytes(bytes, trustedMimeType);
   if (!magicResult.ok) {
     return { ok: false, code: "ADMIN_WRITE_UNSUPPORTED_MEDIA" };
   }
 
-  // 提取源文件名（用于扩展名推断）
+  const sha256 = computeSha256Hex(bytes);
   const sourceFilename = validatedSourcePath.split("/").pop() || "";
 
-  // 6. 上传到 public-assets（使用 uploadToPublicAssets 完成审计 Saga）
-  //    category 用源路径的顶层分类（如 "catalogs"），但 public-assets 顶层白名单
-  //    不包含 "catalogs" → 我们使用 "documents" 作为 public-assets 的目标顶层分类
+  // ----------------------------------------------------------------
+  // Phase 2c: 上传到 public-assets（fail-closed 审计 Saga）
+  //   category 用 "documents"（public-assets 顶层白名单包含）
+  // ----------------------------------------------------------------
   const targetCategory = "documents";
   const uploadResult = await uploadToPublicAssets(
     {
       bytes,
-      mimeType,
+      mimeType: trustedMimeType,
       size: bytes.length,
       filename: sourceFilename,
       category: targetCategory,
@@ -1426,7 +1446,7 @@ export async function publishCatalogAssetFlow(input: {
 
   /**
    * 局部辅助：补偿删除新 public 副本，并在补偿失败时入队 cleanup。
-   * 不抛错；调用方根据 RPC 错误码返回相应的失败结果。
+   * 不抛错；调用方根据 finalize 错误码返回相应的失败结果。
    */
   const compensatePublicCopy = async (): Promise<void> => {
     const compensate = await compensateDeleteUploadedObject(
@@ -1447,20 +1467,40 @@ export async function publishCatalogAssetFlow(input: {
     }
   };
 
-  // 7. 调用 publish_catalog_asset RPC 更新 DB 行 + 审计
-  let rpcResult: {
+  // ----------------------------------------------------------------
+  // Phase 2d: finalize_catalog_asset_publish — 原子事务
+  //   - 验证 publish_token + publish_status='publishing'
+  //   - 更新 published_bucket / published_object_path / file_url
+  //   - publish_status='published', publish_token=null
+  //   - enqueue_storage_cleanup (旧 private source)
+  //   - 写 admin_audit_log（原子，审计失败整体回滚）
+  //
+  // 失败处理：
+  //   - 40P01 (token mismatch / status mismatch) → ADMIN_WRITE_CONFLICT
+  //   - 22004 / P0002 → ADMIN_WRITE_BAD_REQUEST
+  //   - 其他 → ADMIN_WRITE_FAILED
+  //   - 任何失败都执行 compensatePublicCopy
+  // ----------------------------------------------------------------
+  type FinalizeResult = {
+    status: string;
     asset_id: string;
-    old_file_url: string;
-    old_cover_image_url: string | null;
-    new_file_url: string;
-    new_cover_image_url: string | null;
-  } | null = null;
+    published_bucket: string;
+    published_object_path: string;
+    file_url: string;
+    cleanup_id: string | null;
+  };
+  let finalizeResult: FinalizeResult | null = null;
 
   try {
-    const { data, error } = await client.rpc("publish_catalog_asset", {
+    const { data, error } = await client.rpc("finalize_catalog_asset_publish", {
       p_asset_id: input.assetId,
-      p_public_file_url: uploadResult.publicUrl,
-      p_public_cover_image_url: null, // 当前不处理 cover_image_url 发布
+      p_publish_token: publishToken,
+      p_public_bucket: PUBLIC_ASSETS_BUCKET,
+      p_public_object_path: uploadResult.path,
+      p_public_url: uploadResult.publicUrl,
+      p_mime_type: uploadResult.mimeType,
+      p_size_bytes: uploadResult.size,
+      p_sha256: sha256,
       p_actor_id: input.options?.actorId ?? null,
       p_actor_email: input.options?.actorEmail ?? null,
       p_actor_role: input.options?.actorRole ?? null,
@@ -1468,32 +1508,29 @@ export async function publishCatalogAssetFlow(input: {
 
     if (error) {
       const errCode = (error as { code?: string }).code ?? "";
-      // 23505 = unique_violation, 23001 = integrity_violation (CHECK)
-      // 40P01/40001 = concurrent / serialization failure
-      if (errCode === "23505" || errCode === "23001") {
-        // RPC 拒绝（前置条件不满足或并发冲突）→ 补偿删除 public 副本
+      // 40P01 = token mismatch / status mismatch / serialization failure
+      if (errCode === "40P01" || errCode === "40001" || errCode === "23505") {
         await compensatePublicCopy();
         return { ok: false, code: "ADMIN_WRITE_CONFLICT" };
       }
-      if (errCode === "P0002") {
-        // asset not found
+      // 22004 = bad request (precondition failed)
+      // P0002 = asset not found
+      if (errCode === "22004" || errCode === "P0002") {
         await compensatePublicCopy();
         return { ok: false, code: "ADMIN_WRITE_BAD_REQUEST" };
       }
-      console.error("PUBLISH_CATALOG_ASSET_RPC_FAILED", {
+      console.error("PUBLISH_FINALIZE_FAILED", {
         assetId: input.assetId,
         errCode,
         code: "ADMIN_WRITE_FAILED",
       });
-      // RPC 失败 → 补偿删除新 public 副本
       await compensatePublicCopy();
       return { ok: false, code: "ADMIN_WRITE_FAILED" };
     }
-
-    rpcResult = data as typeof rpcResult;
+    finalizeResult = data as FinalizeResult | null;
   } catch (err) {
     const errCode = (err as { code?: string }).code ?? "";
-    console.error("PUBLISH_CATALOG_ASSET_RPC_EXCEPTION", {
+    console.error("PUBLISH_FINALIZE_EXCEPTION", {
       assetId: input.assetId,
       errCode,
       code: "ADMIN_WRITE_FAILED",
@@ -1502,47 +1539,17 @@ export async function publishCatalogAssetFlow(input: {
     return { ok: false, code: "ADMIN_WRITE_FAILED" };
   }
 
-  if (!rpcResult) {
-    // 防御性兜底
+  if (!finalizeResult) {
     await compensatePublicCopy();
     return { ok: false, code: "ADMIN_WRITE_FAILED" };
   }
 
-  // 8. RPC 成功 → 把旧 private 源加入 cleanup queue
-  //    cleanup 入队失败时不静默成功：返回 PARTIAL_SUCCESS 让调用方感知
-  //    （对象已发布成功，但旧 private 副本残留，需后续 reconciliation）
-  const cleanupEnqueue = await enqueueStorageCleanup({
-    bucket: PRIVATE_ASSETS_BUCKET,
-    objectPath: validatedSourcePath,
-    reason: "replaced",
-    sourceType: "catalog_asset",
-    sourceId: input.assetId,
-  });
-
-  if (!cleanupEnqueue.ok) {
-    // 入队失败：发布本身已成功（DB 已更新、新 public 副本已写入），
-    // 但旧 private 副本残留 → 返回 ok=true 但记录 cleanupId=null
-    // 调用方应在响应中包含 partialCleanup 标志让运维感知
-    console.error("PUBLISH_CLEANUP_ENQUEUE_FAILED", {
-      assetId: input.assetId,
-      oldPath: validatedSourcePath,
-      code: "PUBLISH_CLEANUP_ENQUEUE_FAILED",
-    });
-    // 仍返回成功，因为发布本身已完成；旧副本由 read-only inventory 脚本兜底
-    return {
-      ok: true,
-      ref: {
-        bucket: "public-assets",
-        path: uploadResult.path,
-        publicUrl: uploadResult.publicUrl,
-        mimeType: uploadResult.mimeType,
-        size: uploadResult.size,
-      },
-      oldPath: validatedSourcePath,
-      cleanupId: null,
-    };
-  }
-
+  // ----------------------------------------------------------------
+  // Phase 2e: 返回结果
+  //   finalize 已经在同一事务中 enqueue 了旧 private source 的 cleanup，
+  //   所以应用层不需要再调用 enqueueStorageCleanup。
+  //   finalize 返回 cleanup_id（可能为 null，表示旧 source 已无或非 private）。
+  // ----------------------------------------------------------------
   return {
     ok: true,
     ref: {
@@ -1551,9 +1558,10 @@ export async function publishCatalogAssetFlow(input: {
       publicUrl: uploadResult.publicUrl,
       mimeType: uploadResult.mimeType,
       size: uploadResult.size,
+      sha256,
     },
     oldPath: validatedSourcePath,
-    cleanupId: cleanupEnqueue.cleanupId,
+    cleanupId: finalizeResult.cleanup_id ?? null,
   };
 }
 

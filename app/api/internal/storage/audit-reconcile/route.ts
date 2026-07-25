@@ -64,14 +64,21 @@ import { reconcilePendingStorageAudit } from "@/lib/services/storage-upload";
  *     Fuzzy search results from Supabase Storage .list() are not
  *     trusted as authoritative.
  *
- * TIMEOUT / CANCELLATION CONTRACT
- *   - The route runs with RECONCILE_TIMEOUT_MS.
- *   - On timeout the route returns 504; in-flight Storage .list()
- *     calls are awaited. Claimed rows remain in 'claimed' state and
- *     are re-claimed by stale recovery (staleTimeoutSeconds).
- *   - This is "at-least-once reconcile" — a row may be checked twice
- *     by different workers, but the lock_token contract ensures only
- *     one worker finalizes it.
+ * TIMEOUT / CANCELLATION CONTRACT — Section 10 方案 A
+ *   - The route does NOT set a fake route-level setTimeout. The prior
+ *     implementation used `Promise.race` against a `setTimeout` with
+ *     an empty callback — that left the reconcile running in the
+ *     background after the route had already responded 504, which is
+ *     the bug Section 10 forbids ("不得声称任务停止, 实际后台仍继续").
+ *   - It now relies on: (a) fixed batch size (MAX_LIMIT), (b) the
+ *     platform's per-request timeout, (c) per-Storage-call timeouts
+ *     enforced by the Supabase client, and (d) stale recovery in
+ *     claim_storage_audit_reconcile (staleTimeoutSeconds).
+ *   - Reconciliation is idempotent — a row whose check was started
+ *     but not finalized will be re-claimed and re-checked safely.
+ *     The lock_token contract ensures only one worker finalizes it.
+ *   - The response is returned as soon as the batch finishes; there
+ *     is no Promise.race against a timer.
  *
  * RESPONSE CONTRACT
  *   - 200: { ok, result: { processed, completed, failed } }
@@ -81,7 +88,6 @@ import { reconcilePendingStorageAudit } from "@/lib/services/storage-upload";
  *   - 401: missing/malformed Authorization header.
  *   - 403: token mismatch.
  *   - 400: invalid JSON body.
- *   - 504: reconcile timeout.
  *   - 500: unexpected internal error (fixed coarse code only).
  *
  * DEPLOYMENT STATUS
@@ -103,8 +109,6 @@ const DEFAULT_LIMIT = 50;
 const DEFAULT_MIN_AGE_SECONDS = 300;
 /** Default stale-lock recovery timeout (seconds). */
 const DEFAULT_STALE_TIMEOUT_SECONDS = 300;
-/** Fixed execution timeout (ms) for the entire reconcile operation. */
-const RECONCILE_TIMEOUT_MS = 90_000;
 
 interface ReconcileRequestBody {
   minAgeSeconds?: unknown;
@@ -197,32 +201,25 @@ export async function POST(request: NextRequest) {
     86_400,
   );
 
-  // Step 5: Reconcile with a hard route-level timeout.
+  // Step 5: Reconcile. Section 10 方案 A: no fake route timeout.
   //   - reconcilePendingStorageAudit uses claim_storage_audit_reconcile
   //     (FOR UPDATE SKIP LOCKED + per-row lock_token) so concurrent
   //     workers do not collide.
-  //   - On timeout, claimed rows stay 'claimed' and stale recovery
-  //     re-claims them on a subsequent invocation.
-  const timer = setTimeout(() => {
-    // The route will return 504 on the next await; we cannot actively
-    // abort in-flight Storage .list() calls, but the timeout ensures
-    // the route does not hang indefinitely.
-  }, RECONCILE_TIMEOUT_MS);
-
+  //   - We rely on: (a) fixed batch size (MAX_LIMIT), (b) the
+  //     platform's per-request timeout, (c) per-Storage-call timeouts,
+  //     (d) stale recovery (staleTimeoutSeconds). Reconciliation is
+  //     idempotent — a row whose check was started but not finalized
+  //     will be re-claimed and re-checked safely.
+  //   - The previous `Promise.race` against a `setTimeout` with an
+  //     empty callback was a bug (Section 10): it left the reconcile
+  //     running in the background after the route had already
+  //     responded 504. That is now removed.
   try {
-    const result = await Promise.race([
-      reconcilePendingStorageAudit({
-        minAgeSeconds,
-        limit,
-        staleTimeoutSeconds,
-      }),
-      new Promise<never>((_, reject) =>
-        setTimeout(
-          () => reject(new Error("reconcile_timeout")),
-          RECONCILE_TIMEOUT_MS,
-        ),
-      ),
-    ]);
+    const result = await reconcilePendingStorageAudit({
+      minAgeSeconds,
+      limit,
+      staleTimeoutSeconds,
+    });
 
     if (!result.ok) {
       // Reconcile returned a structured failure (e.g. admin client
@@ -244,21 +241,12 @@ export async function POST(request: NextRequest) {
       ok: true,
       result: coarse,
     });
-  } catch (error) {
-    if (error instanceof Error && error.message === "reconcile_timeout") {
-      console.error("STORAGE_AUDIT_RECONCILE_TIMEOUT");
-      return NextResponse.json(
-        { ok: false, error: "reconcile_timeout" },
-        { status: 504 },
-      );
-    }
+  } catch {
     console.error("STORAGE_AUDIT_RECONCILE_EXCEPTION");
     return NextResponse.json(
       { ok: false, error: "reconcile_failed" },
       { status: 500 },
     );
-  } finally {
-    clearTimeout(timer);
   }
 }
 
