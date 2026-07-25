@@ -1109,6 +1109,115 @@ export type Database = {
         };
         Returns: number;
       };
+      save_company_profile_with_audit: {
+        Args: {
+          p_id: string | null;
+          p_payload: unknown;
+          p_expected_updated_at?: string | null;
+          p_actor_id?: string | null;
+          p_actor_email?: string | null;
+          p_actor_role?: string | null;
+        };
+        Returns: unknown;
+      };
+      save_site_settings_with_audit: {
+        Args: {
+          p_id: string | null;
+          p_payload: unknown;
+          p_expected_updated_at?: string | null;
+          p_actor_id?: string | null;
+          p_actor_email?: string | null;
+          p_actor_role?: string | null;
+        };
+        Returns: unknown;
+      };
+      save_homepage_content_with_audit: {
+        Args: {
+          p_id: string | null;
+          p_payload: unknown;
+          p_expected_updated_at?: string | null;
+          p_actor_id?: string | null;
+          p_actor_email?: string | null;
+          p_actor_role?: string | null;
+        };
+        Returns: unknown;
+      };
+      save_page_content_with_audit: {
+        Args: {
+          p_id: string | null;
+          p_payload: unknown;
+          p_expected_updated_at?: string | null;
+          p_actor_id?: string | null;
+          p_actor_email?: string | null;
+          p_actor_role?: string | null;
+        };
+        Returns: unknown;
+      };
+      save_category_with_audit: {
+        Args: {
+          p_id: string | null;
+          p_payload: unknown;
+          p_expected_updated_at?: string | null;
+          p_actor_id?: string | null;
+          p_actor_email?: string | null;
+          p_actor_role?: string | null;
+        };
+        Returns: unknown;
+      };
+      delete_category_with_audit: {
+        Args: {
+          p_id: string;
+          p_expected_updated_at: string;
+          p_actor_id?: string | null;
+          p_actor_email?: string | null;
+          p_actor_role?: string | null;
+        };
+        Returns: unknown;
+      };
+      save_subcategory_with_audit: {
+        Args: {
+          p_id: string | null;
+          p_payload: unknown;
+          p_expected_updated_at?: string | null;
+          p_actor_id?: string | null;
+          p_actor_email?: string | null;
+          p_actor_role?: string | null;
+        };
+        Returns: unknown;
+      };
+      delete_subcategory_with_audit: {
+        Args: {
+          p_id: string;
+          p_expected_updated_at: string;
+          p_actor_id?: string | null;
+          p_actor_email?: string | null;
+          p_actor_role?: string | null;
+        };
+        Returns: unknown;
+      };
+      save_project_with_relations_and_audit: {
+        Args: {
+          p_id: string | null;
+          p_project: unknown;
+          p_images?: unknown;
+          p_products?: unknown;
+          p_expected_updated_at?: string | null;
+          p_actor_id?: string | null;
+          p_actor_email?: string | null;
+          p_actor_role?: string | null;
+        };
+        Returns: unknown;
+      };
+      delete_project_with_audit: {
+        Args: {
+          p_id: string;
+          p_expected_updated_at: string;
+          p_actor_id?: string | null;
+          p_actor_email?: string | null;
+          p_actor_role?: string | null;
+        };
+        Returns: unknown;
+      };
     };
     Enums: Record<string, never>;
   };

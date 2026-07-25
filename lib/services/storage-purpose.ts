@@ -27,6 +27,7 @@ export type StoragePurpose =
   | "company-logo"
   | "homepage-image"
   | "catalog-draft"
+  | "catalog-cover"
   | "certificate-draft";
 
 /** 客户端可提交的所有合法 purpose 值（用于白名单校验）。 */
@@ -36,6 +37,7 @@ export const STORAGE_PURPOSES: readonly StoragePurpose[] = [
   "company-logo",
   "homepage-image",
   "catalog-draft",
+  "catalog-cover",
   "certificate-draft",
 ] as const;
 
@@ -127,6 +129,19 @@ const PURPOSE_CONFIGS: Readonly<Record<StoragePurpose, PurposeConfig>> = {
       "image/png",
       "image/webp",
       "application/pdf",
+    ],
+  },
+  // Catalog 封面图（catalog 列表/详情卡片封面）—— 直接公开
+  // 与 catalog-draft 区分：catalog-draft 是文件本身（需发布流程），
+  // catalog-cover 是配套封面图（直接 public-assets）。
+  "catalog-cover": {
+    bucket: "public-assets",
+    category: "catalogs/covers",
+    isPublicUrlAllowed: true,
+    allowedMimeTypes: [
+      "image/jpeg",
+      "image/png",
+      "image/webp",
     ],
   },
   // 证书图片 —— 默认 private-assets

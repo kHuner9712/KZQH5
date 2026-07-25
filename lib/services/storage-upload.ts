@@ -1566,6 +1566,373 @@ export async function publishCatalogAssetFlow(input: {
 }
 
 // ============================================================
+// Certificate publication flow (private→public)
+// ============================================================
+
+/**
+ * Certificate 发布应用层流程结果。
+ *
+ * Section 6: 与 Catalog 完全等价的两阶段 claim/finalize 协议，仅调用
+ * claim_certificate_publish + finalize_certificate_publish RPC。
+ *
+ * 流程：
+ *   1. claim_certificate_publish(certificateId, expected_updated_at) — 强制乐观锁
+ *      返回可信 source_bucket / source_object_path / publish_token。
+ *   2. 从 private-assets 下载字节（使用 RPC 返回的可信 path，不读 image_url）
+ *   3. 服务端重新校验 Magic Bytes / MIME / size / SHA-256
+ *   4. 上传到 public-assets（fail-closed 审计 Saga）
+ *   5. finalize_certificate_publish(certificateId, token, public_ref, ...)
+ *      — 原子事务：更新 published ref + publish_status=published + cleanup enqueue + audit
+ *   6. finalize 失败 → 补偿删除新 public 对象
+ *   7. 补偿删除失败 → 入队 cleanup queue 让 dispatcher 后续处理
+ */
+export type PublishCertificateResult =
+  | {
+      ok: true;
+      ref: StorageObjectRef;
+      /** 旧 private-assets 源路径（已加入 cleanup queue，由 dispatcher 异步删除）。 */
+      oldPath: string;
+      /** 旧 private-assets 源 cleanup queue 行 id（null 表示幂等未创建新行）。 */
+      cleanupId: string | null;
+    }
+  | { ok: false; code: AdminWriteErrorCode };
+
+/**
+ * 应用层 Certificate 发布流程（两阶段 claim/finalize 协议）。
+ *
+ * 客户端必须提交 certificateId + expectedUpdatedAt（强制乐观锁）。
+ * 客户端不再提交 image_url / source path / public URL，全部由服务端从
+ * RPC 返回的可信字段读取。这样彻底切断了"客户端推断 private path"的路径。
+ *
+ * 幂等性：claim 返回 status='already_published' 时，直接返回当前 ref，
+ * 不复制第二份。
+ *
+ * 并发安全：claim 的 SELECT ... FOR UPDATE + publish_token 保证只有一个
+ * 调用方能进入 publishing 状态；其他调用方收到 40P01 并被映射为
+ * ADMIN_WRITE_CONFLICT。
+ */
+export async function publishCertificateFlow(input: {
+  certificateId: string;
+  /**
+   * 调用方读取的 certificates.updated_at。Section 6 强制乐观锁：
+   * claim RPC 会用此值校验行版本，stale 时返回 40P01。
+   */
+  expectedUpdatedAt: string;
+  options?: {
+    actorId?: string | null;
+    actorEmail?: string | null;
+    actorRole?: string | null;
+  };
+}): Promise<PublishCertificateResult> {
+  if (
+    typeof input.certificateId !== "string" ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      input.certificateId,
+    )
+  ) {
+    return { ok: false, code: "ADMIN_WRITE_BAD_REQUEST" };
+  }
+  if (typeof input.expectedUpdatedAt !== "string" || input.expectedUpdatedAt.length === 0) {
+    // Section 5/6: 缺失 expected_updated_at → 22004 / ADMIN_WRITE_BAD_REQUEST
+    return { ok: false, code: "ADMIN_WRITE_BAD_REQUEST" };
+  }
+
+  let client: SupabaseClient<Database>;
+  try {
+    client = createAdminClient();
+  } catch {
+    return { ok: false, code: "ADMIN_WRITE_FAILED" };
+  }
+
+  // ----------------------------------------------------------------
+  // Phase 1: claim_certificate_publish
+  // ----------------------------------------------------------------
+  type ClaimResult = {
+    status: string;
+    id: string;
+    source_bucket: string | null;
+    source_object_path: string | null;
+    mime_type: string | null;
+    publish_token: string | null;
+    updated_at: string;
+    // already_published 字段
+    published_bucket?: string | null;
+    published_object_path?: string | null;
+    image_url?: string | null;
+  };
+  let claimResult: ClaimResult | null = null;
+
+  try {
+    const { data, error } = await client.rpc("claim_certificate_publish", {
+      p_id: input.certificateId,
+      p_expected_updated_at: input.expectedUpdatedAt,
+      p_actor_id: input.options?.actorId ?? null,
+      p_actor_email: input.options?.actorEmail ?? null,
+      p_actor_role: input.options?.actorRole ?? null,
+    });
+
+    if (error) {
+      const errCode = (error as { code?: string }).code ?? "";
+      // 22004 = bad request (precondition failed / expected_updated_at missing)
+      // P0002 = certificate not found
+      if (errCode === "22004" || errCode === "P0002") {
+        return { ok: false, code: "ADMIN_WRITE_BAD_REQUEST" };
+      }
+      // 40P01 = stale updated_at / concurrent publish conflict
+      if (errCode === "40P01" || errCode === "40001" || errCode === "23505") {
+        return { ok: false, code: "ADMIN_WRITE_CONFLICT" };
+      }
+      console.error("CERT_PUBLISH_CLAIM_FAILED", {
+        certificateId: input.certificateId,
+        errCode,
+        code: "ADMIN_WRITE_FAILED",
+      });
+      return { ok: false, code: "ADMIN_WRITE_FAILED" };
+    }
+    claimResult = data as ClaimResult | null;
+  } catch (err) {
+    const errCode = (err as { code?: string }).code ?? "";
+    console.error("CERT_PUBLISH_CLAIM_EXCEPTION", {
+      certificateId: input.certificateId,
+      errCode,
+      code: "ADMIN_WRITE_FAILED",
+    });
+    return { ok: false, code: "ADMIN_WRITE_FAILED" };
+  }
+
+  if (!claimResult) {
+    return { ok: false, code: "ADMIN_WRITE_FAILED" };
+  }
+
+  // 幂等：已发布 → 直接返回当前 public ref，不复制第二份
+  if (claimResult.status === "already_published") {
+    const publishedPath = claimResult.published_object_path ?? "";
+    const publishedUrl = claimResult.image_url ?? "";
+    if (!publishedPath || !publishedUrl) {
+      // 状态不一致：声称已发布但 ref 缺失 → 拒绝
+      return { ok: false, code: "ADMIN_WRITE_FAILED" };
+    }
+    return {
+      ok: true,
+      ref: {
+        bucket: "public-assets",
+        path: publishedPath,
+        publicUrl: publishedUrl,
+        mimeType: claimResult.mime_type ?? "application/octet-stream",
+        size: 0,
+      },
+      oldPath: publishedPath,
+      cleanupId: null,
+    };
+  }
+
+  if (claimResult.status !== "claimed") {
+    return { ok: false, code: "ADMIN_WRITE_FAILED" };
+  }
+
+  // 从 RPC 返回的可信字段读取源 ref，不再解析客户端 image_url
+  const trustedSourcePath = claimResult.source_object_path ?? "";
+  const trustedMimeType = (claimResult.mime_type ?? "").toLowerCase().trim() ||
+    "application/octet-stream";
+  const publishToken = claimResult.publish_token ?? "";
+
+  if (!trustedSourcePath || !publishToken) {
+    console.error("CERT_PUBLISH_CLAIM_INCOMPLETE_FIELDS", {
+      certificateId: input.certificateId,
+      code: "ADMIN_WRITE_FAILED",
+    });
+    return { ok: false, code: "ADMIN_WRITE_FAILED" };
+  }
+
+  // 校验 source path 格式（防 path traversal；RPC 已校验过，应用层再校验一次）
+  const pathValidation = validatePrivateAssetPath(trustedSourcePath);
+  if (!pathValidation.ok) {
+    return { ok: false, code: pathValidation.code };
+  }
+  const validatedSourcePath = pathValidation.path;
+
+  // ----------------------------------------------------------------
+  // Phase 2a: 下载 private-assets 字节
+  // ----------------------------------------------------------------
+  let bytes: Uint8Array;
+  try {
+    const downloadResponse = await client.storage
+      .from(PRIVATE_ASSETS_BUCKET)
+      .download(validatedSourcePath);
+
+    if (downloadResponse.error) {
+      console.error("CERT_PUBLISH_SOURCE_DOWNLOAD_FAILED", {
+        certificateId: input.certificateId,
+        path: validatedSourcePath,
+        code: "ADMIN_WRITE_FAILED",
+      });
+      return { ok: false, code: "ADMIN_WRITE_FAILED" };
+    }
+
+    const blob = downloadResponse.data;
+    const ab = await blob.arrayBuffer();
+    bytes = new Uint8Array(ab);
+  } catch {
+    console.error("CERT_PUBLISH_SOURCE_DOWNLOAD_EXCEPTION", {
+      certificateId: input.certificateId,
+      path: validatedSourcePath,
+      code: "ADMIN_WRITE_FAILED",
+    });
+    return { ok: false, code: "ADMIN_WRITE_FAILED" };
+  }
+
+  // ----------------------------------------------------------------
+  // Phase 2b: 重新校验 Magic Bytes / MIME / size
+  // ----------------------------------------------------------------
+  const mimeResult = validateMimeType(trustedMimeType, PRIVATE_ASSETS_ALLOWED_MIME);
+  if (!mimeResult.ok) {
+    return { ok: false, code: "ADMIN_WRITE_UNSUPPORTED_MEDIA" };
+  }
+
+  const maxSize = MIME_MAX_SIZE[trustedMimeType] ?? 0;
+  const sizeResult = validateFileSize(bytes.length, maxSize);
+  if (!sizeResult.ok) {
+    return { ok: false, code: "ADMIN_WRITE_PAYLOAD_TOO_LARGE" };
+  }
+
+  const magicResult = verifyMagicBytes(bytes, trustedMimeType);
+  if (!magicResult.ok) {
+    return { ok: false, code: "ADMIN_WRITE_UNSUPPORTED_MEDIA" };
+  }
+
+  const sha256 = computeSha256Hex(bytes);
+  const sourceFilename = validatedSourcePath.split("/").pop() || "";
+
+  // ----------------------------------------------------------------
+  // Phase 2c: 上传到 public-assets
+  //   category 用 "certificates"（public-assets 顶层白名单包含）
+  // ----------------------------------------------------------------
+  const targetCategory = "certificates";
+  const uploadResult = await uploadToPublicAssets(
+    {
+      bytes,
+      mimeType: trustedMimeType,
+      size: bytes.length,
+      filename: sourceFilename,
+      category: targetCategory,
+    },
+    {
+      actorId: input.options?.actorId ?? null,
+      actorRole: input.options?.actorRole ?? null,
+    },
+  );
+
+  if (!uploadResult.ok) {
+    return { ok: false, code: uploadResult.code };
+  }
+
+  /**
+   * 局部辅助：补偿删除新 public 副本，并在补偿失败时入队 cleanup。
+   */
+  const compensatePublicCopy = async (): Promise<void> => {
+    const compensate = await compensateDeleteUploadedObject(
+      client,
+      PUBLIC_ASSETS_BUCKET,
+      uploadResult.path,
+    );
+    if (!compensate.ok) {
+      // 补偿删除失败 → 入队 cleanup queue 让 dispatcher 后续处理
+      await enqueueResidualObjectForCleanup(
+        client,
+        PUBLIC_ASSETS_BUCKET,
+        uploadResult.path,
+        "orphan_detected",
+        "certificate_publish",
+        input.certificateId,
+      );
+    }
+  };
+
+  // ----------------------------------------------------------------
+  // Phase 2d: finalize_certificate_publish — 原子事务
+  // ----------------------------------------------------------------
+  type FinalizeResult = {
+    status: string;
+    id: string;
+    published_bucket: string;
+    published_object_path: string;
+    image_url: string;
+    cleanup_id: string | null;
+  };
+  let finalizeResult: FinalizeResult | null = null;
+
+  try {
+    const { data, error } = await client.rpc("finalize_certificate_publish", {
+      p_id: input.certificateId,
+      p_publish_token: publishToken,
+      p_public_bucket: PUBLIC_ASSETS_BUCKET,
+      p_public_object_path: uploadResult.path,
+      p_public_url: uploadResult.publicUrl,
+      p_mime_type: uploadResult.mimeType,
+      p_size_bytes: uploadResult.size,
+      p_sha256: sha256,
+      p_actor_id: input.options?.actorId ?? null,
+      p_actor_email: input.options?.actorEmail ?? null,
+      p_actor_role: input.options?.actorRole ?? null,
+    });
+
+    if (error) {
+      const errCode = (error as { code?: string }).code ?? "";
+      // 40P01 = token mismatch / status mismatch / serialization failure
+      if (errCode === "40P01" || errCode === "40001" || errCode === "23505") {
+        await compensatePublicCopy();
+        return { ok: false, code: "ADMIN_WRITE_CONFLICT" };
+      }
+      // 22004 = bad request (precondition failed)
+      // P0002 = certificate not found
+      if (errCode === "22004" || errCode === "P0002") {
+        await compensatePublicCopy();
+        return { ok: false, code: "ADMIN_WRITE_BAD_REQUEST" };
+      }
+      console.error("CERT_PUBLISH_FINALIZE_FAILED", {
+        certificateId: input.certificateId,
+        errCode,
+        code: "ADMIN_WRITE_FAILED",
+      });
+      await compensatePublicCopy();
+      return { ok: false, code: "ADMIN_WRITE_FAILED" };
+    }
+    finalizeResult = data as FinalizeResult | null;
+  } catch (err) {
+    const errCode = (err as { code?: string }).code ?? "";
+    console.error("CERT_PUBLISH_FINALIZE_EXCEPTION", {
+      certificateId: input.certificateId,
+      errCode,
+      code: "ADMIN_WRITE_FAILED",
+    });
+    await compensatePublicCopy();
+    return { ok: false, code: "ADMIN_WRITE_FAILED" };
+  }
+
+  if (!finalizeResult) {
+    await compensatePublicCopy();
+    return { ok: false, code: "ADMIN_WRITE_FAILED" };
+  }
+
+  // ----------------------------------------------------------------
+  // Phase 2e: 返回结果
+  // ----------------------------------------------------------------
+  return {
+    ok: true,
+    ref: {
+      bucket: "public-assets",
+      path: uploadResult.path,
+      publicUrl: uploadResult.publicUrl,
+      mimeType: uploadResult.mimeType,
+      size: uploadResult.size,
+      sha256,
+    },
+    oldPath: validatedSourcePath,
+    cleanupId: finalizeResult.cleanup_id ?? null,
+  };
+}
+
+// ============================================================
 // Storage audit reconciliation (Section 11.3)
 // ============================================================
 
