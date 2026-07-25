@@ -125,6 +125,8 @@ function freshInstall(url) {
   psql(url, currentFile("supabase/tests/catalog_authorization.sql"));
   psql(url, currentFile("supabase/tests/storage_rls_outbox_rpc.sql"));
   psql(url, currentFile("supabase/tests/per_provider_delivery_storage_lifecycle.sql"));
+  psql(url, currentFile("supabase/tests/schema_verifier_runtime.sql"));
+  psql(url, currentFile("supabase/tests/storage_object_ref_lifecycle.sql"));
 }
 
 function incrementalUpgrade(url) {
@@ -146,6 +148,8 @@ function incrementalUpgrade(url) {
   psql(url, currentFile("supabase/tests/catalog_authorization.sql"));
   psql(url, currentFile("supabase/tests/storage_rls_outbox_rpc.sql"));
   psql(url, currentFile("supabase/tests/per_provider_delivery_storage_lifecycle.sql"));
+  psql(url, currentFile("supabase/tests/schema_verifier_runtime.sql"));
+  psql(url, currentFile("supabase/tests/storage_object_ref_lifecycle.sql"));
 }
 
 try {
