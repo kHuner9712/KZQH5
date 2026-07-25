@@ -525,6 +525,122 @@ end $$;
 rollback;
 
 
+-- ------------------------------------------------------------
+-- Test 12: register_managed_storage_ref_from_url is in the catalog
+--          and exists after all migrations.
+-- ------------------------------------------------------------
+-- Owner: no changes.
+-- Caller: service_role (read-only).
+--
+-- This function was added by migration 20260725280000 to close
+-- the registry coverage gap. It must appear in the verifier
+-- catalog AND resolve to an OID with the expected signature.
+-- ------------------------------------------------------------
+begin;
+set local role service_role;
+do $$
+declare
+  v_in_catalog integer;
+  v_regproc regprocedure;
+begin
+  select count(*)
+    into v_in_catalog
+    from public.list_required_schema_objects()
+    where object_name = 'register_managed_storage_ref_from_url'
+      and object_type = 'function';
+
+  if v_in_catalog <> 1 then
+    raise exception
+      'Test 12 FAILED: register_managed_storage_ref_from_url not in catalog'
+      using errcode = 'P0001';
+  end if;
+
+  -- The cataloged signature must resolve to an OID.
+  execute format('select to_regprocedure(%L)',
+    'public.register_managed_storage_ref_from_url(text, uuid, text, text, text, text, bigint, text)')
+    into v_regproc;
+  if v_regproc is null then
+    raise exception
+      'Test 12 FAILED: register_managed_storage_ref_from_url signature does not resolve'
+      using errcode = 'P0001';
+  end if;
+end $$;
+reset role;
+rollback;
+
+
+-- ------------------------------------------------------------
+-- Test 13: check_storage_object_referenced covers all managed columns.
+-- ------------------------------------------------------------
+-- Owner: no changes.
+-- Caller: service_role (read-only).
+--
+-- The function (replaced by 20260725280000) must inspect every
+-- business column that can hold a managed public-assets URL:
+--   products.cover_image_url, products.video_url
+--   product_images.image_url
+--   product_assets.file_url, product_assets.cover_image_url
+--   certificates.image_url
+--   projects.cover_image_url
+--   project_images.image_url         (NEW)
+--   company_profile.logo_url         (NEW)
+--   company_profile.wechat_qr_url    (NEW)
+--   site_settings.default_og_image_url  (NEW)
+--
+-- We verify the function body contains the four new column
+-- references. This is a static body-shape check: it catches
+-- regressions where a future migration drops one of the scans.
+-- ------------------------------------------------------------
+begin;
+set local role service_role;
+do $$
+declare
+  v_body text;
+begin
+  select pg_get_functiondef(p.oid)
+    into v_body
+    from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public'
+      and p.proname = 'check_storage_object_referenced';
+
+  if v_body is null then
+    raise exception
+      'Test 13 FAILED: check_storage_object_referenced function body is null'
+      using errcode = 'P0001';
+  end if;
+
+  -- The four NEW column scans added by 20260725280000 must all be
+  -- present. We check for the table-qualified column references
+  -- in the WHERE clauses.
+  if v_body !~ 'public\.project_images' then
+    raise exception
+      'Test 13 FAILED: check_storage_object_referenced does not scan public.project_images'
+      using errcode = 'P0001';
+  end if;
+  if v_body !~ 'public\.company_profile' then
+    raise exception
+      'Test 13 FAILED: check_storage_object_referenced does not scan public.company_profile'
+      using errcode = 'P0001';
+  end if;
+  if v_body !~ 'public\.site_settings' then
+    raise exception
+      'Test 13 FAILED: check_storage_object_referenced does not scan public.site_settings'
+      using errcode = 'P0001';
+  end if;
+  -- wechat_qr_url must appear (it is the second column scanned in
+  -- the company_profile block — without it, the cleanup dispatcher
+  -- could delete a WeChat QR code still referenced by the profile).
+  if v_body !~ 'wechat_qr_url' then
+    raise exception
+      'Test 13 FAILED: check_storage_object_referenced does not inspect wechat_qr_url'
+      using errcode = 'P0001';
+  end if;
+end $$;
+reset role;
+rollback;
+
+
 -- ============================================================
 -- End of schema_verifier_runtime.sql
 -- ============================================================

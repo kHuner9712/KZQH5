@@ -1,20 +1,23 @@
 -- ============================================================
 -- Phase 18 (Section 4.6): storage_object_refs lifecycle tests.
 --
--- Proves the pending_delete lifecycle wired by 20260725261000:
+-- Proves the pending_delete lifecycle wired by 20260725261000 and
+-- the unified Source retention policy wired by 20260725270000:
 --
 --   A. Product Asset Draft creates an active 'source' ref.
 --   B. Draft replacement produces a new active ref; old ref -> pending_delete.
 --   C. Old private object is atomically enqueued in storage_cleanup_queue.
 --   D. Same-path update does NOT re-enqueue or create a new ref.
---   E. Catalog Publish: public ref active, source ref -> pending_delete.
+--   E. Catalog Publish: public ref active, source ref STAYS active
+--      (Source retention policy — no cleanup enqueued for source).
 --   F. Cleanup success: matching refs -> deleted.
 --   G. Cleanup failure: refs stay pending_delete (NOT deleted).
 --   H. Unpublish: published ref -> pending_delete.
 --   I. Delete business row: all active refs -> pending_delete.
---   J. Certificate equivalent flow (draft -> publish -> cleanup).
+--   J. Certificate equivalent flow (draft -> publish).
 --   K. Registry write failure rolls back business write + audit.
 --   L. At most one active ref per (owner_type, owner_id, role).
+--   M. Publish -> Unpublish -> Republish: source retained throughout.
 --
 -- All tests use deterministic UUIDs and ROLLBACK.
 -- ============================================================
@@ -313,7 +316,15 @@ begin
 end $$;
 
 -- ============================================================
--- E. Catalog Publish: public ref active, source ref -> pending_delete.
+-- E. Catalog Publish: public ref active, source ref STAYS active.
+-- ============================================================
+-- Source retention policy (20260725270000):
+--   * Publish must NOT transition source ref to pending_delete.
+--   * Publish must NOT enqueue a cleanup for the private source.
+--   * source_bucket / source_object_path columns must be preserved.
+--   * Only the published ref is registered (active).
+-- This is the OPPOSITE of the pre-20260725270000 behavior, which
+-- deleted the private source on publish and broke republish.
 -- ============================================================
 do $$
 declare
@@ -321,8 +332,11 @@ declare
   v_publish_token uuid := '00000000-0000-4000-8000-000000000310';
   v_result jsonb;
   v_published_active_count integer;
+  v_source_active_count integer;
   v_source_pending_count integer;
   v_cleanup_count integer;
+  v_source_bucket text;
+  v_source_path text;
 begin
   select id into v_asset_id
     from public.product_assets
@@ -356,6 +370,14 @@ begin
       using errcode = 'P0001';
   end if;
 
+  -- The result must declare source_retained=true.
+  if coalesce((v_result->>'source_retained')::boolean, false) is not true then
+    raise exception
+      'E: finalize result should declare source_retained=true, got %',
+      v_result->>'source_retained'
+      using errcode = 'P0001';
+  end if;
+
   -- Published ref must be active.
   select count(*)
     into v_published_active_count
@@ -374,7 +396,29 @@ begin
       using errcode = 'P0001';
   end if;
 
-  -- Source ref must be pending_delete (NOT superseded, NOT active).
+  -- Source ref MUST STAY ACTIVE (NOT pending_delete, NOT superseded).
+  -- This is the core assertion of the Source retention policy.
+  select count(*)
+    into v_source_active_count
+    from public.storage_object_refs
+    where owner_type = 'product_asset'
+      and owner_id = v_asset_id
+      and role = 'source'
+      and status = 'active'
+      and bucket = 'private-assets'
+      and object_path = 'catalog-assets/ref-A-source-v2.pdf';
+
+  if v_source_active_count <> 1 then
+    raise exception
+      'E: expected 1 ACTIVE source ref (Source retention policy), got %',
+      v_source_active_count
+      using errcode = 'P0001';
+  end if;
+
+  -- There must be NO newly-pending_delete source ref on publish.
+  -- (The pending_delete ref from test B for ref-A-source.pdf is
+  -- still there, but it was created by Draft replace, not publish.)
+  -- We assert the count did not increase: 1 pending_delete (from B).
   select count(*)
     into v_source_pending_count
     from public.storage_object_refs
@@ -385,12 +429,15 @@ begin
 
   if v_source_pending_count <> 1 then
     raise exception
-      'E: expected 1 pending_delete source ref, got %',
+      'E: expected 1 pending_delete source ref (from Draft replace, not publish), got %',
       v_source_pending_count
       using errcode = 'P0001';
   end if;
 
-  -- A cleanup row must exist for the old private source object.
+  -- NO cleanup row must exist for the CURRENT source path
+  -- (catalog-assets/ref-A-source-v2.pdf). Publish does not enqueue
+  -- source cleanup. The cleanup row from test B is for the OLD
+  -- path (catalog-assets/ref-A-source.pdf), not the current one.
   select count(*)
     into v_cleanup_count
     from public.storage_cleanup_queue
@@ -398,16 +445,45 @@ begin
       and object_path = 'catalog-assets/ref-A-source-v2.pdf'
       and status in ('pending', 'claimed', 'retry');
 
-  if v_cleanup_count <> 1 then
+  if v_cleanup_count <> 0 then
     raise exception
-      'E: expected 1 cleanup row for old source, got %',
+      'E: expected 0 cleanup rows for current source path (Source retention), got %',
       v_cleanup_count
+      using errcode = 'P0001';
+  end if;
+
+  -- source_bucket / source_object_path columns must be preserved.
+  select source_bucket, source_object_path
+    into v_source_bucket, v_source_path
+    from public.product_assets
+    where id = v_asset_id;
+
+  if v_source_bucket is null or v_source_bucket <> 'private-assets' then
+    raise exception
+      'E: source_bucket should be preserved as private-assets, got %',
+      coalesce(v_source_bucket, '<null>')
+      using errcode = 'P0001';
+  end if;
+
+  if v_source_path is null or v_source_path <> 'catalog-assets/ref-A-source-v2.pdf' then
+    raise exception
+      'E: source_object_path should be preserved, got %',
+      coalesce(v_source_path, '<null>')
       using errcode = 'P0001';
   end if;
 end $$;
 
 -- ============================================================
 -- F. Cleanup success: matching refs -> deleted.
+-- ============================================================
+-- Uses the cleanup row enqueued by Draft replace in test B for the
+-- OLD source path (catalog-assets/ref-A-source.pdf). After successful
+-- cleanup completion, the pending_delete ref for that old path must
+-- transition to 'deleted'.
+--
+-- The CURRENT active source ref (catalog-assets/ref-A-source-v2.pdf)
+-- must NOT be affected — it has a different object_path and is not
+-- matched by this cleanup.
 -- ============================================================
 do $$
 declare
@@ -418,6 +494,7 @@ declare
   v_complete_result text;
   v_source_deleted_count integer;
   v_source_pending_count integer;
+  v_source_active_count integer;
 begin
   select id into v_asset_id
     from public.product_assets
@@ -425,13 +502,21 @@ begin
     order by updated_at desc
     limit 1;
 
-  -- Claim and complete the cleanup for the old source path.
+  -- Claim and complete the cleanup for the OLD source path
+  -- (catalog-assets/ref-A-source.pdf), enqueued by test B's
+  -- Draft replace.
   select id into v_cleanup_id
     from public.storage_cleanup_queue
     where bucket = 'private-assets'
-      and object_path = 'catalog-assets/ref-A-source-v2.pdf'
+      and object_path = 'catalog-assets/ref-A-source.pdf'
       and status = 'pending'
     limit 1;
+
+  if v_cleanup_id is null then
+    raise exception
+      'F: setup failure — cleanup row for ref-A-source.pdf not found'
+      using errcode = 'P0001';
+  end if;
 
   -- Claim it.
   v_claim_result := public.claim_storage_cleanup(10, 300);
@@ -463,35 +548,56 @@ begin
       using errcode = 'P0001';
   end if;
 
-  -- The source ref must now be 'deleted' (was pending_delete).
+  -- The OLD source ref (ref-A-source.pdf) must now be 'deleted'
+  -- (was pending_delete from test B).
   select count(*)
     into v_source_deleted_count
     from public.storage_object_refs
     where owner_type = 'product_asset'
       and owner_id = v_asset_id
       and role = 'source'
-      and status = 'deleted';
+      and status = 'deleted'
+      and object_path = 'catalog-assets/ref-A-source.pdf';
 
   if v_source_deleted_count <> 1 then
     raise exception
-      'F: expected 1 deleted source ref after cleanup success, got %',
+      'F: expected 1 deleted source ref for old path, got %',
       v_source_deleted_count
       using errcode = 'P0001';
   end if;
 
-  -- No remaining pending_delete source ref.
+  -- No remaining pending_delete source ref for the old path.
   select count(*)
     into v_source_pending_count
     from public.storage_object_refs
     where owner_type = 'product_asset'
       and owner_id = v_asset_id
       and role = 'source'
-      and status = 'pending_delete';
+      and status = 'pending_delete'
+      and object_path = 'catalog-assets/ref-A-source.pdf';
 
   if v_source_pending_count <> 0 then
     raise exception
-      'F: expected 0 pending_delete source refs after cleanup, got %',
+      'F: expected 0 pending_delete source refs for old path after cleanup, got %',
       v_source_pending_count
+      using errcode = 'P0001';
+  end if;
+
+  -- The CURRENT active source ref (ref-A-source-v2.pdf) must STILL
+  -- be active. Cleanup of a different path must not affect it.
+  select count(*)
+    into v_source_active_count
+    from public.storage_object_refs
+    where owner_type = 'product_asset'
+      and owner_id = v_asset_id
+      and role = 'source'
+      and status = 'active'
+      and object_path = 'catalog-assets/ref-A-source-v2.pdf';
+
+  if v_source_active_count <> 1 then
+    raise exception
+      'F: current active source ref must be preserved after cleanup of old path, got %',
+      v_source_active_count
       using errcode = 'P0001';
   end if;
 end $$;
@@ -499,10 +605,21 @@ end $$;
 -- ============================================================
 -- G. Cleanup failure: refs stay pending_delete (NOT deleted).
 -- ============================================================
+-- Uses Draft replace to create a cleanup for the OLD source path
+-- (catalog-assets/ref-G-source.pdf). Then claims + FAILS the
+-- cleanup. The pending_delete ref for the old path must STAY
+-- pending_delete (NOT prematurely transitioned to 'deleted').
+--
+-- Under the Source retention policy (20260725270000), Publish no
+-- longer creates a source cleanup, so we use Draft replace as the
+-- canonical trigger for source cleanup (which is the correct
+-- production path: only Draft replace and row-delete clean up the
+-- private source object).
+-- ============================================================
 do $$
 declare
   v_asset_id uuid;
-  v_publish_token uuid := '00000000-0000-4000-8000-000000000320';
+  v_updated_at timestamptz;
   v_cleanup_id uuid;
   v_lock_token uuid;
   v_claim_result jsonb;
@@ -510,8 +627,7 @@ declare
   v_pending_count integer;
   v_deleted_count integer;
 begin
-  -- Create a second asset, publish it, then fail the cleanup.
-  -- Insert a fresh draft.
+  -- Create asset G with initial source path.
   perform public.save_product_asset_draft(
     p_id := null,
     p_payload := jsonb_build_object(
@@ -532,39 +648,49 @@ begin
     p_actor_role := 'editor'
   );
 
-  select id into v_asset_id
+  select id, updated_at into v_asset_id, v_updated_at
     from public.product_assets
     where title_cn = '[REF LIFECYCLE] asset G'
     order by updated_at desc
     limit 1;
 
-  -- Publish it.
-  update public.product_assets set
-    publish_status = 'publishing',
-    publish_token = v_publish_token,
-    publish_started_at = now()
-  where id = v_asset_id;
-
-  perform public.finalize_catalog_asset_publish(
-    p_asset_id := v_asset_id,
-    p_publish_token := v_publish_token,
-    p_public_bucket := 'public-assets',
-    p_public_object_path := 'catalog-assets/ref-G-published.pdf',
-    p_public_url := 'https://example.supabase.co/storage/v1/object/public/public-assets/catalog-assets/ref-G-published.pdf',
+  -- Draft replace to a new source path. This enqueues a cleanup
+  -- for the OLD path (ref-G-source.pdf) and transitions the old
+  -- source ref to pending_delete.
+  perform public.save_product_asset_draft(
+    p_id := v_asset_id,
+    p_payload := jsonb_build_object(
+      'product_id', '00000000-0000-4000-8000-000000000301',
+      'asset_type', 'catalog',
+      'title_cn', '[REF LIFECYCLE] asset G',
+      'catalog_topic_id', 'ref-lifecycle-topic-G',
+      'is_published', false,
+      'access_level', 'private',
+      'authorization_status', 'pending'
+    ),
+    p_source_bucket := 'private-assets',
+    p_source_object_path := 'catalog-assets/ref-G-source-v2.pdf',
     p_mime_type := 'application/pdf',
-    p_size_bytes := 512,
+    p_file_size := 768,
     p_sha256 := 'fff0000000000000000000000000000000000000000000000000000000000000',
+    p_expected_updated_at := v_updated_at,
     p_actor_email := 'test@example.invalid',
     p_actor_role := 'editor'
   );
 
-  -- Claim and FAIL the cleanup for the source path.
+  -- Claim and FAIL the cleanup for the OLD source path.
   select id into v_cleanup_id
     from public.storage_cleanup_queue
     where bucket = 'private-assets'
       and object_path = 'catalog-assets/ref-G-source.pdf'
       and status = 'pending'
     limit 1;
+
+  if v_cleanup_id is null then
+    raise exception
+      'G: setup failure — cleanup row for ref-G-source.pdf not found'
+      using errcode = 'P0001';
+  end if;
 
   v_claim_result := public.claim_storage_cleanup(10, 300);
   select lock_token into v_lock_token
@@ -586,22 +712,24 @@ begin
       using errcode = 'P0001';
   end if;
 
-  -- The source ref must still be pending_delete (NOT deleted).
+  -- The OLD source ref must still be pending_delete (NOT deleted).
   select count(*)
     into v_pending_count
     from public.storage_object_refs
     where owner_type = 'product_asset'
       and owner_id = v_asset_id
       and role = 'source'
-      and status = 'pending_delete';
+      and status = 'pending_delete'
+      and object_path = 'catalog-assets/ref-G-source.pdf';
 
   if v_pending_count <> 1 then
     raise exception
-      'G: expected 1 pending_delete source ref after cleanup failure, got %',
+      'G: expected 1 pending_delete source ref for old path after cleanup failure, got %',
       v_pending_count
       using errcode = 'P0001';
   end if;
 
+  -- No deleted source ref (cleanup failed).
   select count(*)
     into v_deleted_count
     from public.storage_object_refs
@@ -858,7 +986,11 @@ begin
 end $$;
 
 -- ============================================================
--- J. Certificate equivalent flow (draft -> publish -> cleanup).
+-- J. Certificate equivalent flow (draft -> publish).
+-- ============================================================
+-- Source retention policy (20260725270000) applies symmetrically
+-- to certificates: Publish must NOT transition source ref to
+-- pending_delete and must NOT enqueue a cleanup for the source.
 -- ============================================================
 do $$
 declare
@@ -870,6 +1002,8 @@ declare
   v_source_pending integer;
   v_published_active integer;
   v_cleanup_count integer;
+  v_source_bucket text;
+  v_source_path text;
 begin
   -- Create certificate draft.
   perform public.save_certificate_draft(
@@ -935,7 +1069,15 @@ begin
       using errcode = 'P0001';
   end if;
 
-  -- Published ref active, source ref pending_delete.
+  -- The result must declare source_retained=true.
+  if coalesce((v_result->>'source_retained')::boolean, false) is not true then
+    raise exception
+      'J: certificate finalize result should declare source_retained=true, got %',
+      v_result->>'source_retained'
+      using errcode = 'P0001';
+  end if;
+
+  -- Published ref must be active.
   select count(*)
     into v_published_active
     from public.storage_object_refs
@@ -950,6 +1092,25 @@ begin
       using errcode = 'P0001';
   end if;
 
+  -- Source ref MUST STAY ACTIVE (NOT pending_delete).
+  select count(*)
+    into v_source_active
+    from public.storage_object_refs
+    where owner_type = 'certificate'
+      and owner_id = v_cert_id
+      and role = 'source'
+      and status = 'active'
+      and bucket = 'private-assets'
+      and object_path = 'certificates/ref-J-source.pdf';
+
+  if v_source_active <> 1 then
+    raise exception
+      'J: expected 1 ACTIVE source cert ref (Source retention), got %',
+      v_source_active
+      using errcode = 'P0001';
+  end if;
+
+  -- No pending_delete source ref (nothing transitioned it).
   select count(*)
     into v_source_pending
     from public.storage_object_refs
@@ -958,13 +1119,14 @@ begin
       and role = 'source'
       and status = 'pending_delete';
 
-  if v_source_pending <> 1 then
-    raise exception 'J: expected 1 pending_delete source cert ref, got %',
+  if v_source_pending <> 0 then
+    raise exception
+      'J: expected 0 pending_delete source cert refs after publish (Source retention), got %',
       v_source_pending
       using errcode = 'P0001';
   end if;
 
-  -- Cleanup enqueued for the source.
+  -- NO cleanup row for the source path.
   select count(*)
     into v_cleanup_count
     from public.storage_cleanup_queue
@@ -972,9 +1134,30 @@ begin
       and object_path = 'certificates/ref-J-source.pdf'
       and status in ('pending', 'claimed', 'retry');
 
-  if v_cleanup_count <> 1 then
-    raise exception 'J: expected 1 cleanup row for cert source, got %',
+  if v_cleanup_count <> 0 then
+    raise exception
+      'J: expected 0 cleanup rows for cert source (Source retention), got %',
       v_cleanup_count
+      using errcode = 'P0001';
+  end if;
+
+  -- source_bucket / source_object_path columns must be preserved.
+  select source_bucket, source_object_path
+    into v_source_bucket, v_source_path
+    from public.certificates
+    where id = v_cert_id;
+
+  if v_source_bucket is null or v_source_bucket <> 'private-assets' then
+    raise exception
+      'J: cert source_bucket should be preserved as private-assets, got %',
+      coalesce(v_source_bucket, '<null>')
+      using errcode = 'P0001';
+  end if;
+
+  if v_source_path is null or v_source_path <> 'certificates/ref-J-source.pdf' then
+    raise exception
+      'J: cert source_object_path should be preserved, got %',
+      coalesce(v_source_path, '<null>')
       using errcode = 'P0001';
   end if;
 end $$;
@@ -1107,6 +1290,642 @@ begin
   if not v_dup_failed then
     raise exception
       'L: duplicate active ref insert should have been rejected by unique index'
+      using errcode = 'P0001';
+  end if;
+end $$;
+
+-- ============================================================
+-- M. Publish -> Unpublish -> Republish: source retained throughout.
+-- ============================================================
+-- This is the canonical justification for the Source retention
+-- policy. After Unpublish, the published object is cleaned up, but
+-- the private source MUST still be present so that Republish can
+-- re-derive the public derivative without requiring the user to
+-- re-upload the original.
+--
+-- Sequence:
+--   1. Create asset M (draft)             -> source ref active
+--   2. Publish #1                          -> source ref STILL active
+--                                            (Source retention policy)
+--   3. Unpublish                           -> source ref STILL active
+--                                            (only published ref pending_delete)
+--   4. Complete cleanup for published obj  -> published ref -> deleted
+--   5. Republish (Publish #2)              -> source ref STILL active
+--                                            new published ref active
+--
+-- If source had been deleted on Publish #1 (pre-20260725270000
+-- behavior), step 5 would have no source bytes to re-derive from.
+-- ============================================================
+do $$
+declare
+  v_asset_id uuid;
+  v_publish_token_1 uuid := '00000000-0000-4000-8000-000000000360';
+  v_publish_token_2 uuid := '00000000-0000-4000-8000-000000000361';
+  v_updated_at timestamptz;
+  v_result jsonb;
+  v_cleanup_id uuid;
+  v_lock_token uuid;
+  v_claim_result jsonb;
+  v_complete_result text;
+  v_source_active integer;
+  v_source_bucket text;
+  v_source_path text;
+  v_published_active integer;
+  v_published_pending integer;
+  v_published_deleted integer;
+  v_cleanup_count integer;
+begin
+  -- 1. Create asset M (draft).
+  perform public.save_product_asset_draft(
+    p_id := null,
+    p_payload := jsonb_build_object(
+      'product_id', '00000000-0000-4000-8000-000000000301',
+      'asset_type', 'catalog',
+      'title_cn', '[REF LIFECYCLE] asset M',
+      'catalog_topic_id', 'ref-lifecycle-topic-M',
+      'is_published', false,
+      'access_level', 'private',
+      'authorization_status', 'pending'
+    ),
+    p_source_bucket := 'private-assets',
+    p_source_object_path := 'catalog-assets/ref-M-source.pdf',
+    p_mime_type := 'application/pdf',
+    p_file_size := 1024,
+    p_sha256 := '88e0000000000000000000000000000000000000000000000000000000000000',
+    p_actor_email := 'test@example.invalid',
+    p_actor_role := 'editor'
+  );
+
+  select id into v_asset_id
+    from public.product_assets
+    where title_cn = '[REF LIFECYCLE] asset M'
+    order by updated_at desc
+    limit 1;
+
+  -- 2. Publish #1.
+  update public.product_assets set
+    publish_status = 'publishing',
+    publish_token = v_publish_token_1,
+    publish_started_at = now()
+  where id = v_asset_id;
+
+  perform public.finalize_catalog_asset_publish(
+    p_asset_id := v_asset_id,
+    p_publish_token := v_publish_token_1,
+    p_public_bucket := 'public-assets',
+    p_public_object_path := 'catalog-assets/ref-M-published-v1.pdf',
+    p_public_url := 'https://example.supabase.co/storage/v1/object/public/public-assets/catalog-assets/ref-M-published-v1.pdf',
+    p_mime_type := 'application/pdf',
+    p_size_bytes := 1024,
+    p_sha256 := '99e0000000000000000000000000000000000000000000000000000000000000',
+    p_actor_email := 'test@example.invalid',
+    p_actor_role := 'editor'
+  );
+
+  -- Source ref must STILL be active after Publish #1.
+  select count(*)
+    into v_source_active
+    from public.storage_object_refs
+    where owner_type = 'product_asset'
+      and owner_id = v_asset_id
+      and role = 'source'
+      and status = 'active'
+      and bucket = 'private-assets'
+      and object_path = 'catalog-assets/ref-M-source.pdf';
+
+  if v_source_active <> 1 then
+    raise exception
+      'M.2: source ref must be active after Publish #1, got %',
+      v_source_active
+      using errcode = 'P0001';
+  end if;
+
+  -- 3. Unpublish.
+  select updated_at into v_updated_at
+    from public.product_assets where id = v_asset_id;
+
+  v_result := public.unpublish_catalog_asset(
+    p_id := v_asset_id,
+    p_expected_updated_at := v_updated_at,
+    p_actor_email := 'test@example.invalid',
+    p_actor_role := 'editor'
+  );
+
+  if (v_result->>'status') <> 'unpublished' then
+    raise exception 'M.3: unpublish should return unpublished, got %',
+      v_result->>'status'
+      using errcode = 'P0001';
+  end if;
+
+  -- Source ref must STILL be active after Unpublish.
+  select count(*)
+    into v_source_active
+    from public.storage_object_refs
+    where owner_type = 'product_asset'
+      and owner_id = v_asset_id
+      and role = 'source'
+      and status = 'active';
+
+  if v_source_active <> 1 then
+    raise exception
+      'M.3: source ref must be active after Unpublish, got %',
+      v_source_active
+      using errcode = 'P0001';
+  end if;
+
+  -- Published ref must be pending_delete.
+  select count(*)
+    into v_published_pending
+    from public.storage_object_refs
+    where owner_type = 'product_asset'
+      and owner_id = v_asset_id
+      and role = 'published'
+      and status = 'pending_delete';
+
+  if v_published_pending <> 1 then
+    raise exception
+      'M.3: expected 1 pending_delete published ref after unpublish, got %',
+      v_published_pending
+      using errcode = 'P0001';
+  end if;
+
+  -- 4. Complete cleanup for the published object.
+  select id into v_cleanup_id
+    from public.storage_cleanup_queue
+    where bucket = 'public-assets'
+      and object_path = 'catalog-assets/ref-M-published-v1.pdf'
+      and status = 'pending'
+    limit 1;
+
+  if v_cleanup_id is null then
+    raise exception
+      'M.4: cleanup row for published v1 not found'
+      using errcode = 'P0001';
+  end if;
+
+  v_claim_result := public.claim_storage_cleanup(10, 300);
+  select (value->>'lock_token')::uuid into v_lock_token
+    from jsonb_array_elements(v_claim_result)
+    where value->>'id' = v_cleanup_id::text
+    limit 1;
+
+  if v_lock_token is null then
+    select lock_token into v_lock_token
+      from public.storage_cleanup_queue
+      where id = v_cleanup_id;
+  end if;
+
+  v_complete_result := public.complete_storage_cleanup(
+    p_cleanup_id := v_cleanup_id,
+    p_lock_token := v_lock_token,
+    p_success := true,
+    p_final_status := 'deleted'
+  );
+
+  if v_complete_result <> 'completed' then
+    raise exception
+      'M.4: cleanup completion should return completed, got %',
+      v_complete_result
+      using errcode = 'P0001';
+  end if;
+
+  -- Published ref must now be 'deleted'.
+  select count(*)
+    into v_published_deleted
+    from public.storage_object_refs
+    where owner_type = 'product_asset'
+      and owner_id = v_asset_id
+      and role = 'published'
+      and status = 'deleted';
+
+  if v_published_deleted <> 1 then
+    raise exception
+      'M.4: expected 1 deleted published ref after cleanup, got %',
+      v_published_deleted
+      using errcode = 'P0001';
+  end if;
+
+  -- 5. Republish (Publish #2). The source is still present, so the
+  --    public derivative can be re-derived. finalize only needs the
+  --    row to be in 'draft' state (set by unpublish) -> we re-arm
+  --    publish_status = 'publishing'.
+  update public.product_assets set
+    publish_status = 'publishing',
+    publish_token = v_publish_token_2,
+    publish_started_at = now()
+  where id = v_asset_id;
+
+  v_result := public.finalize_catalog_asset_publish(
+    p_asset_id := v_asset_id,
+    p_publish_token := v_publish_token_2,
+    p_public_bucket := 'public-assets',
+    p_public_object_path := 'catalog-assets/ref-M-published-v2.pdf',
+    p_public_url := 'https://example.supabase.co/storage/v1/object/public/public-assets/catalog-assets/ref-M-published-v2.pdf',
+    p_mime_type := 'application/pdf',
+    p_size_bytes := 1024,
+    p_sha256 := 'aae0000000000000000000000000000000000000000000000000000000000000',
+    p_actor_email := 'test@example.invalid',
+    p_actor_role := 'editor'
+  );
+
+  if (v_result->>'status') <> 'published' then
+    raise exception 'M.5: republish should return published, got %',
+      v_result->>'status'
+      using errcode = 'P0001';
+  end if;
+
+  -- Source ref must STILL be active (Source retention across the
+  -- entire publish -> unpublish -> republish cycle).
+  select count(*)
+    into v_source_active
+    from public.storage_object_refs
+    where owner_type = 'product_asset'
+      and owner_id = v_asset_id
+      and role = 'source'
+      and status = 'active'
+      and bucket = 'private-assets'
+      and object_path = 'catalog-assets/ref-M-source.pdf';
+
+  if v_source_active <> 1 then
+    raise exception
+      'M.5: source ref must STILL be active after Republish, got %',
+      v_source_active
+      using errcode = 'P0001';
+  end if;
+
+  -- A new published ref must be active for v2 path.
+  select count(*)
+    into v_published_active
+    from public.storage_object_refs
+    where owner_type = 'product_asset'
+      and owner_id = v_asset_id
+      and role = 'published'
+      and status = 'active'
+      and bucket = 'public-assets'
+      and object_path = 'catalog-assets/ref-M-published-v2.pdf';
+
+  if v_published_active <> 1 then
+    raise exception
+      'M.5: expected 1 active published ref for v2 after republish, got %',
+      v_published_active
+      using errcode = 'P0001';
+  end if;
+
+  -- source_bucket / source_object_path still intact.
+  select source_bucket, source_object_path
+    into v_source_bucket, v_source_path
+    from public.product_assets
+    where id = v_asset_id;
+
+  if v_source_bucket <> 'private-assets' or v_source_path <> 'catalog-assets/ref-M-source.pdf' then
+    raise exception
+      'M.5: source columns not retained across republish, bucket=% path=%',
+      v_source_bucket, v_source_path
+      using errcode = 'P0001';
+  end if;
+
+  -- No cleanup row for source at any point.
+  select count(*)
+    into v_cleanup_count
+    from public.storage_cleanup_queue
+    where bucket = 'private-assets'
+      and object_path = 'catalog-assets/ref-M-source.pdf'
+      and status in ('pending', 'claimed', 'retry');
+
+  if v_cleanup_count <> 0 then
+    raise exception
+      'M.5: source cleanup must never have been enqueued (Source retention), got %',
+      v_cleanup_count
+      using errcode = 'P0001';
+  end if;
+end $$;
+
+-- ============================================================
+-- N. Managed Storage Registry coverage for non-asset business writes.
+-- ============================================================
+-- Migration 20260725280000 wires register_managed_storage_ref_from_url
+-- into save_product_with_images_and_audit, save_project_with_relations
+-- _and_audit, save_company_profile_with_audit, and
+-- save_site_settings_with_audit. It also fixes the projects.video_url
+-- bug in save_project_with_relations and delete_project_with_audit.
+--
+-- This block verifies:
+--   N.1  save_product_with_images_and_audit registers active refs
+--        for product_cover / product_video / product_image.
+--   N.2  save_project_with_relations_and_audit registers active refs
+--        for project_cover / project_image AND does NOT raise
+--        `column projects.video_url does not exist`.
+--   N.3  save_company_profile_with_audit registers active refs
+--        for company_logo / company_wechat_qr.
+--   N.4  save_site_settings_with_audit registers an active ref
+--        for site_og_image.
+--   N.5  delete_project_with_audit marks project_cover / project_image
+--        refs as pending_delete AND does not raise on the dead
+--        projects.video_url column.
+--   N.6  External URLs (non-managed) do NOT create refs.
+--   N.7  check_storage_object_referenced returns true for a URL
+--        held by project_images.image_url (regression for the
+--        pre-20260725280000 coverage gap).
+-- ============================================================
+
+-- ============================================================
+-- N.1  Product write registers product_cover / product_video / product_image refs.
+-- ============================================================
+do $$
+declare
+  v_product_id uuid;
+  v_cover_count integer;
+  v_video_count integer;
+  v_image_count integer;
+begin
+  perform public.save_product_with_images_and_audit(
+    p_id := null,
+    p_product := jsonb_build_object(
+      'category_id', '00000000-0000-4000-8000-000000000300',
+      'name_cn', '[REGISTRY N.1] product',
+      'slug', 'registry-n1-product',
+      'cover_image_url', 'https://example.supabase.co/storage/v1/object/public/public-assets/products/n1-cover.jpg',
+      'video_url', 'https://example.supabase.co/storage/v1/object/public/public-assets/products/n1-video.mp4',
+      'is_published', false
+    ),
+    p_images := jsonb_build_array(
+      jsonb_build_object('image_url', 'https://example.supabase.co/storage/v1/object/public/public-assets/products/n1-img1.jpg', 'sort_order', 0)
+    ),
+    p_expected_updated_at := null,
+    p_actor_email := 'test@example.invalid',
+    p_actor_role := 'editor'
+  );
+
+  select id into v_product_id from public.products where slug = 'registry-n1-product';
+
+  select count(*) into v_cover_count
+    from public.storage_object_refs
+    where owner_type = 'product_cover' and owner_id = v_product_id
+      and role = 'cover' and status = 'active';
+  if v_cover_count <> 1 then
+    raise exception 'N.1: expected 1 active product_cover ref, got %', v_cover_count
+      using errcode = 'P0001';
+  end if;
+
+  select count(*) into v_video_count
+    from public.storage_object_refs
+    where owner_type = 'product_video' and owner_id = v_product_id
+      and role = 'video' and status = 'active';
+  if v_video_count <> 1 then
+    raise exception 'N.1: expected 1 active product_video ref, got %', v_video_count
+      using errcode = 'P0001';
+  end if;
+
+  select count(*) into v_image_count
+    from public.storage_object_refs
+    where owner_type = 'product_image' and owner_id = v_product_id
+      and role = 'image' and status = 'active';
+  if v_image_count <> 1 then
+    raise exception 'N.1: expected 1 active product_image ref, got %', v_image_count
+      using errcode = 'P0001';
+  end if;
+end $$;
+
+-- ============================================================
+-- N.2  Project write registers project_cover / project_image refs
+--      AND does not raise on the dead video_url column.
+-- ============================================================
+do $$
+declare
+  v_project_id uuid;
+  v_cover_count integer;
+  v_image_count integer;
+begin
+  -- This call MUST NOT raise `column projects.video_url does not exist`.
+  perform public.save_project_with_relations_and_audit(
+    p_id := null,
+    p_project := jsonb_build_object(
+      'title_cn', '[REGISTRY N.2] project',
+      'slug', 'registry-n2-project',
+      'cover_image_url', 'https://example.supabase.co/storage/v1/object/public/public-assets/projects/n2-cover.jpg',
+      'is_published', false
+    ),
+    p_images := jsonb_build_array(
+      jsonb_build_object('image_url', 'https://example.supabase.co/storage/v1/object/public/public-assets/projects/n2-img1.jpg', 'sort_order', 0)
+    ),
+    p_products := '[]'::jsonb,
+    p_expected_updated_at := null,
+    p_actor_email := 'test@example.invalid',
+    p_actor_role := 'editor'
+  );
+
+  select id into v_project_id from public.projects where slug = 'registry-n2-project';
+
+  select count(*) into v_cover_count
+    from public.storage_object_refs
+    where owner_type = 'project_cover' and owner_id = v_project_id
+      and role = 'cover' and status = 'active';
+  if v_cover_count <> 1 then
+    raise exception 'N.2: expected 1 active project_cover ref, got %', v_cover_count
+      using errcode = 'P0001';
+  end if;
+
+  select count(*) into v_image_count
+    from public.storage_object_refs
+    where owner_type = 'project_image' and owner_id = v_project_id
+      and role = 'image' and status = 'active';
+  if v_image_count <> 1 then
+    raise exception 'N.2: expected 1 active project_image ref, got %', v_image_count
+      using errcode = 'P0001';
+  end if;
+end $$;
+
+-- ============================================================
+-- N.3  Company profile write registers company_logo / company_wechat_qr refs.
+-- ============================================================
+do $$
+declare
+  v_company_id uuid;
+  v_logo_count integer;
+  v_qr_count integer;
+begin
+  perform public.save_company_profile_with_audit(
+    p_id := null,
+    p_payload := jsonb_build_object(
+      'title_cn', '[REGISTRY N.3] company',
+      'logo_url', 'https://example.supabase.co/storage/v1/object/public/public-assets/company/n3-logo.png',
+      'wechat_qr_url', 'https://example.supabase.co/storage/v1/object/public/public-assets/company/n3-qr.png'
+    ),
+    p_expected_updated_at := null,
+    p_actor_email := 'test@example.invalid',
+    p_actor_role := 'editor'
+  );
+
+  select id into v_company_id from public.company_profile where title_cn = '[REGISTRY N.3] company';
+
+  select count(*) into v_logo_count
+    from public.storage_object_refs
+    where owner_type = 'company_logo' and owner_id = v_company_id
+      and role = 'logo' and status = 'active';
+  if v_logo_count <> 1 then
+    raise exception 'N.3: expected 1 active company_logo ref, got %', v_logo_count
+      using errcode = 'P0001';
+  end if;
+
+  select count(*) into v_qr_count
+    from public.storage_object_refs
+    where owner_type = 'company_wechat_qr' and owner_id = v_company_id
+      and role = 'wechat_qr' and status = 'active';
+  if v_qr_count <> 1 then
+    raise exception 'N.3: expected 1 active company_wechat_qr ref, got %', v_qr_count
+      using errcode = 'P0001';
+  end if;
+end $$;
+
+-- ============================================================
+-- N.4  Site settings write registers site_og_image ref.
+-- ============================================================
+do $$
+declare
+  v_settings_id uuid;
+  v_og_count integer;
+begin
+  perform public.save_site_settings_with_audit(
+    p_id := null,
+    p_payload := jsonb_build_object(
+      'site_name', '[REGISTRY N.4] site',
+      'default_language', 'zh',
+      'default_og_image_url', 'https://example.supabase.co/storage/v1/object/public/public-assets/site/n4-og.png'
+    ),
+    p_expected_updated_at := null,
+    p_actor_email := 'test@example.invalid',
+    p_actor_role := 'editor'
+  );
+
+  select id into v_settings_id from public.site_settings where site_name = '[REGISTRY N.4] site';
+
+  select count(*) into v_og_count
+    from public.storage_object_refs
+    where owner_type = 'site_og_image' and owner_id = v_settings_id
+      and role = 'og_image' and status = 'active';
+  if v_og_count <> 1 then
+    raise exception 'N.4: expected 1 active site_og_image ref, got %', v_og_count
+      using errcode = 'P0001';
+  end if;
+end $$;
+
+-- ============================================================
+-- N.5  delete_project_with_audit marks project refs as pending_delete
+--      AND does not raise on the dead video_url column.
+-- ============================================================
+do $$
+declare
+  v_project_id uuid;
+  v_updated_at timestamptz;
+  v_pending_cover integer;
+  v_pending_image integer;
+begin
+  select id, updated_at into v_project_id, v_updated_at
+    from public.projects where slug = 'registry-n2-project';
+
+  -- This call MUST NOT raise `column projects.video_url does not exist`.
+  perform public.delete_project_with_audit(
+    p_id := v_project_id,
+    p_expected_updated_at := v_updated_at,
+    p_actor_email := 'test@example.invalid',
+    p_actor_role := 'editor'
+  );
+
+  select count(*) into v_pending_cover
+    from public.storage_object_refs
+    where owner_type = 'project_cover' and owner_id = v_project_id
+      and role = 'cover' and status = 'pending_delete';
+  if v_pending_cover <> 1 then
+    raise exception 'N.5: expected 1 pending_delete project_cover ref, got %', v_pending_cover
+      using errcode = 'P0001';
+  end if;
+
+  select count(*) into v_pending_image
+    from public.storage_object_refs
+    where owner_type = 'project_image' and owner_id = v_project_id
+      and role = 'image' and status = 'pending_delete';
+  if v_pending_image <> 1 then
+    raise exception 'N.5: expected 1 pending_delete project_image ref, got %', v_pending_image
+      using errcode = 'P0001';
+  end if;
+end $$;
+
+-- ============================================================
+-- N.6  External URLs do NOT create refs.
+-- ============================================================
+do $$
+declare
+  v_product_id uuid;
+  v_cover_count integer;
+begin
+  perform public.save_product_with_images_and_audit(
+    p_id := null,
+    p_product := jsonb_build_object(
+      'category_id', '00000000-0000-4000-8000-000000000300',
+      'name_cn', '[REGISTRY N.6] external product',
+      'slug', 'registry-n6-external',
+      'cover_image_url', 'https://cdn.example.com/external-cover.jpg',
+      'is_published', false
+    ),
+    p_images := '[]'::jsonb,
+    p_expected_updated_at := null,
+    p_actor_email := 'test@example.invalid',
+    p_actor_role := 'editor'
+  );
+
+  select id into v_product_id from public.products where slug = 'registry-n6-external';
+
+  -- External URL must NOT have created a ref.
+  select count(*) into v_cover_count
+    from public.storage_object_refs
+    where owner_type = 'product_cover' and owner_id = v_product_id
+      and role = 'cover';
+  if v_cover_count <> 0 then
+    raise exception 'N.6: external URL must not create a ref, got %', v_cover_count
+      using errcode = 'P0001';
+  end if;
+end $$;
+
+-- ============================================================
+-- N.7  check_storage_object_referenced returns true for a URL held
+--      by project_images.image_url (regression for the
+--      pre-20260725280000 coverage gap).
+-- ============================================================
+do $$
+declare
+  v_referenced boolean;
+begin
+  -- Insert a project + image directly, then ask the reference
+  -- checker about the image path. Before 20260725280000 this
+  -- returned false (the column was not scanned), which would have
+  -- allowed the cleanup dispatcher to delete the image while it
+  -- was still referenced.
+  perform public.save_project_with_relations_and_audit(
+    p_id := null,
+    p_project := jsonb_build_object(
+      'title_cn', '[REGISTRY N.7] reference check',
+      'slug', 'registry-n7-refcheck',
+      'is_published', false
+    ),
+    p_images := jsonb_build_array(
+      jsonb_build_object(
+        'image_url', 'https://example.supabase.co/storage/v1/object/public/public-assets/projects/n7-img.jpg',
+        'sort_order', 0
+      )
+    ),
+    p_products := '[]'::jsonb,
+    p_expected_updated_at := null,
+    p_actor_email := 'test@example.invalid',
+    p_actor_role := 'editor'
+  );
+
+  v_referenced := public.check_storage_object_referenced(
+    'public-assets', 'projects/n7-img.jpg'
+  );
+  if v_referenced is not true then
+    raise exception
+      'N.7: check_storage_object_referenced returned false for a path '
+      'held by project_images.image_url (cleanup dispatcher would delete it)'
       using errcode = 'P0001';
   end if;
 end $$;
