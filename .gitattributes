@@ -1,0 +1,36 @@
+# Enforce LF line endings for source and migration files.
+#
+# This is a hard requirement for the migration immutability gate:
+# the SHA-256 manifest is computed on LF-normalized content. Without
+# this .gitattributes, Windows checkouts with core.autocrlf=true get
+# CRLF in the working tree, while Linux CI gets LF. The immutability
+# script normalizes CRLF->LF before hashing, but .gitattributes
+# guarantees the on-disk bytes are also LF on every platform, so
+# the manifest and the working tree agree without runtime normalization.
+#
+# This also makes the CRLF->LF normalization in the immutability
+# script a belt-and-suspenders safety net rather than the primary
+# mechanism.
+
+*.sql   text eol=lf
+*.mjs   text eol=lf
+*.js    text eol=lf
+*.ts    text eol=lf
+*.tsx   text eol=lf
+*.jsx   text eol=lf
+*.json  text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+*.md    text eol=lf
+*.css   text eol=lf
+*.html  text eol=lf
+
+# Binary files — never normalize.
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.webp  binary
+*.ico   binary
+*.pdf   binary
+*.zip   binary

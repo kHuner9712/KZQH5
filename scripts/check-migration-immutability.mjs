@@ -21,6 +21,21 @@
 //                     reference to a missing file, any duplicate
 //                     filename/hash line, or any non-monotonic
 //                     timestamp causes exit code 1.
+//   --verify-against-ref=<git-ref>
+//                     Anchors the manifest to a historical commit.
+//                     Reads the manifest at <git-ref> via
+//                     `git show <ref>:docs/MIGRATION_SHA256_MANIFEST.txt`,
+//                     then verifies that EVERY migration registered
+//                     at that ref is still present at HEAD with the
+//                     SAME hash, both on disk and in the HEAD
+//                     manifest. New migrations added since the ref
+//                     must be appended with strictly later timestamps.
+//                     This mode is the trust baseline: a malicious PR
+//                     that rewrites the entire manifest + all
+//                     migrations together would pass the default
+//                     self-consistency check, but FAIL this mode
+//                     because the historical baseline disagrees.
+//                     Requires a full clone (CI must use fetch-depth: 0).
 //   --append-new      Verifies all registered hashes match, then
 //                     appends the SHA-256 of any NEW migration
 //                     file (one not yet in the manifest) to the
@@ -43,6 +58,7 @@
 // ============================================================
 
 import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -57,6 +73,12 @@ const argv = process.argv.slice(2);
 const MODE_APPEND_NEW = argv.includes("--append-new");
 const MODE_INITIALIZE = argv.includes("--initialize");
 const MODE_UPDATE = argv.includes("--update"); // legacy, removed
+const MODE_VERIFY_AGAINST_REF_ARG = argv.find((a) =>
+  a.startsWith("--verify-against-ref="),
+);
+const MODE_VERIFY_AGAINST_REF = MODE_VERIFY_AGAINST_REF_ARG
+  ? MODE_VERIFY_AGAINST_REF_ARG.slice("--verify-against-ref=".length)
+  : null;
 
 if (MODE_UPDATE) {
   console.error(
@@ -70,6 +92,43 @@ if (MODE_UPDATE) {
 
 if (MODE_APPEND_NEW && MODE_INITIALIZE) {
   console.error("BLOCK: --append-new and --initialize are mutually exclusive.");
+  process.exit(1);
+}
+
+// --verify-against-ref is mutually exclusive with all write modes.
+// It is a read-only trust baseline check.
+const ACTIVE_WRITE_MODES = [
+  MODE_APPEND_NEW && "--append-new",
+  MODE_INITIALIZE && "--initialize",
+].filter(Boolean);
+if (MODE_VERIFY_AGAINST_REF && ACTIVE_WRITE_MODES.length > 0) {
+  console.error(
+    "BLOCK: --verify-against-ref is mutually exclusive with write modes " +
+      `(${ACTIVE_WRITE_MODES.join(", ")}).`,
+  );
+  process.exit(1);
+}
+
+if (MODE_VERIFY_AGAINST_REF === "") {
+  console.error(
+    "BLOCK: --verify-against-ref requires a non-empty git ref, " +
+      "e.g. --verify-against-ref=origin/main",
+  );
+  process.exit(1);
+}
+
+// CI safety: --initialize rewrites the entire manifest from scratch,
+// defeating the immutability gate. It is a one-time local bootstrap
+// tool only. In CI the manifest MUST already exist and be appended-to
+// via --append-new. Refuse --initialize outright when the
+// CI_DISALLOW_INITIALIZE env var is set (the CI workflow sets it).
+if (MODE_INITIALIZE && process.env.CI_DISALLOW_INITIALIZE === "true") {
+  console.error(
+    "BLOCK: --initialize is not allowed in CI (CI_DISALLOW_INITIALIZE=true). " +
+      "--initialize rewrites the entire manifest from scratch, which " +
+      "defeats the immutability gate. Run --initialize locally once to " +
+      "bootstrap, then use --append-new to register new migrations.",
+  );
   process.exit(1);
 }
 
@@ -431,6 +490,240 @@ async function modeVerify() {
   );
 }
 
+/**
+ * Run a git command and return its stdout as a string.
+ *
+ * Used by --verify-against-ref to read historical manifest and
+ * migration content from a git ref. We use execFileSync (not spawn)
+ * because we want the full stdout in memory and we want a clean
+ * non-zero exit on failure.
+ *
+ * The git command runs in the project ROOT directory. We deliberately
+ * do NOT pass a shell — execFileSync with an arg array is shell-less
+ * and safe against argument injection.
+ */
+function gitShow(ref, relPath) {
+  try {
+    const stdout = execFileSync(
+      "git",
+      ["show", `${ref}:${relPath}`],
+      {
+        cwd: ROOT,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+        maxBuffer: 64 * 1024 * 1024,
+      },
+    );
+    return stdout;
+  } catch (err) {
+    const stderr = err.stderr ? err.stderr.toString().trim() : "";
+    const msg = stderr || err.message;
+    const e = new Error(`git show ${ref}:${relPath} failed: ${msg}`);
+    e.code = err.status === 128 ? "GIT_MISSING_OBJECT" : "GIT_ERROR";
+    throw e;
+  }
+}
+
+/**
+ * --verify-against-ref=<git-ref>
+ *
+ * Trust baseline check. Reads the manifest at <git-ref> via
+ * `git show <ref>:docs/MIGRATION_SHA256_MANIFEST.txt`, then verifies:
+ *
+ *   1. Every migration registered at <ref> is STILL registered at
+ *      HEAD with the SAME sha256. (No silent manifest rewrite.)
+ *
+ *   2. Every migration file on disk at <ref> still exists at HEAD
+ *      with the SAME sha256. (No silent file edit.)
+ *
+ *   3. New migrations added since <ref> have strictly later
+ *      timestamps than the last <ref> migration, AND their on-disk
+ *      hash matches the HEAD manifest entry. (No backdating, no
+ *      hash mismatch.)
+ *
+ * This mode is the trust baseline. The default modeVerify() only
+ * checks that the HEAD manifest is self-consistent with the HEAD
+ * on-disk files — a malicious PR that rewrites BOTH the manifest
+ * and all migration files in the same commit would pass. This mode
+ * anchors to history, so such a rewrite is detected because the
+ * historical baseline disagrees.
+ *
+ * Requires a full clone (CI must use fetch-depth: 0). A shallow
+ * clone does not contain the ref and git show will fail with
+ * "bad object".
+ */
+async function modeVerifyAgainstRef(ref) {
+  // 1. Read HEAD manifest.
+  const headManifestText = await readManifestOrBlock();
+  let headEntries;
+  try {
+    headEntries = parseManifest(headManifestText);
+  } catch (err) {
+    console.error(`BLOCK: HEAD manifest parse error: ${err.message}`);
+    process.exit(1);
+  }
+  if (headEntries.length === 0) {
+    console.error("BLOCK: HEAD manifest is empty.");
+    process.exit(1);
+  }
+  const headByFilename = new Map(headEntries.map((e) => [e.filename, e]));
+
+  // 2. Read ref manifest (historical baseline).
+  let refManifestText;
+  try {
+    refManifestText = gitShow(ref, "docs/MIGRATION_SHA256_MANIFEST.txt");
+  } catch (err) {
+    if (err.code === "GIT_MISSING_OBJECT") {
+      console.error(
+        `BLOCK: docs/MIGRATION_SHA256_MANIFEST.txt does not exist at ` +
+          `ref '${ref}'. The trust baseline requires that this ref ` +
+          `already contains a manifest. Either pick a later ref, or ` +
+          `bootstrap the manifest first via --initialize and commit it.`,
+      );
+      process.exit(1);
+    }
+    console.error(
+      `BLOCK: could not read manifest at ref '${ref}': ${err.message}`,
+    );
+    console.error(
+      `       This usually means the clone is shallow (CI needs ` +
+        `fetch-depth: 0) or the ref does not exist locally.`,
+    );
+    process.exit(1);
+  }
+  let refEntries;
+  try {
+    refEntries = parseManifest(refManifestText);
+  } catch (err) {
+    console.error(
+      `BLOCK: manifest at ref '${ref}' is malformed: ${err.message}`,
+    );
+    process.exit(1);
+  }
+  if (refEntries.length === 0) {
+    console.error(`BLOCK: manifest at ref '${ref}' is empty.`);
+    process.exit(1);
+  }
+
+  const errors = [];
+
+  // 3. Every ref manifest entry must be present at HEAD with the
+  //    SAME sha256, both in the manifest and on disk.
+  for (const refEntry of refEntries) {
+    const headEntry = headByFilename.get(refEntry.filename);
+    if (!headEntry) {
+      errors.push(
+        `BLOCK: migration '${refEntry.filename}' was registered at ` +
+          `ref '${ref}' but is MISSING from the HEAD manifest. ` +
+          `Frozen migrations must not be unregistered.`,
+      );
+      continue;
+    }
+    if (headEntry.sha256 !== refEntry.sha256) {
+      errors.push(
+        `BLOCK: manifest hash for '${refEntry.filename}' changed ` +
+          `between ref '${ref}' and HEAD.`,
+      );
+      errors.push(`  ref  sha256: ${refEntry.sha256}`);
+      errors.push(`  head sha256: ${headEntry.sha256}`);
+      errors.push(
+        `  Frozen migration hashes must not change. If the migration ` +
+          `file itself is unchanged, the manifest must not be edited.`,
+      );
+    }
+
+    // Verify the on-disk file still hash-matches the ref baseline.
+    const fullPath = join(MIGRATIONS_DIR, refEntry.filename);
+    let actualHash;
+    try {
+      actualHash = await sha256OfFile(fullPath);
+    } catch (err) {
+      if (err.code === "ENOENT") {
+        errors.push(
+          `BLOCK: migration '${refEntry.filename}' existed at ref ` +
+            `'${ref}' but is MISSING from disk. Frozen migrations ` +
+            `must not be deleted.`,
+        );
+        continue;
+      }
+      throw err;
+    }
+    if (actualHash !== refEntry.sha256) {
+      errors.push(
+        `BLOCK: migration '${refEntry.filename}' on disk has been ` +
+          `modified since ref '${ref}'.`,
+      );
+      errors.push(`  ref     sha256: ${refEntry.sha256}`);
+      errors.push(`  on-disk sha256: ${actualHash}`);
+      errors.push(
+        `  Frozen migrations must not be edited. Add a NEW migration ` +
+          `with a strictly later timestamp.`,
+      );
+    }
+  }
+
+  // 4. New migrations at HEAD (not in ref) must have strictly later
+  //    timestamps than the last ref migration, and their on-disk
+  //    hash must match the HEAD manifest entry.
+  const refFilenames = new Set(refEntries.map((e) => e.filename));
+  const lastRefTs =
+    refEntries.length > 0
+      ? refEntries[refEntries.length - 1].timestamp
+      : 0;
+  const newAtHead = headEntries.filter((e) => !refFilenames.has(e.filename));
+  for (const newEntry of newAtHead) {
+    if (newEntry.timestamp <= lastRefTs) {
+      errors.push(
+        `BLOCK: new migration '${newEntry.filename}' has timestamp ` +
+          `${newEntry.timestamp} which is not strictly later than ` +
+          `the last ref migration timestamp ${lastRefTs}. ` +
+          `New migrations must use a strictly later timestamp.`,
+      );
+    }
+    const fullPath = join(MIGRATIONS_DIR, newEntry.filename);
+    let actualHash;
+    try {
+      actualHash = await sha256OfFile(fullPath);
+    } catch (err) {
+      if (err.code === "ENOENT") {
+        errors.push(
+          `BLOCK: migration '${newEntry.filename}' is in the HEAD ` +
+            `manifest but MISSING from disk.`,
+        );
+        continue;
+      }
+      throw err;
+    }
+    if (actualHash !== newEntry.sha256) {
+      errors.push(
+        `BLOCK: new migration '${newEntry.filename}' on-disk hash ` +
+          `does not match HEAD manifest entry.`,
+      );
+      errors.push(`  manifest sha256: ${newEntry.sha256}`);
+      errors.push(`  on-disk sha256:   ${actualHash}`);
+    }
+  }
+
+  if (errors.length > 0) {
+    for (const e of errors) console.error(e);
+    console.error(
+      `\nBLOCK: ${errors.length} immutability violation(s) detected ` +
+        `against ref '${ref}'.`,
+    );
+    process.exit(1);
+  }
+
+  console.log(
+    `PASS: ${refEntries.length} migration(s) verified unchanged ` +
+      `against ref '${ref}'.`,
+  );
+  console.log(
+    `      ${newAtHead.length} new migration(s) correctly appended ` +
+      `since ref.`,
+  );
+  console.log(`      HEAD manifest total: ${headEntries.length} entries.`);
+}
+
 async function main() {
   if (MODE_INITIALIZE) {
     await modeInitialize();
@@ -438,6 +731,10 @@ async function main() {
   }
   if (MODE_APPEND_NEW) {
     await modeAppendNew();
+    return;
+  }
+  if (MODE_VERIFY_AGAINST_REF) {
+    await modeVerifyAgainstRef(MODE_VERIFY_AGAINST_REF);
     return;
   }
   await modeVerify();

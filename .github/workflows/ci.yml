@@ -24,9 +24,17 @@ jobs:
     timeout-minutes: 25
     steps:
       # actions/checkout@v4.2.2
+      # fetch-depth: 0 is required because the migration immutability
+      # gate (scripts/check-migration-immutability.mjs) will use
+      # `git rev-list` / `git show` to anchor the manifest to a
+      # historical commit (--verify-against-ref mode). A shallow
+      # clone (default depth=1) does not contain that commit, causing
+      # "fatal: bad object" failures. We fetch full history here so
+      # the immutability trust baseline is verifiable in CI.
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           persist-credentials: false
+          fetch-depth: 0
       # actions/setup-node@v4.4.0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
@@ -39,6 +47,12 @@ jobs:
           which node
       - run: npm ci
       - name: Verify frozen migration hashes
+        # CI_DISALLOW_INITIALIZE prevents the --initialize bootstrap
+        # mode from running in CI. --initialize rewrites the entire
+        # manifest from scratch, defeating the immutability gate. It
+        # is a one-time local bootstrap tool only.
+        env:
+          CI_DISALLOW_INITIALIZE: "true"
         run: npm run check:migration-immutability
       - run: npm run typecheck
       - run: npm run lint
@@ -94,6 +108,8 @@ jobs:
           which node
       - run: npm ci
       - name: Verify frozen migration hashes
+        env:
+          CI_DISALLOW_INITIALIZE: "true"
         run: npm run check:migration-immutability
       - name: Wait for PostgreSQL and create test databases
         run: |
