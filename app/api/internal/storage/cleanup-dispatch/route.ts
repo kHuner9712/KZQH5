@@ -162,7 +162,42 @@ interface CoarseDispatchResult {
   deadLettered: number;
   /** Reference-check RPC error/exception — Section 8 case C. */
   referenceCheckFailed: number;
+  /**
+   * Storage deletion succeeded but the audit-completion RPC returned
+   * an error or threw. The audit row stays 'pending' and the
+   * audit-reconcile worker finalizes it later. The cleanup row itself
+   * is finalized as 'completed' (the object WAS deleted), but we do
+   * NOT claim the audit saga is fully closed — hence the separate
+   * counter so monitoring can distinguish "fully closed" from
+   * "storage deleted, audit reconcile pending".
+   */
+  auditReconcilePending: number;
 }
+
+/**
+ * Result of finalizing the audit row after a Storage .remove() call.
+ *
+ *   - { ok: true }                        → audit row finalized
+ *                                           (completed or failed).
+ *   - { ok: false, reconcilePending: true } → audit-completion RPC
+ *                                            returned an error or threw.
+ *                                            The audit row stays
+ *                                            'pending' and the
+ *                                            audit-reconcile worker
+ *                                            will finalize it later.
+ *                                            The caller proceeds to
+ *                                            complete_storage_cleanup
+ *                                            regardless (with the
+ *                                            operation id link), but
+ *                                            MUST increment the
+ *                                            auditReconcilePending
+ *                                            counter so monitoring
+ *                                            knows the saga is not
+ *                                            fully closed.
+ */
+type AuditCompletionResult =
+  | { ok: true }
+  | { ok: false; reconcilePending: true };
 
 type AdminClient = ReturnType<typeof createAdminSupabaseClient>;
 
@@ -253,29 +288,50 @@ async function recordCleanupAuditStarted(
 }
 
 /**
- * Mark the audit row as completed or failed. Best-effort: if this
- * RPC fails, the audit row stays 'pending' and the audit-reconcile
- * worker finalizes it later from observed Storage state. The caller
- * proceeds to complete_storage_cleanup regardless — the link is
- * persisted via the storage_operation_id parameter.
+ * Mark the audit row as completed or failed.
+ *
+ * Returns an AuditCompletionResult so the caller can distinguish:
+ *   - { ok: true }                        → audit row finalized
+ *   - { ok: false, reconcilePending: true } → RPC returned an error
+ *                                            or threw. The audit row
+ *                                            stays 'pending' and the
+ *                                            audit-reconcile worker
+ *                                            finalizes it later from
+ *                                            observed Storage state.
+ *
+ * The caller MUST inspect BOTH the returned data AND the error from
+ * the RPC. The previous implementation only caught JavaScript
+ * exceptions and silently swallowed Postgres-level errors returned
+ * in the `error` field of the response, which masked real audit
+ * failures. We now surface them as `reconcilePending: true` so the
+ * dispatcher's coarse counters reflect the true state of the saga.
  */
 async function completeStorageAudit(
   client: AdminClient,
   operationId: string,
   success: boolean,
   errorCode: string | null,
-): Promise<void> {
+): Promise<AuditCompletionResult> {
   try {
-    await client.rpc("complete_storage_operation", {
+    const { error } = await client.rpc("complete_storage_operation", {
       p_operation_id: operationId,
       p_success: success,
       p_error_code: errorCode,
     });
+    if (error) {
+      // Postgres-level error (e.g. RPC raised an exception). The
+      // audit row stays 'pending'. The audit-reconcile worker will
+      // finalize it later. Surface as reconcilePending so monitoring
+      // can distinguish "fully closed" from "storage deleted, audit
+      // reconcile pending".
+      return { ok: false, reconcilePending: true };
+    }
+    return { ok: true };
   } catch {
-    // Swallow — the audit-reconcile worker will pick up the pending
-    // row and finalize it from observed Storage state. This is NOT
-    // "best-effort audit" — the audit row exists and will be
-    // reconciled; we just don't block the cleanup completion on it.
+    // Network / fetch-level exception. Same semantics: the audit row
+    // exists and will be reconciled; we just don't claim the saga is
+    // closed.
+    return { ok: false, reconcilePending: true };
   }
 }
 
@@ -321,6 +377,7 @@ async function completeCleanup(
     | "blocked_referenced"
     | "reference_check_failed"
     | "storage_delete_failed"
+    | "audit_start_failed"
     | null,
   storageOperationId: string | null,
 ): Promise<"completed" | "retry" | "dead_letter" | "unknown"> {
@@ -399,6 +456,7 @@ async function runCleanupDispatch(
       failed: 0,
       deadLettered: 0,
       referenceCheckFailed: 0,
+      auditReconcilePending: 0,
     };
   }
 
@@ -407,6 +465,7 @@ async function runCleanupDispatch(
   let failed = 0;
   let deadLettered = 0;
   let referenceCheckFailed = 0;
+  let auditReconcilePending = 0;
 
   for (const row of claimed) {
     // Step 1: re-check references. Three distinguishable outcomes.
@@ -447,17 +506,28 @@ async function runCleanupDispatch(
 
     // Step 2 (Section 8 case A): referenced=false. Begin the audit
     // saga BEFORE calling Storage .remove(). If the audit-started RPC
-    // fails, we MUST NOT proceed with the delete — the cleanup row
-    // stays 'claimed' and stale recovery re-claims it later.
+    // fails, we MUST NOT proceed with the delete.
     const operationId = await recordCleanupAuditStarted(client, row);
     if (!operationId) {
-      // Audit-started RPC failed. Per Section 9 failure matrix: do
-      // NOT delete; cleanup row stays 'claimed' for retry. We do not
-      // call complete_storage_cleanup here either — leave it claimed
-      // so stale recovery handles it, rather than risking a retry
-      // storm if the audit RPC is failing for systemic reasons.
+      // Audit-started RPC failed. Per the failure matrix: do NOT
+      // delete; route the cleanup row through the EXPLICIT retry path
+      // (success=false, error_code='AUDIT_START_FAILED',
+      // final_status='audit_start_failed') instead of just leaving it
+      // 'claimed' and relying solely on stale-lock recovery. This
+      // makes the failure visible to the dead-letter counter and
+      // bounds the retry interval via next_retry_at, rather than
+      // waiting for the full stale timeout on every attempt.
       console.error("STORAGE_CLEANUP_AUDIT_START_FAILED");
+      const finalStatus = await completeCleanup(
+        client,
+        row,
+        false,
+        "AUDIT_START_FAILED",
+        "audit_start_failed",
+        null, // no audit row was created
+      );
       failed += 1;
+      if (finalStatus === "dead_letter") deadLettered += 1;
       continue;
     }
 
@@ -467,7 +537,12 @@ async function runCleanupDispatch(
     if (deleteResult.ok) {
       // Step 4a: deletion succeeded. Finalize the audit row, then
       // finalize the cleanup row with the operation link.
-      await completeStorageAudit(client, operationId, true, null);
+      const auditResult = await completeStorageAudit(
+        client,
+        operationId,
+        true,
+        null,
+      );
       const finalStatus = await completeCleanup(
         client,
         row,
@@ -477,6 +552,14 @@ async function runCleanupDispatch(
         operationId,
       );
       deleted += 1;
+      if (!auditResult.ok) {
+        // Storage deletion succeeded but the audit-completion RPC
+        // failed. The cleanup row is finalized as 'completed' (the
+        // object WAS deleted), but the audit row stays 'pending' and
+        // the audit-reconcile worker will finalize it later. We do
+        // NOT claim the audit saga is fully closed.
+        auditReconcilePending += 1;
+      }
       if (finalStatus === "dead_letter") {
         // Edge case: RPC marked dead_letter despite success (e.g.
         // attempts exceeded before the success was recorded). Count
@@ -486,7 +569,12 @@ async function runCleanupDispatch(
     } else {
       // Step 4b: deletion failed. Finalize the audit row as failed,
       // then finalize the cleanup row for retry.
-      await completeStorageAudit(client, operationId, false, deleteResult.code);
+      const auditResult = await completeStorageAudit(
+        client,
+        operationId,
+        false,
+        deleteResult.code,
+      );
       const finalStatus = await completeCleanup(
         client,
         row,
@@ -496,6 +584,12 @@ async function runCleanupDispatch(
         operationId,
       );
       failed += 1;
+      if (!auditResult.ok) {
+        // Audit-completion RPC failed on the failure path too. The
+        // audit row stays 'pending' (recording a deletion failure
+        // that was never finalized); reconcile will close it later.
+        auditReconcilePending += 1;
+      }
       if (finalStatus === "dead_letter") deadLettered += 1;
     }
   }
@@ -507,6 +601,7 @@ async function runCleanupDispatch(
     failed,
     deadLettered,
     referenceCheckFailed,
+    auditReconcilePending,
   };
 }
 

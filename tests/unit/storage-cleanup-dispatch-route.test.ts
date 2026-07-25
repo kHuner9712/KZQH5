@@ -184,6 +184,9 @@ describe("POST /api/internal/storage/cleanup-dispatch — fail-closed dispatcher
     expect(json.processed).toBe(true);
     // Section 8: result now includes `referenceCheckFailed` counter
     // so monitoring can distinguish case C from case B.
+    // Section 10: result also includes `auditReconcilePending` counter
+    // so monitoring can distinguish "fully closed" from "storage
+    // deleted, audit reconcile pending".
     expect(json.result).toEqual({
       claimed: 0,
       deleted: 0,
@@ -191,6 +194,7 @@ describe("POST /api/internal/storage/cleanup-dispatch — fail-closed dispatcher
       failed: 0,
       deadLettered: 0,
       referenceCheckFailed: 0,
+      auditReconcilePending: 0,
     });
     // claim_storage_cleanup was called with the clamped batch size and
     // the stale timeout in seconds.
@@ -230,6 +234,7 @@ describe("POST /api/internal/storage/cleanup-dispatch — fail-closed dispatcher
       failed: 0,
       deadLettered: 0,
       referenceCheckFailed: 0,
+      auditReconcilePending: 0,
     });
     // Storage .remove was called once with the path.
     expect(mockStorageRemove).toHaveBeenCalledTimes(1);
@@ -308,6 +313,7 @@ describe("POST /api/internal/storage/cleanup-dispatch — fail-closed dispatcher
       failed: 0,
       deadLettered: 0,
       referenceCheckFailed: 0,
+      auditReconcilePending: 0,
     });
     expect(mockStorageRemove).not.toHaveBeenCalled();
     // Section 9: NO audit row should be created when no delete is attempted.
@@ -377,6 +383,7 @@ describe("POST /api/internal/storage/cleanup-dispatch — fail-closed dispatcher
       failed: 1, // counts as a failure for retry accounting
       deadLettered: 0,
       referenceCheckFailed: 1, // surfaced separately from `blocked`
+      auditReconcilePending: 0,
     });
     // .remove was NOT called — we never delete on a reference-check error.
     expect(mockStorageRemove).not.toHaveBeenCalled();
@@ -446,7 +453,7 @@ describe("POST /api/internal/storage/cleanup-dispatch — fail-closed dispatcher
     });
   });
 
-  it("Section 9 failure matrix: audit-started RPC fails → do NOT delete; row stays claimed", async () => {
+  it("Section 10 failure matrix: audit-started RPC fails → do NOT delete; row routed through explicit retry (AUDIT_START_FAILED / audit_start_failed)", async () => {
     const claimed = [
       {
         id: "c-audit-fail",
@@ -468,7 +475,7 @@ describe("POST /api/internal/storage/cleanup-dispatch — fail-closed dispatcher
         return Promise.resolve({ data: null, error: { message: "rpc down" } });
       }
       if (name === "complete_storage_cleanup") {
-        return Promise.resolve({ data: "completed", error: null });
+        return Promise.resolve({ data: "retry", error: null });
       }
       return Promise.resolve({ data: null, error: null });
     });
@@ -486,15 +493,83 @@ describe("POST /api/internal/storage/cleanup-dispatch — fail-closed dispatcher
     expect(response.status).toBe(200);
     const json = await response.json();
     // The row is counted as failed (we did NOT delete). The cleanup
-    // row stays 'claimed' (complete_storage_cleanup was NOT called)
-    // so stale recovery re-claims it later.
+    // row is routed through the EXPLICIT retry path via
+    // complete_storage_cleanup(success=false, error_code='AUDIT_START_FAILED',
+    // final_status='audit_start_failed') so the dead-letter counter
+    // sees it and the retry interval is bounded by next_retry_at,
+    // rather than waiting for the full stale-lock timeout.
     expect(json.result.deleted).toBe(0);
     expect(json.result.failed).toBe(1);
+    expect(json.result.auditReconcilePending).toBe(0);
     expect(mockStorageRemove).not.toHaveBeenCalled();
-    expect(mockRpc).not.toHaveBeenCalledWith(
-      "complete_storage_cleanup",
-      expect.anything(),
+    expect(mockRpc).toHaveBeenCalledWith("complete_storage_cleanup", {
+      p_cleanup_id: "c-audit-fail",
+      p_lock_token: "t-audit-fail",
+      p_success: false,
+      p_error_code: "AUDIT_START_FAILED",
+      p_storage_operation_id: null,
+      p_final_status: "audit_start_failed",
+    });
+  });
+
+  it("Section 10: audit-completion RPC error after successful Storage .remove → auditReconcilePending counter incremented", async () => {
+    const claimed = [
+      {
+        id: "c-audit-recon",
+        bucket: "public-assets",
+        object_path: "products/recon.jpg",
+        lock_token: "t-audit-recon",
+      },
+    ];
+    mockRpc.mockImplementation((name: string) => {
+      if (name === "claim_storage_cleanup") {
+        return Promise.resolve({ data: claimed, error: null });
+      }
+      if (name === "check_storage_object_referenced") {
+        return Promise.resolve({ data: false, error: null });
+      }
+      if (name === "record_storage_operation_started") {
+        return Promise.resolve({ data: "op-recon-1", error: null });
+      }
+      if (name === "complete_storage_operation") {
+        // Audit-completion RPC failed — the audit row stays 'pending'
+        // and the audit-reconcile worker finalizes it later. The
+        // cleanup row IS still finalized as 'completed' (the object
+        // WAS deleted), but the dispatcher MUST surface that the
+        // audit saga is NOT fully closed.
+        return Promise.resolve({ data: null, error: { message: "rpc down" } });
+      }
+      if (name === "complete_storage_cleanup") {
+        return Promise.resolve({ data: "completed", error: null });
+      }
+      return Promise.resolve({ data: null, error: null });
+    });
+    mockStorageRemove.mockResolvedValue({ data: [], error: null });
+
+    const { POST } = await import(
+      "@/app/api/internal/storage/cleanup-dispatch/route"
     );
+    const response = await POST(
+      dispatchRequest(
+        { batchSize: 5 },
+        { Authorization: `Bearer ${VALID_SECRET}` },
+      ),
+    );
+    expect(response.status).toBe(200);
+    const json = await response.json();
+    expect(json.result.deleted).toBe(1);
+    expect(json.result.auditReconcilePending).toBe(1);
+    // The cleanup row IS still finalized as completed (the object WAS
+    // deleted) with the operation id link so the audit-reconcile
+    // worker can find the pending audit row.
+    expect(mockRpc).toHaveBeenCalledWith("complete_storage_cleanup", {
+      p_cleanup_id: "c-audit-recon",
+      p_lock_token: "t-audit-recon",
+      p_success: true,
+      p_error_code: null,
+      p_storage_operation_id: "op-recon-1",
+      p_final_status: "deleted",
+    });
   });
 
   it("Section 9: marks audit row failed + cleanup retry when Storage .remove returns an error", async () => {
@@ -548,6 +623,7 @@ describe("POST /api/internal/storage/cleanup-dispatch — fail-closed dispatcher
       failed: 1,
       deadLettered: 0,
       referenceCheckFailed: 0,
+      auditReconcilePending: 0,
     });
     // Section 9: audit row was marked failed with the delete error code.
     expect(mockRpc).toHaveBeenCalledWith("complete_storage_operation", {
