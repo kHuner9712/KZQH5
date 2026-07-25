@@ -138,47 +138,42 @@ const ALLOWLIST: Record<string, string> = {
     "/api/analytics/events. Never imported by client components.",
 
   // --- B) Legacy admin browser writes (pending migration to /api/admin/**) ---
+  // The following admin pages used to perform direct browser writes and were
+  // listed here as LEGACY exceptions. They have all been migrated to trusted
+  // server APIs (/api/admin/** with requireAdminWrite) and removed from the
+  // allowlist. The static gate now enforces that no client component under
+  // app/admin/** or components/admin/** may call .from(...).insert / update /
+  // delete / upsert on business tables.
+  //
+  // app/admin/(protected)/categories/page.tsx     -> /api/admin/categories
+  // app/admin/(protected)/certificates/page.tsx   -> /api/admin/certificates
+  // app/admin/(protected)/company/page.tsx        -> /api/admin/company
+  // app/admin/(protected)/homepage/page.tsx       -> /api/admin/homepage
+  // app/admin/(protected)/pages/page.tsx          -> /api/admin/pages
+  // app/admin/(protected)/product-assets/page.tsx -> /api/admin/product-assets
+  // app/admin/(protected)/projects/page.tsx       -> /api/admin/projects
+  // app/admin/(protected)/site-settings/page.tsx  -> /api/admin/site-settings
+  //
+  // The legacy write helpers below are dead code: their callers have been
+  // migrated to admin-fetch.ts -> trusted server APIs -> transactional RPCs.
+  // They remain on disk pending a follow-up deletion commit, but are no
+  // longer imported by any app code. The allowlist entries below exist only
+  // so the static gate does not flag the dead-code definitions; they will be
+  // removed when the dead code is deleted.
   "lib/repositories/product-assets.ts":
-    "LEGACY: saveProductAsset / deleteProductAsset accept a client param and " +
-    "are called from the admin product-assets page with a browser client. " +
-    "Pending migration to /api/admin/product-assets using requireAdminWrite(). " +
-    "getPublishedProductAssets (read) uses createPublicSupabaseClient().",
+    "DEAD CODE: saveProductAsset / deleteProductAsset are no longer called " +
+    "by app code. Admin UI now uses saveProductAssetApi / deleteProductAssetApi " +
+    "from admin-fetch.ts -> /api/admin/product-assets -> " +
+    "save_product_asset_draft_with_audit / delete_product_asset_with_audit " +
+    "RPCs. Pending deletion in a follow-up commit. Read helpers " +
+    "(getPublishedProductAssets) use createPublicSupabaseClient().",
   "lib/repositories/projects.ts":
-    "LEGACY: saveProject / replaceProjectImages / replaceProjectProducts / " +
-    "deleteProject accept a client param and are called from the admin " +
-    "projects page with a browser client. Pending migration to " +
-    "/api/admin/projects using requireAdminWrite(). Read helpers use " +
-    "createPublicSupabaseClient().",
-  "app/admin/(protected)/categories/page.tsx":
-    "LEGACY: Admin client component performs direct browser writes " +
-    "(.from().insert / update / delete) on categories and subcategories via " +
-    "createBrowserSupabaseClient(). Pending migration to " +
-    "/api/admin/categories using requireAdminWrite().",
-  "app/admin/(protected)/certificates/page.tsx":
-    "LEGACY: Admin client component performs direct browser writes " +
-    "(.from().insert / update / delete) on certificates via " +
-    "createBrowserSupabaseClient(). Pending migration to " +
-    "/api/admin/certificates using requireAdminWrite().",
-  "app/admin/(protected)/company/page.tsx":
-    "LEGACY: Admin client component performs direct browser writes " +
-    "(.from().insert / update) on company_profile via " +
-    "createBrowserSupabaseClient(). Pending migration to " +
-    "/api/admin/company using requireAdminWrite().",
-  "app/admin/(protected)/homepage/page.tsx":
-    "LEGACY: Admin client component performs direct browser writes " +
-    "(.from().insert / update) on homepage_content via " +
-    "createBrowserSupabaseClient(). Pending migration to " +
-    "/api/admin/homepage using requireAdminWrite().",
-  "app/admin/(protected)/pages/page.tsx":
-    "LEGACY: Admin client component performs direct browser writes " +
-    "(.from().insert / update) on page_content via " +
-    "createBrowserSupabaseClient(). Pending migration to " +
-    "/api/admin/pages using requireAdminWrite().",
-  "app/admin/(protected)/site-settings/page.tsx":
-    "LEGACY: Admin client component performs direct browser writes " +
-    "(.from().insert / update) on site_settings via " +
-    "createBrowserSupabaseClient(). Pending migration to " +
-    "/api/admin/site-settings using requireAdminWrite().",
+    "DEAD CODE: saveProject / replaceProjectImages / replaceProjectProducts / " +
+    "deleteProject are no longer called by app code. Admin UI now uses " +
+    "saveProjectApi / deleteProjectApi from admin-fetch.ts -> " +
+    "/api/admin/projects -> save_project_with_relations_and_audit / " +
+    "delete_project_with_audit RPCs. Pending deletion in a follow-up " +
+    "commit. Read helpers use createPublicSupabaseClient().",
 };
 
 // --- Directories to scan --------------------------------------------------

@@ -9,14 +9,14 @@ import {
 // Phase 15: Storage Purpose → Bucket 服务端映射
 // ------------------------------------------------------------
 // Proves:
-//   1. STORAGE_PURPOSES contains exactly the 6 known purposes
-//   2. isStoragePurpose accepts the 6 known purposes, rejects others
+//   1. STORAGE_PURPOSES contains exactly the 7 known purposes
+//   2. isStoragePurpose accepts the 7 known purposes, rejects others
 //   3. resolvePurposeConfig returns null for unknown purpose
-//   4. Catalog / certificate purposes map to private-assets
-//   5. Catalog / certificate purposes do NOT allow public URLs
+//   4. Catalog / certificate draft purposes map to private-assets
+//   5. Catalog / certificate draft purposes do NOT allow public URLs
 //   6. Catalog purpose allows PDF MIME; others do NOT
-//   7. Image purposes (product / project / company / homepage) map
-//      to public-assets and allow public URLs
+//   7. Image purposes (product / project / company / homepage /
+//      catalog-cover) map to public-assets and allow public URLs
 //   8. resolvePurposeConfig returns the same shape for every purpose
 //   9. No purpose returns bucket='evil-bucket' (whitelist enforced)
 //  10. certificate-draft only allows image MIME (no PDF)
@@ -27,16 +27,17 @@ import {
 
 describe("Phase 15: Storage Purpose → Bucket mapping", () => {
   describe("STORAGE_PURPOSES whitelist", () => {
-    it("contains exactly the 6 known purposes", () => {
+    it("contains exactly the 7 known purposes", () => {
       expect(STORAGE_PURPOSES).toEqual([
         "product-image",
         "project-image",
         "company-logo",
         "homepage-image",
         "catalog-draft",
+        "catalog-cover",
         "certificate-draft",
       ]);
-      expect(STORAGE_PURPOSES.length).toBe(6);
+      expect(STORAGE_PURPOSES.length).toBe(7);
     });
   });
 
@@ -47,6 +48,7 @@ describe("Phase 15: Storage Purpose → Bucket mapping", () => {
       "company-logo",
       "homepage-image",
       "catalog-draft",
+      "catalog-cover",
       "certificate-draft",
     ] as const)("accepts known purpose '%s'", (purpose) => {
       expect(isStoragePurpose(purpose)).toBe(true);
@@ -123,6 +125,7 @@ describe("Phase 15: Storage Purpose → Bucket mapping", () => {
       "project-image",
       "company-logo",
       "homepage-image",
+      "catalog-cover",
     ] as const)(
       "image purpose '%s' maps to public-assets and allows public URLs",
       (purpose) => {
@@ -131,6 +134,16 @@ describe("Phase 15: Storage Purpose → Bucket mapping", () => {
         expect(config!.isPublicUrlAllowed).toBe(true);
       },
     );
+
+    it("catalog-cover allows image/jpeg, image/png, image/webp (no PDF)", () => {
+      const config = resolvePurposeConfig("catalog-cover");
+      expect(config!.allowedMimeTypes).toEqual([
+        "image/jpeg",
+        "image/png",
+        "image/webp",
+      ]);
+      expect(config!.allowedMimeTypes).not.toContain("application/pdf");
+    });
 
     it("catalog-draft allows image/jpeg, image/png, image/webp, application/pdf", () => {
       const config = resolvePurposeConfig("catalog-draft");
