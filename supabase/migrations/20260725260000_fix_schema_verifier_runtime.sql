@@ -466,58 +466,23 @@ grant execute on function public.verify_required_schema()
 
 
 -- ============================================================
--- C. Assert runtime invariants at migration time
+-- C. Runtime invariants deferred to 20260725262000
 -- ============================================================
-do $$
-declare
-  v_verify_missing integer;
-  v_cleanup_count integer;
-  v_verify_return_type text;
-begin
-  -- 1. verify_required_schema() returns table(missing text).
-  select pg_get_function_result(p.oid)
-    into v_verify_return_type
-    from pg_proc p
-    join pg_namespace n on n.oid = p.pronamespace
-    where n.nspname = 'public'
-      and p.proname = 'verify_required_schema';
-  if v_verify_return_type is distinct from 'TABLE(missing text)' then
-    raise exception
-      'verify_required_schema return type must be TABLE(missing text), got %',
-      coalesce(v_verify_return_type, '<null>')
-      using errcode = 'P0001';
-  end if;
-
-  -- 2. complete_storage_cleanup overload count still 1.
-  select count(*)
-    into v_cleanup_count
-    from pg_proc p
-    join pg_namespace n on n.oid = p.pronamespace
-    where n.nspname = 'public'
-      and p.proname = 'complete_storage_cleanup';
-  if v_cleanup_count <> 1 then
-    raise exception
-      'complete_storage_cleanup overload count must be 1, got %',
-      v_cleanup_count
-      using errcode = 'P0001';
-  end if;
-
-  -- 3. The phantom columns are gone from the catalog. The verifier
-  --    must NOT report them as missing on a real schema.
-  select count(*)
-    into v_verify_missing
-    from public.verify_required_schema() as v(missing)
-    where v.missing in (
-      'product_assets.storage_operation_id',
-      'product_assets.final_status'
-    );
-  if v_verify_missing <> 0 then
-    raise exception
-      'verify_required_schema still references phantom product_assets columns'
-      using errcode = 'P0001';
-  end if;
-end;
-$$;
+-- The DO block that previously ran verify_required_schema() here
+-- was removed because this migration's version of the function
+-- uses has_function_privilege('PUBLIC', ...), which raises
+-- "role PUBLIC does not exist" on PostgreSQL 16 (PUBLIC is a
+-- pseudo-role with oid=0, not present in pg_roles).
+--
+-- The runtime assertion (verify_required_schema() returns 0 rows
+-- on a healthy schema) is performed by migration 20260725262000
+-- Section B, AFTER the function has been replaced with the
+-- aclexplode-based ACL check that is compatible with PG16.
+--
+-- The return-type contract (TABLE(missing text)) and the
+-- overload-count gate are enforced by the test suite
+-- (supabase/tests/schema_verifier_runtime.sql Tests 5 and 11).
+-- ============================================================
 
 
 -- ============================================================

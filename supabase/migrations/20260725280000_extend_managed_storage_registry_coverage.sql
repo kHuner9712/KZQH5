@@ -1372,24 +1372,36 @@ grant execute on function public.save_site_settings_with_audit(
 
 
 -- ============================================================
--- I. Update verify_required_schema to include the new helper
+-- I. Update list_required_schema_objects to include the new helper
 -- ============================================================
--- DROP FUNCTION first because the prior migration declared this
--- function with `returns table(...)`. PostgreSQL's CREATE OR
--- REPLACE FUNCTION does not allow changing the return type, so we
--- drop and recreate (same pattern as 20260725190000 / 20260725220000
--- / 20260725230000).
+-- The prior version of list_required_schema_objects() (frozen by
+-- 20260725260000) does NOT include register_managed_storage_ref_from_url
+-- in its function catalog. verify_required_schema() reads from
+-- list_required_schema_objects() dynamically, so adding the new
+-- helper here makes the verifier check its existence automatically.
+--
+-- IMPORTANT: This section was previously a broken DROP+CREATE of
+-- verify_required_schema() with the WRONG return type
+-- (table(object_name text, object_type text) instead of
+-- table(missing text)). That broke the verifier contract: every
+-- test in supabase/tests/schema_verifier_runtime.sql calls
+-- verify_required_schema() as v(missing) and expects 0 rows on a
+-- healthy schema. The DROP+CREATE has been replaced with a
+-- CREATE OR REPLACE of list_required_schema_objects() — the
+-- catalog function — which is what the original intent was.
+--
+-- verify_required_schema() itself (defined by 20260725262000) is
+-- NOT touched here. Its return type remains TABLE(missing text).
 -- ============================================================
-drop function if exists public.verify_required_schema();
-
-create function public.verify_required_schema()
+create or replace function public.list_required_schema_objects()
 returns table(object_name text, object_type text)
 language plpgsql
+stable
 security invoker
 set search_path = ''
 as $$
 begin
-  -- Tables
+  -- ---- Tables ----
   return query select 'admin_profiles', 'table'::text;
   return query select 'admin_audit_log', 'table'::text;
   return query select 'storage_cleanup_queue', 'table'::text;
@@ -1400,8 +1412,15 @@ begin
   return query select 'certificates', 'table'::text;
   return query select 'company_profile', 'table'::text;
   return query select 'site_settings', 'table'::text;
+  return query select 'homepage_content', 'table'::text;
+  return query select 'page_content', 'table'::text;
+  return query select 'categories', 'table'::text;
+  return query select 'subcategories', 'table'::text;
+  return query select 'projects', 'table'::text;
+  return query select 'project_images', 'table'::text;
+  return query select 'project_products', 'table'::text;
 
-  -- Product asset columns (Catalog)
+  -- ---- Columns (catalog asset publish state machine) ----
   return query select 'product_assets.catalog_topic_id', 'column'::text;
   return query select 'product_assets.cover_image_url', 'column'::text;
   return query select 'product_assets.published_at', 'column'::text;
@@ -1420,7 +1439,7 @@ begin
   return query select 'product_assets.candidate_sha256', 'column'::text;
   return query select 'product_assets.last_publish_error_code', 'column'::text;
 
-  -- Certificate columns
+  -- ---- Columns (certificate publish state machine) ----
   return query select 'certificates.source_bucket', 'column'::text;
   return query select 'certificates.source_object_path', 'column'::text;
   return query select 'certificates.published_bucket', 'column'::text;
@@ -1435,36 +1454,28 @@ begin
   return query select 'certificates.candidate_sha256', 'column'::text;
   return query select 'certificates.last_publish_error_code', 'column'::text;
 
-  -- Transactional business RPCs
-  return query select 'save_product_with_images_and_audit', 'function'::text;
-  return query select 'bulk_update_products_with_audit', 'function'::text;
-  return query select 'bulk_delete_products_with_audit', 'function'::text;
-  return query select 'save_project_with_relations', 'function'::text;
-  return query select 'save_project_with_relations_and_audit', 'function'::text;
-  return query select 'delete_project_with_audit', 'function'::text;
+  -- ---- Columns (storage_cleanup_queue audit saga) ----
+  return query select 'storage_cleanup_queue.storage_operation_id', 'column'::text;
+  return query select 'storage_cleanup_queue.final_status', 'column'::text;
 
-  -- CMS content RPCs
-  return query select 'save_company_profile_with_audit', 'function'::text;
-  return query select 'save_site_settings_with_audit', 'function'::text;
-  return query select 'save_homepage_content_with_audit', 'function'::text;
-  return query select 'save_page_content_with_audit', 'function'::text;
-  return query select 'save_category_with_audit', 'function'::text;
-  return query select 'delete_category_with_audit', 'function'::text;
-  return query select 'save_subcategory_with_audit', 'function'::text;
-  return query select 'delete_subcategory_with_audit', 'function'::text;
-
-  -- Storage cleanup + audit
-  return query select 'enqueue_managed_storage_cleanup', 'function'::text;
-  return query select 'extract_managed_storage_path', 'function'::text;
-  return query select 'register_managed_storage_ref_from_url', 'function'::text;
+  -- ---- Functions (storage cleanup lifecycle) ----
+  return query select 'enqueue_storage_cleanup', 'function'::text;
+  return query select 'claim_storage_cleanup', 'function'::text;
+  return query select 'complete_storage_cleanup(uuid, uuid, boolean, text, uuid, text)', 'function'::text;
   return query select 'check_storage_object_referenced', 'function'::text;
-  return query select 'complete_storage_cleanup', 'function'::text;
+  return query select 'extract_managed_storage_path', 'function'::text;
+  return query select 'enqueue_managed_storage_cleanup', 'function'::text;
   return query select 'record_storage_operation_started', 'function'::text;
   return query select 'complete_storage_operation', 'function'::text;
   return query select 'claim_storage_audit_reconcile', 'function'::text;
   return query select 'complete_storage_audit_reconcile', 'function'::text;
+  return query select 'extract_managed_storage_path_strict', 'function'::text;
+  return query select 'register_storage_object_ref', 'function'::text;
+  return query select 'register_managed_storage_ref_from_url', 'function'::text;
+  return query select 'mark_storage_object_refs_deleted', 'function'::text;
+  return query select 'mark_storage_object_refs_pending_delete', 'function'::text;
 
-  -- Catalog publish RPCs
+  -- ---- Functions (catalog asset publish) ----
   return query select 'claim_catalog_asset_publish', 'function'::text;
   return query select 'finalize_catalog_asset_publish', 'function'::text;
   return query select 'recover_stale_catalog_publish', 'function'::text;
@@ -1474,7 +1485,7 @@ begin
   return query select 'delete_product_asset_with_cleanup', 'function'::text;
   return query select 'unpublish_catalog_asset', 'function'::text;
 
-  -- Certificate publish RPCs
+  -- ---- Functions (certificate publish) ----
   return query select 'save_certificate_draft', 'function'::text;
   return query select 'update_certificate_metadata', 'function'::text;
   return query select 'authorize_certificate', 'function'::text;
@@ -1483,10 +1494,35 @@ begin
   return query select 'unpublish_certificate', 'function'::text;
   return query select 'delete_certificate_with_cleanup', 'function'::text;
   return query select 'recover_stale_certificate_publish', 'function'::text;
+
+  -- ---- Functions (transactional business writes) ----
+  return query select 'save_product_with_images_and_audit', 'function'::text;
+  return query select 'bulk_update_products_with_audit', 'function'::text;
+  return query select 'bulk_delete_products_with_audit', 'function'::text;
+  return query select 'save_project_with_relations', 'function'::text;
+  return query select 'save_project_with_relations_and_audit', 'function'::text;
+  return query select 'delete_project_with_audit', 'function'::text;
+
+  -- ---- Functions (CMS content) ----
+  return query select 'save_company_profile_with_audit', 'function'::text;
+  return query select 'save_site_settings_with_audit', 'function'::text;
+  return query select 'save_homepage_content_with_audit', 'function'::text;
+  return query select 'save_page_content_with_audit', 'function'::text;
+  return query select 'save_category_with_audit', 'function'::text;
+  return query select 'delete_category_with_audit', 'function'::text;
+  return query select 'save_subcategory_with_audit', 'function'::text;
+  return query select 'delete_subcategory_with_audit', 'function'::text;
+
+  -- ---- Functions (schema verification) ----
+  return query select 'verify_schema_readiness', 'function'::text;
+  return query select 'list_required_schema_objects', 'function'::text;
+  return query select 'verify_required_schema', 'function'::text;
+
+  return;
 end;
 $$;
 
-revoke all on function public.verify_required_schema()
+revoke all on function public.list_required_schema_objects()
   from public, anon, authenticated;
-grant execute on function public.verify_required_schema()
+grant execute on function public.list_required_schema_objects()
   to service_role;
