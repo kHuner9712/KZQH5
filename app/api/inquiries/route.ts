@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isDemoMode } from "@/lib/demo";
 import { isLocale, type Locale } from "@/lib/i18n/config";
-import { notifyNewInquiry } from "@/lib/services/inquiries/notifications";
 import { submitInquiry } from "@/lib/services/inquiries/submission";
 import { InquiryProductUnavailableError } from "@/lib/services/inquiries/submission";
 import { validateInquiryInput } from "@/lib/services/inquiries/validation";
@@ -140,22 +139,16 @@ export async function POST(request: NextRequest) {
       clientSubmissionId,
     );
 
-    // Phase 5: never notify twice for the same inquiry. On an idempotent hit
-    // (same client_submission_id already stored), skip the in-process
-    // notification entirely — the original submit already triggered it.
-    //
-    // The Outbox row written in the same transaction is the canonical
-    // guarantee of at-least-once delivery. The in-process call below is a
-    // best-effort fast path; its failure cannot change the success result
-    // because notifyNewInquiry uses Promise.allSettled and never rejects.
-    if (!result.idempotent) {
-      // Fire-and-forget with a guard so an unhandled rejection can never
-      // crash the process. The Outbox remains the source of truth.
-      void notifyNewInquiry(result.inquiry).catch(() => {
-        /* swallowed: outbox will retry */
-      });
-    }
-
+    // Canonical notification path: the `inquiry_outbox` parent event is
+    // written in the same transaction as the inquiry insert (inside
+    // create_inquiry_with_items RPC). The Outbox Dispatcher
+    // (POST /api/internal/outbox/dispatch) is the ONLY component that
+    // invokes notification providers. The public submission route MUST
+    // NOT call any provider directly — that would double-send on every
+    // fresh submission and bypass per-provider delivery state, Resend
+    // Idempotency-Key Header dedup, and WeCom at-least-once guarantees.
+    // Idempotent hits return outboxId=null because no new outbox row was
+    // written; nothing to dispatch.
     return NextResponse.json({
       success: true,
       id: result.inquiry.id,

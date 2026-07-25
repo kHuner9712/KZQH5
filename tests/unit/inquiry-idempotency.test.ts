@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 const submitInquiry = vi.fn();
-const notifyNewInquiry = vi.fn();
 
 vi.mock("@/lib/services/inquiries/submission", async (importOriginal) => {
   const actual =
@@ -11,7 +12,6 @@ vi.mock("@/lib/services/inquiries/submission", async (importOriginal) => {
     >();
   return { ...actual, submitInquiry };
 });
-vi.mock("@/lib/services/inquiries/notifications", () => ({ notifyNewInquiry }));
 vi.mock("@/lib/services/rate-limit", () => ({
   getInquiryRateLimiter: () => ({
     check: async () => ({ allowed: true, remaining: 4, retryAfterSeconds: 60 }),
@@ -43,11 +43,6 @@ describe("Phase 5: inquiry idempotency route", () => {
   beforeEach(() => {
     vi.stubEnv("NEXT_PUBLIC_DEMO_MODE", "false");
     submitInquiry.mockReset();
-    notifyNewInquiry.mockReset();
-    // The route calls notifyNewInquiry(...).catch(...) as fire-and-forget,
-    // so the mock MUST return a Promise (vi.fn() returns undefined by default
-    // which would crash on .catch). Default to a resolved promise.
-    notifyNewInquiry.mockResolvedValue(undefined);
   });
 
   it("rejects a malformed client_submission_id with 400", async () => {
@@ -80,9 +75,10 @@ describe("Phase 5: inquiry idempotency route", () => {
     );
   });
 
-  it("returns idempotent=true and skips notification on a duplicate submission", async () => {
+  it("returns idempotent=true on a duplicate submission (Outbox handles dedup)", async () => {
     // First call writes the inquiry; second call (same submission id) is
-    // treated as an idempotent hit by the RPC and returns idempotent=true.
+    // treated as an idempotent hit by the RPC and returns idempotent=true
+    // with outboxId=null (no new outbox row was written).
     submitInquiry.mockResolvedValue({
       inquiry: { id: "inq-existing", created_at: "2026-01-01T00:00:00Z" },
       submittedProductCount: 1,
@@ -100,11 +96,9 @@ describe("Phase 5: inquiry idempotency route", () => {
       id: "inq-existing",
       idempotent: true,
     });
-    // MUST NOT notify again — the original submit already did.
-    expect(notifyNewInquiry).not.toHaveBeenCalled();
   });
 
-  it("notifies exactly once on a fresh (non-idempotent) submit", async () => {
+  it("fresh (non-idempotent) submit returns success and writes Outbox row", async () => {
     submitInquiry.mockResolvedValue({
       inquiry: { id: "inq-new", created_at: "2026-01-01T00:00:00Z" },
       submittedProductCount: 0,
@@ -122,58 +116,8 @@ describe("Phase 5: inquiry idempotency route", () => {
       id: "inq-new",
       idempotent: false,
     });
-    // Notification is fire-and-forget; we only need to know it was called.
-    // Wait one microtask for the void promise to schedule.
-    await Promise.resolve();
-    expect(notifyNewInquiry).toHaveBeenCalledTimes(1);
-  });
-
-  it("notification failure does NOT change the success response", async () => {
-    // The route uses fire-and-forget with .catch(() => {}), so even a
-    // rejection inside notifyNewInquiry must not surface to the client.
-    notifyNewInquiry.mockRejectedValue(new Error("webhook down"));
-    submitInquiry.mockResolvedValue({
-      inquiry: { id: "inq-ok", created_at: "2026-01-01T00:00:00Z" },
-      submittedProductCount: 0,
-      idempotent: false,
-      outboxId: "outbox-ok",
-    });
-    const { POST } = await import("@/app/api/inquiries/route");
-    const response = await POST(
-      request(validBody({ client_submission_id: VALID_SUBMISSION_ID })),
-    );
-    expect(response.status).toBe(200);
-    const json = await response.json();
-    expect(json.success).toBe(true);
-    // Drain the microtask queue so the rejected promise is observed by the
-    // .catch handler (otherwise Node may emit an unhandledRejection).
+    // Drain microtask queue to surface any stray fire-and-forget promise.
     await new Promise((resolve) => setImmediate(resolve));
-  });
-
-  it("notification timeout does not block the response", async () => {
-    // Simulate a slow notification that resolves after 3s. The route must
-    // return immediately (fire-and-forget) without waiting.
-    notifyNewInquiry.mockImplementation(
-      () => new Promise((resolve) => setTimeout(resolve, 3000)),
-    );
-    submitInquiry.mockResolvedValue({
-      inquiry: { id: "inq-fast", created_at: "2026-01-01T00:00:00Z" },
-      submittedProductCount: 0,
-      idempotent: false,
-      outboxId: "outbox-fast",
-    });
-    const { POST } = await import("@/app/api/inquiries/route");
-    const start = Date.now();
-    const response = await POST(
-      request(validBody({ client_submission_id: VALID_SUBMISSION_ID })),
-    );
-    const elapsed = Date.now() - start;
-    expect(response.status).toBe(200);
-    // The response must return well before the 3s notification completes.
-    // (Use a generous 1500ms ceiling to avoid CI flakiness.)
-    expect(elapsed).toBeLessThan(1500);
-    // Drain the pending timer so vitest can exit cleanly.
-    await new Promise((resolve) => setTimeout(resolve, 3100));
   });
 
   it("submitInquiry RPC error does not surface raw error text to the client", async () => {
@@ -292,5 +236,30 @@ describe("Phase 5: inquiry_outbox idempotency contract (repository layer)", () =
     expect(result.inquiry.id).toBe("existing-inq");
     vi.doUnmock("@/lib/supabase/admin");
     vi.resetModules();
+  });
+});
+
+/**
+ * Static regression: the canonical notification path is the Outbox
+ * Dispatcher (POST /api/internal/outbox/dispatch) — the public
+ * submission route MUST NOT call any notification provider directly.
+ * The route used to fire `notifyNewInquiry` as a fast path and caused
+ * double delivery on every fresh submission.
+ */
+describe("canonical outbox notification — static regression", () => {
+  it("app/api/inquiries/route.ts source does not reference notifyNewInquiry", () => {
+    const routeSource = readFileSync(
+      join(process.cwd(), "app/api/inquiries/route.ts"),
+      "utf8",
+    );
+    expect(routeSource).not.toContain("notifyNewInquiry");
+    expect(routeSource).not.toContain("best-effort fast path");
+    expect(routeSource).not.toContain("Fire-and-forget");
+  });
+
+  it("notifyNewInquiry is not exported from the notifications module", async () => {
+    const notificationsModule: Record<string, unknown> =
+      await import("@/lib/services/inquiries/notifications");
+    expect(notificationsModule.notifyNewInquiry).toBeUndefined();
   });
 });

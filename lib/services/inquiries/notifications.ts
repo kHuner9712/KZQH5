@@ -341,24 +341,21 @@ export function createNotificationAdapters(
   return [wecom, email];
 }
 
-export async function notifyNewInquiry(inquiry: Inquiry): Promise<void> {
-  const adapters = createNotificationAdapters({
-    wecomWebhookUrl: process.env.INQUIRY_WECOM_WEBHOOK_URL,
-    resendApiKey: process.env.RESEND_API_KEY,
-    resendFrom: process.env.INQUIRY_NOTIFICATION_FROM,
-    resendTo: process.env.INQUIRY_NOTIFICATION_TO,
-  });
-  const configured = adapters.filter((adapter) => adapter.configured);
-  const results = await Promise.allSettled(
-    configured.map((adapter) => adapter.send(inquiry)),
-  );
-  results.forEach((result, index) => {
-    if (result.status === "rejected") {
-      const reason =
-        result.reason instanceof Error ? result.reason.name : "UnknownError";
-      console.error(
-        `Inquiry notification failed (${configured[index].name}): ${reason}`,
-      );
-    }
-  });
-}
+// NOTE: `notifyNewInquiry` was removed.
+//
+// The public inquiry submission route (app/api/inquiries/route.ts) MUST
+// NOT invoke any notification provider directly. The canonical path is:
+//
+//   POST /api/inquiries
+//     → create_inquiry_with_items RPC
+//     → inquiry + items + parent inquiry_outbox row committed in the
+//       same transaction
+//     → POST /api/internal/outbox/dispatch (Outbox Dispatcher) claims
+//       per-provider delivery rows and invokes the matching adapter.
+//
+// A direct `notifyNewInquiry` fast path used to exist alongside the
+// Outbox and caused double-delivery on every fresh submission, plus it
+// bypassed per-provider delivery state, Resend Idempotency-Key Header
+// dedup, and WeCom at-least-once semantics. It has been deleted from
+// the production call chain. `createNotificationAdapters` is still
+// exported because the Outbox Dispatcher uses it to build adapters.

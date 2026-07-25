@@ -226,7 +226,9 @@ describe("Phase 15: Resend Idempotency-Key Header contract", () => {
         { fetch: fetchMock, timeoutMs: 50 },
       );
 
-      // No context — direct notifyNewInquiry path.
+      // No context — caller did not pass an Outbox event id (the public
+      // submission route no longer calls adapters directly; this scenario
+      // is only reachable from test fixtures or migration tooling).
       await email.send(inquiry);
 
       const [, init] = fetchMock.mock.calls[0]!;
