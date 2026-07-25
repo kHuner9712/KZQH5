@@ -1406,7 +1406,6 @@ begin
   return query select 'admin_audit_log', 'table'::text;
   return query select 'storage_cleanup_queue', 'table'::text;
   return query select 'storage_object_refs', 'table'::text;
-  return query select 'storage_audit_reconcile_queue', 'table'::text;
   return query select 'admin_storage_operations', 'table'::text;
   return query select 'product_assets', 'table'::text;
   return query select 'certificates', 'table'::text;
