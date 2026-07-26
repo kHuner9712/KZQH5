@@ -85,7 +85,7 @@ export function ProductCard({
   return (
     <article
       className={cn(
-        "group overflow-hidden rounded-lg border border-ink-line bg-canvas-warm transition duration-300 hover:-translate-y-0.5 hover:shadow-card-hover",
+        "group overflow-hidden rounded-md border border-black/[0.06] bg-white transition-colors duration-200 hover:border-gold/30 md:rounded-lg",
         isFull && "flex",
       )}
     >
@@ -99,9 +99,7 @@ export function ProductCard({
         <div
           className={cn(
             "relative shrink-0 overflow-hidden",
-            isFull
-              ? "aspect-[4/3] w-2/5"
-              : "aspect-[4/3] w-full md:aspect-[16/10]",
+            isFull ? "aspect-[4/3] w-2/5" : "aspect-square w-full",
           )}
         >
           <ProductImage
@@ -166,7 +164,7 @@ export function ProductCard({
       </Link>
       <div
         className={cn(
-          "border-t border-ink-line p-2.5",
+          "border-t border-black/[0.06] bg-canvas-warm p-2.5",
           isFull && "flex items-center border-l border-t-0",
         )}
       >

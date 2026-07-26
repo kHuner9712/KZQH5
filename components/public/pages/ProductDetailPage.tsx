@@ -244,23 +244,23 @@ export async function ProductDetailPageContent(locale: Locale, slug: string) {
         locale={locale}
         productId={product.id}
       />
-      <div className="sticky top-0 z-30 border-b border-ink-line bg-white/95 backdrop-blur-lg md:top-16">
+      <div className="sticky top-12 z-30 border-b border-white/10 bg-page/95 backdrop-blur-lg md:top-16">
         <ResponsiveContainer className="flex items-center gap-3 py-3">
           <Link
             href={localePath(locale, "/products")}
-            className="flex h-8 w-8 items-center justify-center rounded-full bg-canvas-warm"
+            className="flex h-8 w-8 items-center justify-center rounded-full bg-white/10 text-gold-light"
             aria-label={copy.common.back}
           >
             <ArrowLeft className="h-4 w-4" />
           </Link>
-          <span className="truncate text-sm font-medium text-ink">
+          <span className="truncate text-sm font-medium text-white/70">
             {content.name}
           </span>
         </ResponsiveContainer>
       </div>
-      <ResponsiveContainer className="py-4 md:py-10">
-        <div className="grid gap-6 lg:grid-cols-2 lg:gap-10">
-          <div className="overflow-hidden rounded-xl border border-ink-line bg-white">
+      <ResponsiveContainer className="py-6 md:py-16">
+        <div className="grid gap-8 lg:grid-cols-[minmax(0,1.08fr)_minmax(0,0.92fr)] lg:gap-16">
+          <div className="overflow-hidden rounded-lg border border-black/[0.06] bg-white">
             <ImageCarousel images={carousel} videoUrl={product.video_url} />
           </div>
           <div>
@@ -272,7 +272,7 @@ export async function ProductDetailPageContent(locale: Locale, slug: string) {
             </p>
             <h1
               data-testid="product-detail-title"
-              className="mt-2 text-2xl font-bold text-ink md:text-4xl"
+              className="font-display mt-2 text-[30px] font-semibold leading-tight text-ink md:text-[44px]"
             >
               {content.name}
             </h1>
@@ -287,7 +287,7 @@ export async function ProductDetailPageContent(locale: Locale, slug: string) {
               )}
               {product.eco_grade && <EcoBadge grade={product.eco_grade} />}
             </div>
-            <p className="mt-5 text-base font-semibold text-industrial">
+            <p className="mt-5 text-base font-semibold text-gold-dark">
               {content.price || copy.products.contactPrice}
             </p>
             <div className="mt-5 flex flex-col gap-2 sm:flex-row">
@@ -306,7 +306,7 @@ export async function ProductDetailPageContent(locale: Locale, slug: string) {
           </div>
         </div>
         {content.description && (
-          <section className="mt-8">
+          <section className="mt-10 border-t border-ink-line pt-8 md:mt-14 md:pt-10">
             <h2 className="text-lg font-semibold text-ink">
               {copy.products.detailIntro}
             </h2>
@@ -316,7 +316,7 @@ export async function ProductDetailPageContent(locale: Locale, slug: string) {
           </section>
         )}
         {specs.length > 0 && (
-          <section className="mt-8">
+          <section className="mt-10 border-t border-ink-line pt-8 md:mt-14 md:pt-10">
             <h2 className="text-lg font-semibold text-ink">
               {copy.products.specs}
             </h2>
@@ -324,7 +324,10 @@ export async function ProductDetailPageContent(locale: Locale, slug: string) {
               {specs.map((item) => {
                 const Icon = item.icon;
                 return (
-                  <div key={item.label} className="card-base flex gap-3 p-4">
+                  <div
+                    key={item.label}
+                    className="flex gap-3 rounded-md border border-black/[0.06] bg-canvas-warm p-4 md:rounded-lg"
+                  >
                     <Icon className="h-5 w-5 shrink-0 text-brass" />
                     <div>
                       <p className="text-xs text-ink-mute">{item.label}</p>
@@ -337,7 +340,7 @@ export async function ProductDetailPageContent(locale: Locale, slug: string) {
           </section>
         )}
         {assets.length > 0 && (
-          <section className="mt-8">
+          <section className="mt-10 border-t border-ink-line pt-8 md:mt-14 md:pt-10">
             <ProductAssetList
               assets={assets}
               locale={locale}
@@ -349,13 +352,16 @@ export async function ProductDetailPageContent(locale: Locale, slug: string) {
           </section>
         )}
         {content.faq?.length ? (
-          <section className="mt-8">
+          <section className="mt-10 border-t border-ink-line pt-8 md:mt-14 md:pt-10">
             <h2 className="text-lg font-semibold text-ink">
               {copy.products.faq}
             </h2>
             <div className="mt-4 space-y-3">
               {content.faq.map((item) => (
-                <details key={item.question} className="card-base p-4">
+                <details
+                  key={item.question}
+                  className="rounded-md border border-black/[0.06] bg-canvas-warm p-4 open:border-gold/30 md:rounded-lg"
+                >
                   <summary className="cursor-pointer font-medium text-ink">
                     {item.question}
                   </summary>
@@ -368,7 +374,7 @@ export async function ProductDetailPageContent(locale: Locale, slug: string) {
           </section>
         ) : null}
         {certificates.length > 0 && (
-          <section className="mt-8">
+          <section className="mt-10 border-t border-ink-line pt-8 md:mt-14 md:pt-10">
             <h2 className="flex items-center gap-2 text-lg font-semibold text-ink">
               <Award className="h-5 w-5 text-brass" />
               {copy.products.relatedCertificates}
