@@ -1,12 +1,15 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { createBrowserSupabaseClient } from "@/lib/supabase/client";
 import { useToast } from "@/components/admin/Toast";
 import { Button } from "@/components/ui/Button";
 import { Input, Textarea } from "@/components/ui/Input";
 import { ImageUpload } from "@/components/admin/ImageUpload";
 import type { CompanyProfile, Advantage } from "@/types/database";
+import {
+  getCompanyProfileApi,
+  saveCompanyProfileApi,
+} from "@/lib/services/admin-fetch";
 import { Loader2, Save, Plus, Trash2 } from "lucide-react";
 
 const defaultAdvantage: Advantage = {
@@ -17,11 +20,26 @@ const defaultAdvantage: Advantage = {
   desc_en: "",
 };
 
+const CONTENT_ERROR_TEXT: Record<string, string> = {
+  ADMIN_WRITE_UNAUTHORIZED: "未登录或会话已过期",
+  ADMIN_WRITE_FORBIDDEN_ORIGIN: "请求来源被拒绝",
+  ADMIN_WRITE_FORBIDDEN_ROLE: "权限不足",
+  ADMIN_WRITE_BAD_REQUEST: "参数错误",
+  ADMIN_WRITE_CONFLICT: "数据已被他人更新，请刷新后重试",
+  ADMIN_WRITE_FAILED: "操作失败",
+  ADMIN_WRITE_NETWORK: "网络错误",
+  ADMIN_WRITE_DEMO: "Demo 模式下不可写",
+};
+
+function errorText(code: string): string {
+  return CONTENT_ERROR_TEXT[code] ?? "操作失败";
+}
+
 export default function CompanyPage() {
-  const supabase = createBrowserSupabaseClient();
   const { show } = useToast();
 
   const [profileId, setProfileId] = useState<string | null>(null);
+  const [profileUpdatedAt, setProfileUpdatedAt] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
@@ -44,16 +62,11 @@ export default function CompanyPage() {
 
   useEffect(() => {
     (async () => {
-      const { data } = await supabase
-        .from("company_profile")
-        .select("*")
-        .order("updated_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-
-      if (data) {
-        const p = data as CompanyProfile;
+      const result = await getCompanyProfileApi();
+      if (result.ok && result.data.profile) {
+        const p = result.data.profile;
         setProfileId(p.id);
+        setProfileUpdatedAt(p.updated_at);
         setForm({
           title_cn: p.title_cn || "",
           title_en: p.title_en || "",
@@ -70,10 +83,12 @@ export default function CompanyPage() {
         });
         setAdvantagesCn(p.advantages_cn || []);
         setAdvantagesEn(p.advantages_en || []);
+      } else if (!result.ok) {
+        show(errorText(result.code), "error");
       }
       setLoading(false);
     })();
-  }, [supabase]);
+  }, [show]);
 
   function update<K extends keyof typeof form>(key: K, value: string) {
     setForm((p) => ({ ...p, [key]: value }));
@@ -122,14 +137,22 @@ export default function CompanyPage() {
       logo_url: form.logo_url || null,
     };
 
-    const { error } = profileId
-      ? await supabase.from("company_profile").update(payload).eq("id", profileId)
-      : await supabase.from("company_profile").insert(payload);
+    const result = await saveCompanyProfileApi({
+      id: profileId,
+      expectedUpdatedAt: profileId ? profileUpdatedAt : null,
+      payload,
+    });
 
     setSaving(false);
-    if (error) {
-      show(error.message, "error");
+    if (!result.ok) {
+      show(errorText(result.code), "error");
       return;
+    }
+    if (!profileId && result.data.id) {
+      setProfileId(result.data.id);
+    }
+    if (result.data.updatedAt) {
+      setProfileUpdatedAt(result.data.updatedAt);
     }
     show("公司信息已保存", "success");
   }
@@ -154,7 +177,7 @@ export default function CompanyPage() {
         <Section title="品牌素材" subtitle="Logo 与微信二维码">
           <ImageUpload
             label="品牌 Logo"
-            folder="company/logo"
+            purpose="company-logo"
             value={form.logo_url}
             onChange={(url) => update("logo_url", url)}
             aspect="logo"
@@ -162,7 +185,7 @@ export default function CompanyPage() {
           />
           <ImageUpload
             label="微信二维码"
-            folder="company/wechat"
+            purpose="company-logo"
             value={form.wechat_qr_url}
             onChange={(url) => update("wechat_qr_url", url)}
             aspect="square"

@@ -1,13 +1,31 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { createBrowserSupabaseClient } from "@/lib/supabase/client";
 import { useToast } from "@/components/admin/Toast";
 import { Button } from "@/components/ui/Button";
 import { Input, Textarea } from "@/components/ui/Input";
 import { ImageUpload } from "@/components/admin/ImageUpload";
 import type { SiteSettings, NavItem } from "@/types/database";
+import {
+  getSiteSettingsApi,
+  saveSiteSettingsApi,
+} from "@/lib/services/admin-fetch";
 import { Loader2, Plus, Trash2, Save, ChevronUp, ChevronDown } from "lucide-react";
+
+const CONTENT_ERROR_TEXT: Record<string, string> = {
+  ADMIN_WRITE_UNAUTHORIZED: "未登录或会话已过期",
+  ADMIN_WRITE_FORBIDDEN_ORIGIN: "请求来源被拒绝",
+  ADMIN_WRITE_FORBIDDEN_ROLE: "权限不足",
+  ADMIN_WRITE_BAD_REQUEST: "参数错误",
+  ADMIN_WRITE_CONFLICT: "数据已被他人更新，请刷新后重试",
+  ADMIN_WRITE_FAILED: "操作失败",
+  ADMIN_WRITE_NETWORK: "网络错误",
+  ADMIN_WRITE_DEMO: "Demo 模式下不可写",
+};
+
+function errorText(code: string): string {
+  return CONTENT_ERROR_TEXT[code] ?? "操作失败";
+}
 
 interface FormState {
   site_name: string;
@@ -40,10 +58,10 @@ const emptyForm: FormState = {
 };
 
 export default function SiteSettingsPage() {
-  const supabase = createBrowserSupabaseClient();
   const { show } = useToast();
 
   const [settingsId, setSettingsId] = useState<string | null>(null);
+  const [settingsUpdatedAt, setSettingsUpdatedAt] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState<FormState>(emptyForm);
@@ -51,15 +69,11 @@ export default function SiteSettingsPage() {
 
   useEffect(() => {
     (async () => {
-      const { data } = await supabase
-        .from("site_settings")
-        .select("*")
-        .limit(1)
-        .maybeSingle();
-
-      if (data) {
-        const s = data as SiteSettings;
+      const result = await getSiteSettingsApi();
+      if (result.ok && result.data.settings) {
+        const s = result.data.settings;
         setSettingsId(s.id);
+        setSettingsUpdatedAt(s.updated_at);
         setForm({
           site_name: s.site_name || "",
           site_name_cn: s.site_name_cn || "",
@@ -75,10 +89,12 @@ export default function SiteSettingsPage() {
           footer_text_en: s.footer_text_en || "",
         });
         setNavItems(s.navigation_json || []);
+      } else if (!result.ok) {
+        show(errorText(result.code), "error");
       }
       setLoading(false);
     })();
-  }, [supabase]);
+  }, [show]);
 
   function update<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((p) => ({ ...p, [key]: value }));
@@ -140,31 +156,24 @@ export default function SiteSettingsPage() {
       navigation_json: navItems,
     };
 
-    if (settingsId) {
-      const { error } = await supabase
-        .from("site_settings")
-        .update(payload)
-        .eq("id", settingsId);
-      setSaving(false);
-      if (error) {
-        show(error.message, "error");
-        return;
-      }
-      show("站点设置已保存", "success");
-    } else {
-      const { data, error } = await supabase
-        .from("site_settings")
-        .insert(payload)
-        .select("id")
-        .single();
-      setSaving(false);
-      if (error || !data) {
-        show(error?.message || "保存失败", "error");
-        return;
-      }
-      setSettingsId((data as { id: string }).id);
-      show("站点设置已创建", "success");
+    const result = await saveSiteSettingsApi({
+      id: settingsId,
+      expectedUpdatedAt: settingsId ? settingsUpdatedAt : null,
+      payload,
+    });
+
+    setSaving(false);
+    if (!result.ok) {
+      show(errorText(result.code), "error");
+      return;
     }
+    if (!settingsId && result.data.id) {
+      setSettingsId(result.data.id);
+    }
+    if (result.data.updatedAt) {
+      setSettingsUpdatedAt(result.data.updatedAt);
+    }
+    show(settingsId ? "站点设置已保存" : "站点设置已创建", "success");
   }
 
   if (loading) {
@@ -252,7 +261,7 @@ export default function SiteSettingsPage() {
           />
           <ImageUpload
             label="默认 OG 分享图"
-            folder="site/og"
+            purpose="homepage-image"
             value={form.default_og_image_url}
             onChange={(url) => update("default_og_image_url", url)}
             aspect="wide"

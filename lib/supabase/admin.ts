@@ -21,3 +21,10 @@ export function createAdminSupabaseClient() {
     },
   });
 }
+
+/**
+ * 服务端特权客户端的统一别名。新代码（如可信 Storage 上传边界）优先使用
+ * createAdminClient；createAdminSupabaseClient 保留以兼容已有调用与测试 mock。
+ * 两者指向同一个 service_role 客户端工厂。
+ */
+export const createAdminClient = createAdminSupabaseClient;

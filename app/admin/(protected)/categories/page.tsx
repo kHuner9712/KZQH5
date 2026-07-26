@@ -1,13 +1,21 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { createBrowserSupabaseClient } from "@/lib/supabase/client";
 import { useToast } from "@/components/admin/Toast";
 import { Button } from "@/components/ui/Button";
 import { Input, Textarea } from "@/components/ui/Input";
 import { Modal, FormActions } from "@/components/admin/Modal";
 import { generateSlug } from "@/lib/utils";
 import type { Category, Subcategory } from "@/types/database";
+import {
+  deleteCategoryApi,
+  deleteSubcategoryApi,
+  listCategoriesApi,
+  saveCategoryApi,
+  saveSubcategoryApi,
+  toggleCategoryApi,
+  toggleSubcategoryApi,
+} from "@/lib/services/admin-fetch";
 import {
   Plus,
   Pencil,
@@ -18,8 +26,22 @@ import {
   GripVertical,
 } from "lucide-react";
 
+const CONTENT_ERROR_TEXT: Record<string, string> = {
+  ADMIN_WRITE_UNAUTHORIZED: "未登录或会话已过期",
+  ADMIN_WRITE_FORBIDDEN_ORIGIN: "请求来源被拒绝",
+  ADMIN_WRITE_FORBIDDEN_ROLE: "权限不足",
+  ADMIN_WRITE_BAD_REQUEST: "参数错误",
+  ADMIN_WRITE_CONFLICT: "数据已被他人更新，请刷新后重试",
+  ADMIN_WRITE_FAILED: "操作失败",
+  ADMIN_WRITE_NETWORK: "网络错误",
+  ADMIN_WRITE_DEMO: "Demo 模式下不可写",
+};
+
+function errorText(code: string): string {
+  return CONTENT_ERROR_TEXT[code] ?? "操作失败";
+}
+
 export default function CategoriesPage() {
-  const supabase = createBrowserSupabaseClient();
   const { show } = useToast();
 
   const [categories, setCategories] = useState<Category[]>([]);
@@ -36,42 +58,40 @@ export default function CategoriesPage() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const { data: cats } = await supabase
-      .from("categories")
-      .select("*")
-      .order("sort_order", { ascending: true })
-      .order("created_at", { ascending: true });
-    const catList = (cats as Category[] | null) || [];
-    setCategories(catList);
-
-    if (catList.length > 0) {
-      const { data: subs } = await supabase
-        .from("subcategories")
-        .select("*")
-        .order("sort_order", { ascending: true })
-        .order("created_at", { ascending: true });
-      const map: Record<string, Subcategory[]> = {};
-      ((subs as Subcategory[] | null) || []).forEach((s) => {
-        if (!map[s.category_id]) map[s.category_id] = [];
-        map[s.category_id].push(s);
-      });
-      setSubMap(map);
-      // 默认全展开
-      const exp: Record<string, boolean> = {};
-      catList.forEach((c) => (exp[c.id] = true));
-      setExpanded(exp);
+    const result = await listCategoriesApi();
+    if (!result.ok) {
+      show(errorText(result.code), "error");
+      setCategories([]);
+      setSubMap({});
+      setLoading(false);
+      return;
     }
+    const catList = result.data.categories;
+    setCategories(catList);
+    const map: Record<string, Subcategory[]> = {};
+    result.data.subcategories.forEach((s) => {
+      if (!map[s.category_id]) map[s.category_id] = [];
+      map[s.category_id].push(s);
+    });
+    setSubMap(map);
+    // 默认全展开
+    const exp: Record<string, boolean> = {};
+    catList.forEach((c) => (exp[c.id] = true));
+    setExpanded(exp);
     setLoading(false);
-  }, [supabase]);
+  }, [show]);
 
   useEffect(() => {
     load();
   }, [load]);
 
-  async function toggleActive(table: "categories" | "subcategories", id: string, value: boolean) {
-    const { error } = await supabase.from(table).update({ is_active: !value }).eq("id", id);
-    if (error) {
-      show(error.message, "error");
+  async function toggleActive(table: "categories" | "subcategories", id: string, value: boolean, updatedAt: string) {
+    const result =
+      table === "categories"
+        ? await toggleCategoryApi(id, updatedAt)
+        : await toggleSubcategoryApi(id, updatedAt);
+    if (!result.ok) {
+      show(errorText(result.code), "error");
       return;
     }
     show(value ? "已停用" : "已启用", "success");
@@ -80,9 +100,9 @@ export default function CategoriesPage() {
 
   async function deleteCategory(cat: Category) {
     if (!confirm(`确定删除一级类目「${cat.name_cn}」？\n该类目下所有二级类目将一并删除，关联产品会失去类目关联。`)) return;
-    const { error } = await supabase.from("categories").delete().eq("id", cat.id);
-    if (error) {
-      show(error.message, "error");
+    const result = await deleteCategoryApi(cat.id, cat.updated_at);
+    if (!result.ok) {
+      show(errorText(result.code), "error");
       return;
     }
     show("类目已删除", "success");
@@ -91,9 +111,9 @@ export default function CategoriesPage() {
 
   async function deleteSubcategory(sub: Subcategory) {
     if (!confirm(`确定删除二级类目「${sub.name_cn}」？`)) return;
-    const { error } = await supabase.from("subcategories").delete().eq("id", sub.id);
-    if (error) {
-      show(error.message, "error");
+    const result = await deleteSubcategoryApi(sub.id, sub.updated_at);
+    if (!result.ok) {
+      show(errorText(result.code), "error");
       return;
     }
     show("二级类目已删除", "success");
@@ -155,7 +175,7 @@ export default function CategoriesPage() {
                     {cat.is_active ? "启用" : "停用"}
                   </span>
                   <button
-                    onClick={() => toggleActive("categories", cat.id, cat.is_active)}
+                    onClick={() => toggleActive("categories", cat.id, cat.is_active, cat.updated_at)}
                     className="text-xs text-steel hover:underline"
                   >
                     {cat.is_active ? "停用" : "启用"}
@@ -215,7 +235,7 @@ export default function CategoriesPage() {
                               {sub.is_active ? "启用" : "停用"}
                             </span>
                             <button
-                              onClick={() => toggleActive("subcategories", sub.id, sub.is_active)}
+                              onClick={() => toggleActive("subcategories", sub.id, sub.is_active, sub.updated_at)}
                               className="text-xs text-steel hover:underline"
                             >
                               {sub.is_active ? "停用" : "启用"}
@@ -294,7 +314,6 @@ function CategoryModal({
   saving: boolean;
   setSaving: (v: boolean) => void;
 }) {
-  const supabase = createBrowserSupabaseClient();
   const { show } = useToast();
   const isEdit = !!initial;
 
@@ -337,13 +356,15 @@ function CategoryModal({
       is_active: form.is_active,
     };
 
-    const { error } = isEdit
-      ? await supabase.from("categories").update(payload).eq("id", initial!.id)
-      : await supabase.from("categories").insert(payload);
+    const result = await saveCategoryApi({
+      id: isEdit ? initial!.id : null,
+      expectedUpdatedAt: isEdit ? initial!.updated_at : null,
+      payload,
+    });
 
     setSaving(false);
-    if (error) {
-      show(error.message, "error");
+    if (!result.ok) {
+      show(errorText(result.code), "error");
       return;
     }
     show(isEdit ? "类目已更新" : "类目已创建", "success");
@@ -437,7 +458,6 @@ function SubcategoryModal({
   saving: boolean;
   setSaving: (v: boolean) => void;
 }) {
-  const supabase = createBrowserSupabaseClient();
   const { show } = useToast();
   const isEdit = !!initial;
 
@@ -481,13 +501,15 @@ function SubcategoryModal({
       is_active: form.is_active,
     };
 
-    const { error } = isEdit
-      ? await supabase.from("subcategories").update(payload).eq("id", initial!.id)
-      : await supabase.from("subcategories").insert(payload);
+    const result = await saveSubcategoryApi({
+      id: isEdit ? initial!.id : null,
+      expectedUpdatedAt: isEdit ? initial!.updated_at : null,
+      payload,
+    });
 
     setSaving(false);
-    if (error) {
-      show(error.message, "error");
+    if (!result.ok) {
+      show(errorText(result.code), "error");
       return;
     }
     show(isEdit ? "二级类目已更新" : "二级类目已创建", "success");

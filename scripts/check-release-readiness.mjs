@@ -4,7 +4,7 @@
 // Performs read-only pre-deployment checks across:
 //   1. Git & build state
 //   2. URL & SEO configuration
-//   3. Supabase schema (catalog fields + analytics constraint)
+//   3. Supabase schema (via verify_schema_readiness() RPC)
 //   4. Business content (placeholder contact data, catalog counts)
 //
 // Exit codes:
@@ -17,6 +17,17 @@
 //
 // This script is strictly read-only. It never modifies the database,
 // storage policies, or deployment environment. It never prints secrets.
+//
+// Phase 7 hardening:
+//   - Schema compatibility is verified via the service_role-only RPC
+//     `verify_schema_readiness()` (migration 20260724160000) instead of
+//     probing /rest/v1/information_schema. The RPC performs all checks
+//     server-side and returns a structured { ok, checks[] } result.
+//   - When the RPC is missing, unreachable, or returns a malformed
+//     payload, the script BLOCKs (schema cannot be confirmed) rather
+//     than silently passing.
+//   - The service role key, Authorization header, and full error
+//     objects are NEVER printed. Only fixed error codes + coarse cause.
 // ============================================================
 
 import { execSync } from "node:child_process";
@@ -268,36 +279,146 @@ function checkUrlAndSeo() {
   }
 }
 
-// ---------- Section 3: Supabase Schema (read-only) ----------
+// ---------- Section 3: Supabase Schema (read-only, via RPC) ----------
+//
+// Phase 7: schema compatibility is verified by calling the service_role-only
+// RPC `verify_schema_readiness()` (migration 20260724160000). The RPC checks
+// server-side that:
+//   - product_assets has the 4 catalog fields
+//   - the 2 catalog indexes exist
+//   - analytics_events has the 19-event check constraint
+//   - count_unread_inquiries(), get_admin_dashboard_snapshot(),
+//     create_inquiry_with_items() exist
+//   - the critical RPCs are NOT granted to anon/authenticated
+//
+// The script NEVER falls back to direct information_schema probing. If the
+// RPC is missing, unreachable, or returns a malformed payload, we BLOCK
+// because schema compatibility cannot be confirmed.
+//
+// Error handling contract:
+//   - The service role key, Authorization header, and full error objects are
+//     never printed. We only emit fixed error codes + a coarse cause.
+//   - Network failures are classified as BLOCK (schema unverified), not WARN,
+//     because we cannot claim readiness without confirming the schema.
 
-const REQUIRED_CATALOG_FIELDS = [
-  "catalog_topic_id",
-  "cover_image_url",
-  "published_at",
-  "content_hash",
+// Expected check names returned by verify_schema_readiness(). We track these
+// explicitly so a future RPC change that drops a check is detected.
+const EXPECTED_SCHEMA_CHECKS = [
+  "catalog_field_catalog_topic_id",
+  "catalog_field_cover_image_url",
+  "catalog_field_published_at",
+  "catalog_field_content_hash",
+  "index_product_assets_catalog_topic_idx",
+  "index_product_assets_content_hash_idx",
+  "analytics_events_constraint",
+  "rpc_count_unread_inquiries",
+  "rpc_get_admin_dashboard_snapshot",
+  "rpc_create_inquiry_with_items",
+  "grant_count_unread_inquiries",
+  "grant_get_admin_dashboard_snapshot",
+  "grant_create_inquiry_with_items",
+  "grant_save_product_with_images",
+  "grant_save_project_with_relations",
 ];
 
-const EXPECTED_ANALYTICS_EVENTS = [
-  "page_view",
-  "product_view",
-  "product_search",
-  "category_click",
-  "phone_click",
-  "wechat_copy",
-  "whatsapp_click",
-  "email_click",
-  "add_to_inquiry",
-  "inquiry_start",
-  "inquiry_success",
-  "catalog_download",
-  "certificate_view",
-  "project_view",
-  "catalog_open",
-  "catalog_load_success",
-  "catalog_load_failure",
-  "catalog_copy_link",
-  "catalog_open_external",
-];
+/**
+ * Classifies a fetch failure into a coarse cause string without leaking the
+ * URL (which may contain the apikey as a query param) or the error message
+ * (which may contain the response body).
+ */
+function classifyFetchFailure(err) {
+  if (err?.name === "TimeoutError" || err?.name === "AbortError") {
+    return "SCHEMA_RPC_TIMEOUT";
+  }
+  // Network errors (ECONNREFUSED, ENOTFOUND, ECONNRESET, etc.)
+  if (err?.code && typeof err.code === "string" && err.code.startsWith("E")) {
+    return "SCHEMA_RPC_NETWORK";
+  }
+  return "SCHEMA_RPC_UNKNOWN";
+}
+
+/**
+ * Calls verify_schema_readiness() via PostgREST and returns the parsed
+ * result, or throws a classified error.
+ *
+ * Returns: { ok: boolean, checks: Array<{ name, passed, detail }> }
+ */
+async function callSchemaVerificationRpc(supabaseUrl, serviceRoleKey) {
+  const rpcUrl = `${supabaseUrl}/rest/v1/rpc/verify_schema_readiness`;
+  const headers = {
+    apikey: serviceRoleKey,
+    Authorization: `Bearer ${serviceRoleKey}`,
+    "Content-Type": "application/json",
+    Accept: "application/json",
+  };
+  const res = await fetch(rpcUrl, {
+    method: "POST",
+    headers,
+    body: "{}",
+    signal: AbortSignal.timeout(20_000),
+  });
+
+  // 404 = RPC not deployed (migration 20260724160000 not applied)
+  if (res.status === 404) {
+    const err = new Error("SCHEMA_RPC_NOT_FOUND");
+    err.code = "SCHEMA_RPC_NOT_FOUND";
+    throw err;
+  }
+  // 401/403 = service role key invalid or RPC granted to wrong role
+  if (res.status === 401 || res.status === 403) {
+    const err = new Error("SCHEMA_RPC_FORBIDDEN");
+    err.code = "SCHEMA_RPC_FORBIDDEN";
+    throw err;
+  }
+  if (!res.ok) {
+    const err = new Error("SCHEMA_RPC_HTTP_ERROR");
+    err.code = "SCHEMA_RPC_HTTP_ERROR";
+    err.httpStatus = res.status;
+    throw err;
+  }
+
+  const body = await res.json();
+  return body;
+}
+
+/**
+ * Validates the RPC response shape. Returns the checks array if valid,
+ * otherwise throws with code SCHEMA_RPC_MALFORMED.
+ */
+function validateRpcResponse(body) {
+  if (body === null || typeof body !== "object" || Array.isArray(body)) {
+    const err = new Error("SCHEMA_RPC_MALFORMED");
+    err.code = "SCHEMA_RPC_MALFORMED";
+    throw err;
+  }
+  const ok = body.ok;
+  const checks = body.checks;
+  if (typeof ok !== "boolean") {
+    const err = new Error("SCHEMA_RPC_MALFORMED");
+    err.code = "SCHEMA_RPC_MALFORMED";
+    throw err;
+  }
+  if (!Array.isArray(checks)) {
+    const err = new Error("SCHEMA_RPC_MALFORMED");
+    err.code = "SCHEMA_RPC_MALFORMED";
+    throw err;
+  }
+  // Each check must be { name: string, passed: boolean, detail: string }
+  for (const c of checks) {
+    if (
+      !c ||
+      typeof c !== "object" ||
+      typeof c.name !== "string" ||
+      typeof c.passed !== "boolean" ||
+      typeof c.detail !== "string"
+    ) {
+      const err = new Error("SCHEMA_RPC_MALFORMED");
+      err.code = "SCHEMA_RPC_MALFORMED";
+      throw err;
+    }
+  }
+  return checks;
+}
 
 async function checkSupabaseSchema() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -312,82 +433,24 @@ async function checkSupabaseSchema() {
     return;
   }
 
-  // Service role key presence (server-side only)
+  // Service role key presence (server-side only). The schema verification
+  // RPC is service_role-only, so without it we cannot confirm schema
+  // compatibility — that is a BLOCK, not a WARN.
   if (!serviceRoleKey) {
     block(
       "supabase: service role",
-      "SUPABASE_SERVICE_ROLE_KEY missing — admin/catalog writes will fail",
+      "SUPABASE_SERVICE_ROLE_KEY missing — schema verification RPC cannot be called",
     );
+    // No point continuing; the RPC call would 403.
+    return;
   } else {
     pass("supabase: service role", "configured (server-side)");
   }
 
-  const adminHeaders = serviceRoleKey
-    ? { apikey: serviceRoleKey, Authorization: `Bearer ${serviceRoleKey}` }
-    : { apikey: anonKey, Authorization: `Bearer ${anonKey}` };
-
-  // --- Catalog fields check ---
-  let columnsAvailable = false;
-  try {
-    const colRes = await fetch(
-      `${supabaseUrl}/rest/v1/information_schema?select=column_name&table_schema=eq.public&table_name=eq.product_assets`,
-      { headers: adminHeaders, signal: AbortSignal.timeout(15_000) },
-    );
-    if (colRes.ok) {
-      const cols = await colRes.json();
-      const colNames = Array.isArray(cols)
-        ? cols.map((c) => c.column_name)
-        : [];
-      const missing = REQUIRED_CATALOG_FIELDS.filter(
-        (f) => !colNames.includes(f),
-      );
-      if (missing.length === 0) {
-        pass("schema: product_assets fields", "all 4 catalog fields present");
-        columnsAvailable = true;
-      } else {
-        block(
-          "schema: product_assets fields",
-          `missing: ${missing.join(", ")} — migration 20260719090000 not applied`,
-        );
-      }
-    } else {
-      warn(
-        "schema: product_assets fields",
-        `information_schema not queryable (HTTP ${colRes.status})`,
-      );
-    }
-  } catch (err) {
-    warn(
-      "schema: product_assets fields",
-      `query failed: ${err instanceof Error ? err.message : "unknown"}`,
-    );
-  }
-
-  // --- Analytics events constraint check ---
-  // We probe by attempting to read existing event_name values (read-only).
-  try {
-    const evRes = await fetch(
-      `${supabaseUrl}/rest/v1/analytics_events?select=event_name&limit=1`,
-      { headers: adminHeaders, signal: AbortSignal.timeout(15_000) },
-    );
-    if (evRes.ok) {
-      pass("schema: analytics_events table", "readable");
-    } else {
-      warn(
-        "schema: analytics_events table",
-        `HTTP ${evRes.status} — constraint cannot be verified`,
-      );
-    }
-  } catch (err) {
-    warn(
-      "schema: analytics_events table",
-      `query failed: ${err instanceof Error ? err.message : "unknown"}`,
-    );
-  }
-
   // --- Migration files present locally ---
   // We cannot execute migrations; we only verify the files exist so the
-  // runbook can reference them.
+  // runbook can reference them. This is a repo-state check, not a schema
+  // check.
   try {
     const migration1 = readFileSync(
       "supabase/migrations/20260719090000_catalog_center_fields.sql",
@@ -397,35 +460,106 @@ async function checkSupabaseSchema() {
       "supabase/migrations/20260721000000_catalog_viewer_analytics_events.sql",
       { encoding: "utf-8" },
     );
-    if (migration1.includes("catalog_topic_id") && migration2.includes("catalog_open")) {
-      pass("migrations: files present", "both catalog migration files found");
+    const migration7 = readFileSync(
+      "supabase/migrations/20260724160000_schema_verification_rpc.sql",
+      { encoding: "utf-8" },
+    );
+    if (
+      migration1.includes("catalog_topic_id") &&
+      migration2.includes("catalog_open") &&
+      migration7.includes("verify_schema_readiness")
+    ) {
+      pass("migrations: files present", "catalog + schema-verification migration files found");
     } else {
       warn("migrations: files present", "files exist but content unexpected");
     }
   } catch {
-    block("migrations: files present", "catalog migration files missing from repo");
+    block("migrations: files present", "required migration files missing from repo");
   }
 
-  // --- Schema compatibility vs deployed code ---
-  // Catalog code is on main. If schema fields are missing but we are NOT in
-  // demo mode, this is a BLOCK — the catalog feature cannot function.
-  const demoMode = process.env.NEXT_PUBLIC_DEMO_MODE === "true";
-  if (!demoMode && columnsAvailable === false) {
-    // Only block if we definitively know columns are missing (columnsAvailable
-    // stays false when the column query failed with a warn, so we only block
-    // when the explicit missing-columns branch above already blocked).
-    // This branch is a safety net for the catalog compatibility requirement.
-    const alreadyBlocked = results.some(
-      (r) =>
-        r.level === "BLOCK" &&
-        r.label.startsWith("schema: product_assets fields"),
-    );
-    if (alreadyBlocked) {
+  // --- Schema verification via RPC ---
+  let rpcChecks = null;
+  try {
+    const body = await callSchemaVerificationRpc(supabaseUrl, serviceRoleKey);
+    rpcChecks = validateRpcResponse(body);
+    pass("schema: verification RPC", `reachable, ${rpcChecks.length} checks returned`);
+  } catch (err) {
+    const code = err?.code || classifyFetchFailure(err);
+    if (code === "SCHEMA_RPC_NOT_FOUND") {
       block(
-        "compat: catalog code vs schema",
-        "catalog code is deployed but schema is incompatible — apply migrations first",
+        "schema: verification RPC",
+        "SCHEMA_RPC_NOT_FOUND — migration 20260724160000 not applied",
+      );
+    } else if (code === "SCHEMA_RPC_FORBIDDEN") {
+      block(
+        "schema: verification RPC",
+        "SCHEMA_RPC_FORBIDDEN — service role key invalid or RPC mis-granted",
+      );
+    } else if (code === "SCHEMA_RPC_TIMEOUT") {
+      block(
+        "schema: verification RPC",
+        "SCHEMA_RPC_TIMEOUT — Supabase unreachable within 20s",
+      );
+    } else if (code === "SCHEMA_RPC_NETWORK") {
+      block(
+        "schema: verification RPC",
+        "SCHEMA_RPC_NETWORK — cannot reach Supabase (network error)",
+      );
+    } else if (code === "SCHEMA_RPC_MALFORMED") {
+      block(
+        "schema: verification RPC",
+        "SCHEMA_RPC_MALFORMED — RPC returned unexpected shape",
+      );
+    } else if (code === "SCHEMA_RPC_HTTP_ERROR") {
+      block(
+        "schema: verification RPC",
+        `SCHEMA_RPC_HTTP_ERROR — HTTP ${err?.httpStatus || "?"} (check Supabase logs)`,
+      );
+    } else {
+      block(
+        "schema: verification RPC",
+        "SCHEMA_RPC_UNKNOWN — unclassified failure",
       );
     }
+    // Schema cannot be confirmed — we already BLOCKed above. The catalog
+    // compatibility safety net below is intentionally skipped because the
+    // RPC failure is the authoritative signal.
+    return;
+  }
+
+  // --- Emit PASS/BLOCK for each RPC check ---
+  const seenCheckNames = new Set();
+  for (const c of rpcChecks) {
+    seenCheckNames.add(c.name);
+    if (c.passed) {
+      pass(`schema: ${c.name}`, c.detail || "passed");
+    } else {
+      block(`schema: ${c.name}`, c.detail || "failed");
+    }
+  }
+
+  // --- Detect missing checks (RPC returned fewer checks than expected) ---
+  // This guards against a future RPC change that silently drops a check.
+  for (const expected of EXPECTED_SCHEMA_CHECKS) {
+    if (!seenCheckNames.has(expected)) {
+      block(
+        `schema: ${expected}`,
+        "check not returned by RPC — verify migration 20260724160000 is current",
+      );
+    }
+  }
+
+  // --- Top-level ok flag ---
+  // We re-derive ok from the checks array rather than trusting body.ok, so a
+  // buggy RPC that returns ok=true with a failed check is still caught.
+  const anyFailed = rpcChecks.some((c) => !c.passed);
+  if (anyFailed) {
+    block(
+      "schema: overall",
+      "one or more schema checks failed — review individual BLOCK items above",
+    );
+  } else {
+    pass("schema: overall", "all schema checks passed");
   }
 }
 

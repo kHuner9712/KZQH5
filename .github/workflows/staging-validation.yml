@@ -16,17 +16,33 @@ on:
 permissions:
   contents: read
 
+# ============================================================
+# Pinned actions (SHA-pinned for supply-chain security).
+# SHA verified via GitHub API (refs/tags/<tag>) on 2026-07-24.
+# - actions/checkout@v4.2.2      → 11bd71901bbe5b1630ceea73d27597364c9af683
+# - actions/setup-node@v4.4.0    → 49933ea5288caeca8642d1e84afbd3f7d6820020
+# ============================================================
+
 jobs:
   read-only:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: staging
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      # actions/checkout@v4.2.2
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      # actions/setup-node@v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 20
           cache: npm
+      - name: Show tool versions (after setup-node)
+        run: |
+          node --version
+          npm --version
+          which node
       - run: npm ci
       - run: npx playwright install --with-deps chromium
       - name: Read-only Staging database verification
@@ -46,19 +62,20 @@ jobs:
         env:
           BASE_URL: ${{ inputs.base_url }}
       - name: Public deployed E2E
+        # Public E2E must NOT receive service role keys or admin
+        # credentials. Only PLAYWRIGHT_BASE_URL is provided.
         run: npx playwright test tests/e2e/staging-public.spec.ts --retries=0
         env:
           PLAYWRIGHT_BASE_URL: ${{ inputs.base_url }}
-          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-          STAGING_ADMIN_EMAIL: ${{ secrets.STAGING_ADMIN_EMAIL }}
-          STAGING_ADMIN_PASSWORD: ${{ secrets.STAGING_ADMIN_PASSWORD }}
       - name: Protected admin deployed E2E
+        # Admin E2E is the only step that receives admin credentials.
+        # Service role stays out of E2E; admin-scoped RBAC is exercised
+        # through the real login flow.
         run: npx playwright test tests/e2e/staging-admin.spec.ts --workers=1 --retries=0
         env:
           PLAYWRIGHT_BASE_URL: ${{ inputs.base_url }}
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
           STAGING_ADMIN_EMAIL: ${{ secrets.STAGING_ADMIN_EMAIL }}
           STAGING_ADMIN_PASSWORD: ${{ secrets.STAGING_ADMIN_PASSWORD }}
 
@@ -68,14 +85,25 @@ jobs:
     timeout-minutes: 30
     environment: staging
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      # actions/checkout@v4.2.2
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      # actions/setup-node@v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 20
           cache: npm
+      - name: Show tool versions (after setup-node)
+        run: |
+          node --version
+          npm --version
+          which node
       - run: npm ci
       - run: npx playwright install --with-deps chromium
       - name: Marked write Smoke
+        # Marked-write smoke is the only step that legitimately needs
+        # service role for direct diagnostic writes, isolated here.
         run: npm run test:smoke
         env:
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
@@ -84,13 +112,15 @@ jobs:
           SMOKE_TEST_ALLOW_WRITES: "true"
           KZQ_STAGING_CONFIRMATION: KZQ-STAGING-ONLY
       - name: Marked write public E2E
+        # Write E2E legitimately needs service role to clean up the
+        # inquiries it creates. This step is isolated in the
+        # explicitly-enabled-writes job (gated by inputs.allow_writes
+        # and the staging environment approval).
         run: npx playwright test tests/e2e/staging-public.spec.ts --retries=0
         env:
           PLAYWRIGHT_BASE_URL: ${{ inputs.base_url }}
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-          STAGING_ADMIN_EMAIL: ${{ secrets.STAGING_ADMIN_EMAIL }}
-          STAGING_ADMIN_PASSWORD: ${{ secrets.STAGING_ADMIN_PASSWORD }}
           STAGING_E2E_ALLOW_WRITES: "true"
           KZQ_STAGING_CONFIRMATION: KZQ-STAGING-ONLY
       - name: Marked write admin E2E
@@ -98,7 +128,7 @@ jobs:
         env:
           PLAYWRIGHT_BASE_URL: ${{ inputs.base_url }}
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
           STAGING_ADMIN_EMAIL: ${{ secrets.STAGING_ADMIN_EMAIL }}
           STAGING_ADMIN_PASSWORD: ${{ secrets.STAGING_ADMIN_PASSWORD }}
           STAGING_E2E_ALLOW_WRITES: "true"

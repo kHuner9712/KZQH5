@@ -1,4 +1,10 @@
 import { getProjectMetadata, ProjectDetailPageContent } from "@/components/public/pages/ProjectDetailPage";
 export const revalidate = 300;
-export function generateMetadata({ params }: { params: { slug: string } }) { return getProjectMetadata("en", params.slug); }
-export default function ProjectPage({ params }: { params: { slug: string } }) { return ProjectDetailPageContent("en", params.slug); }
+export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }) {
+  const { slug } = await params;
+  return getProjectMetadata("en", slug);
+}
+export default async function ProjectPage({ params }: { params: Promise<{ slug: string }> }) {
+  const { slug } = await params;
+  return ProjectDetailPageContent("en", slug);
+}

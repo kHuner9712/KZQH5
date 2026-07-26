@@ -121,6 +121,12 @@ function freshInstall(url) {
   }
   psql(url, currentFile("supabase/tests/permission_matrix.sql"));
   psql(url, currentFile("supabase/tests/atomic_inquiry.sql"));
+  psql(url, currentFile("supabase/tests/dashboard_snapshot.sql"));
+  psql(url, currentFile("supabase/tests/catalog_authorization.sql"));
+  psql(url, currentFile("supabase/tests/storage_rls_outbox_rpc.sql"));
+  psql(url, currentFile("supabase/tests/per_provider_delivery_storage_lifecycle.sql"));
+  psql(url, currentFile("supabase/tests/schema_verifier_runtime.sql"));
+  psql(url, currentFile("supabase/tests/storage_object_ref_lifecycle.sql"));
 }
 
 function incrementalUpgrade(url) {
@@ -138,6 +144,12 @@ function incrementalUpgrade(url) {
   psql(url, currentFile("supabase/tests/assert_legacy_sentinels.sql"));
   psql(url, currentFile("supabase/tests/permission_matrix.sql"));
   psql(url, currentFile("supabase/tests/atomic_inquiry.sql"));
+  psql(url, currentFile("supabase/tests/dashboard_snapshot.sql"));
+  psql(url, currentFile("supabase/tests/catalog_authorization.sql"));
+  psql(url, currentFile("supabase/tests/storage_rls_outbox_rpc.sql"));
+  psql(url, currentFile("supabase/tests/per_provider_delivery_storage_lifecycle.sql"));
+  psql(url, currentFile("supabase/tests/schema_verifier_runtime.sql"));
+  psql(url, currentFile("supabase/tests/storage_object_ref_lifecycle.sql"));
 }
 
 try {

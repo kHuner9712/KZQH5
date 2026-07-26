@@ -7,6 +7,30 @@ export interface AdminProfile {
   email: string | null;
   role: string | null;
   created_at: string;
+  updated_at: string;
+}
+
+/**
+ * Phase 3: Admin role values enforced by the admin_profiles_role_check
+ * CHECK constraint. Existing rows default to 'admin'.
+ */
+export type AdminRole = "super_admin" | "admin" | "editor";
+
+/**
+ * Phase 3: Audit log entry written by logAdminAction().
+ * RLS denies all access to anon/authenticated; only service_role can
+ * insert and query.
+ */
+export interface AdminAuditLog {
+  id: number;
+  actor_id: string | null;
+  actor_email: string | null;
+  actor_role: string | null;
+  action: string;
+  target_type: string;
+  target_id: string | null;
+  summary: string | null;
+  created_at: string;
 }
 
 export interface Category {
@@ -118,6 +142,25 @@ export interface Certificate {
   sort_order: number;
   created_at: string;
   updated_at: string;
+  // Phase 15 (Section 6): structured storage ref + publish state machine.
+  // See migration 20260725170000 + 20260725190000.
+  source_bucket?: "public-assets" | "private-assets" | null;
+  source_object_path?: string | null;
+  published_bucket?: "public-assets" | "private-assets" | null;
+  published_object_path?: string | null;
+  publish_status?: "draft" | "publishing" | "published" | "publish_failed" | "unpublishing";
+  publish_token?: string | null;
+  publish_started_at?: string | null;
+  publish_error_code?: string | null;
+  candidate_public_bucket?: "public-assets" | "private-assets" | null;
+  candidate_public_path?: string | null;
+  candidate_sha256?: string | null;
+  last_publish_error_code?: string | null;
+  file_size?: number | null;
+  mime_type?: string | null;
+  access_level?: "public" | "private";
+  source_type?: "official" | "self-produced" | "licensed" | "public-domain" | null;
+  authorization_status?: "confirmed" | "pending" | "restricted";
 }
 
 export type InquiryStatus = "new" | "contacted" | "closed";
@@ -142,6 +185,39 @@ export type ProductAssetType =
   | "packaging"
   | "other";
 
+/**
+ * Phase 12 (corrected): Catalog asset access level.
+ *   public  : visible to anon once authorization_status='confirmed'
+ *   private : visible only via service_role (admin RBAC at app layer)
+ *
+ * The 'registered'/'partner' values were removed because the project has
+ * no complete customer authorization system. 'authenticated' Supabase Auth
+ * role is NOT equivalent to a vetted customer/partner and must not grant
+ * private access. See migration 20260724200000_catalog_authorization_tighten.sql.
+ */
+export type ProductAssetAccessLevel = "public" | "private";
+
+/**
+ * Phase 12: Catalog asset source provenance.
+ *   official       : obtained from the manufacturer's official channel
+ *   self-produced  : produced by KZQ internally
+ *   licensed       : obtained under a licensing agreement
+ *   public-domain  : public domain material
+ */
+export type ProductAssetSourceType =
+  | "official"
+  | "self-produced"
+  | "licensed"
+  | "public-domain";
+
+/**
+ * Phase 12: Catalog asset authorization status.
+ *   confirmed : the right to use this asset has been verified
+ *   pending   : authorization has not yet been confirmed (default)
+ *   restricted: asset is restricted and should not be publicly displayed
+ */
+export type ProductAssetAuthorizationStatus = "confirmed" | "pending" | "restricted";
+
 export interface ProductAsset {
   id: string;
   product_id: string | null;
@@ -158,6 +234,28 @@ export interface ProductAsset {
   created_at: string;
   updated_at: string;
   product?: Pick<Product, "id" | "slug" | "name_cn" | "name_en"> | null;
+  // Phase 12+: catalog authorization fields (existing).
+  catalog_topic_id?: string | null;
+  cover_image_url?: string | null;
+  published_at?: string | null;
+  content_hash?: string | null;
+  access_level?: ProductAssetAccessLevel;
+  source_type?: ProductAssetSourceType | null;
+  authorization_status?: ProductAssetAuthorizationStatus;
+  // Phase 15 (Section 3/4/5): structured storage ref + publish state machine.
+  // See migration 20260725170000 + 20260725190000.
+  source_bucket?: "public-assets" | "private-assets" | null;
+  source_object_path?: string | null;
+  published_bucket?: "public-assets" | "private-assets" | null;
+  published_object_path?: string | null;
+  publish_status?: "draft" | "publishing" | "published" | "publish_failed" | "unpublishing";
+  publish_token?: string | null;
+  publish_started_at?: string | null;
+  publish_error_code?: string | null;
+  candidate_public_bucket?: "public-assets" | "private-assets" | null;
+  candidate_public_path?: string | null;
+  candidate_sha256?: string | null;
+  last_publish_error_code?: string | null;
 }
 
 export interface Project {
@@ -242,6 +340,7 @@ export interface Inquiry {
   read_at: string | null;
   notes: string | null;
   assignee: string | null;
+  client_submission_id: string | null;
   created_at: string;
   updated_at: string;
   inquiry_items?: InquiryItem[];
@@ -401,6 +500,7 @@ export interface InquiryInput {
   utm_term?: string;
   privacy_accepted?: boolean;
   items?: InquiryListItemInput[];
+  client_submission_id?: string;
 }
 
 export const analyticsEventNames = [
@@ -473,6 +573,12 @@ export type Database = {
         Row: SupabaseRow<AdminProfile>;
         Insert: SupabaseInsert<AdminProfile>;
         Update: SupabaseUpdate<AdminProfile>;
+        Relationships: [];
+      };
+      admin_audit_log: {
+        Row: SupabaseRow<AdminAuditLog>;
+        Insert: SupabaseInsert<AdminAuditLog>;
+        Update: SupabaseUpdate<AdminAuditLog>;
         Relationships: [];
       };
       categories: {
@@ -589,11 +695,527 @@ export type Database = {
         Returns: unknown;
       };
       create_inquiry_with_items: {
-        Args: { p_inquiry: Record<string, unknown>; p_items?: Record<string, unknown>[] };
+        Args: {
+          p_inquiry: Record<string, unknown>;
+          p_items?: Record<string, unknown>[];
+          p_client_submission_id?: string | null;
+        };
+        Returns: unknown;
+      };
+      claim_inquiry_outbox_batch: {
+        Args: { p_limit?: number; p_stale_timeout_seconds?: number };
+        Returns: unknown;
+      };
+      mark_inquiry_outbox_sent: {
+        Args: { p_event_id: string; p_lock_token: string; p_provider_message_id?: string | null };
+        Returns: boolean;
+      };
+      fail_inquiry_outbox_event: {
+        Args: { p_event_id: string; p_lock_token: string; p_error_code?: string | null };
+        Returns: string;
+      };
+      get_inquiry_outbox_status: {
+        Args: Record<string, never>;
+        Returns: unknown;
+      };
+      verify_schema_readiness: {
+        Args: Record<string, never>;
         Returns: unknown;
       };
       get_analytics_summary: {
         Args: { p_start: string; p_end: string };
+        Returns: unknown;
+      };
+      get_admin_dashboard_snapshot: {
+        Args: Record<string, never>;
+        Returns: {
+          total_products: number;
+          published_products: number;
+          total_certificates: number;
+          total_inquiries: number;
+          unread_inquiries: number;
+        };
+      };
+      save_product_with_images: {
+        Args: {
+          p_id: string | null;
+          p_product: Record<string, unknown>;
+          p_images?: Record<string, unknown>[];
+          p_expected_updated_at?: string | null;
+        };
+        Returns: string;
+      };
+      save_project_with_relations: {
+        Args: {
+          p_id: string | null;
+          p_project: Record<string, unknown>;
+          p_images?: Record<string, unknown>[];
+          p_products?: Record<string, unknown>[];
+          p_expected_updated_at?: string | null;
+        };
+        Returns: string;
+      };
+      // Phase 13: transactional business write + audit log RPCs.
+      // Actor info (id/email/role) is provided by the server-verified admin
+      // session, NEVER from the request body.
+      save_product_with_images_and_audit: {
+        Args: {
+          p_id: string | null;
+          p_product: Record<string, unknown>;
+          p_images?: Record<string, unknown>[];
+          p_expected_updated_at?: string | null;
+          p_actor_id?: string | null;
+          p_actor_email?: string | null;
+          p_actor_role?: string | null;
+        };
+        Returns: string;
+      };
+      bulk_update_products_with_audit: {
+        Args: {
+          p_ids: string[];
+          p_patch: Record<string, unknown>;
+          p_actor_id?: string | null;
+          p_actor_email?: string | null;
+          p_actor_role?: string | null;
+        };
+        Returns: number;
+      };
+      bulk_delete_products_with_audit: {
+        Args: {
+          p_ids: string[];
+          p_actor_id?: string | null;
+          p_actor_email?: string | null;
+          p_actor_role?: string | null;
+        };
+        Returns: number;
+      };
+      update_inquiry_with_audit: {
+        Args: {
+          p_id: string;
+          p_patch: Record<string, unknown>;
+          p_expected_updated_at: string;
+          p_actor_id?: string | null;
+          p_actor_email?: string | null;
+          p_actor_role?: string | null;
+        };
+        Returns: unknown;
+      };
+      // Phase 14: per-provider outbox delivery state RPCs.
+      claim_inquiry_outbox_deliveries: {
+        Args: { p_limit?: number; p_stale_timeout_seconds?: number };
+        Returns: unknown;
+      };
+      mark_delivery_sent: {
+        Args: {
+          p_delivery_id: string;
+          p_lock_token: string;
+          p_provider_message_id?: string | null;
+        };
+        Returns: boolean;
+      };
+      fail_delivery_event: {
+        Args: {
+          p_delivery_id: string;
+          p_lock_token: string;
+          p_error_code?: string | null;
+        };
+        Returns: string;
+      };
+      // Phase 14: Storage operation audit RPCs.
+      record_storage_operation_started: {
+        Args: {
+          p_actor_id?: string | null;
+          p_actor_role?: string | null;
+          p_action?: string | null;
+          p_bucket?: string | null;
+          p_object_path?: string | null;
+          p_mime_type?: string | null;
+          p_size_bytes?: number | null;
+          p_sha256?: string | null;
+        };
+        Returns: string;
+      };
+      complete_storage_operation: {
+        Args: {
+          p_operation_id: string;
+          p_success: boolean;
+          p_error_code?: string | null;
+        };
+        Returns: boolean;
+      };
+      // Phase 14: per-provider outbox lifecycle RPCs (20260725110000).
+      find_uninitialized_outbox_events: {
+        Args: { p_limit?: number };
+        Returns: unknown;
+      };
+      initialize_inquiry_outbox_deliveries: {
+        Args: {
+          p_outbox_event_id: string;
+          p_providers: string[];
+        };
+        Returns: unknown;
+      };
+      mark_inquiry_outbox_not_configured: {
+        Args: { p_event_id: string; p_lock_token: string };
+        Returns: boolean;
+      };
+      // Phase 14: Storage cleanup queue + reference check RPCs.
+      check_storage_object_referenced: {
+        Args: { p_bucket: string; p_object_path: string };
+        Returns: boolean;
+      };
+      enqueue_storage_cleanup: {
+        Args: {
+          p_bucket: string;
+          p_object_path: string;
+          p_reason: string;
+          p_source_type?: string | null;
+          p_source_id?: string | null;
+        };
+        Returns: string | null;
+      };
+      claim_storage_cleanup: {
+        Args: { p_limit?: number; p_stale_timeout_seconds?: number };
+        Returns: unknown;
+      };
+      complete_storage_cleanup: {
+        Args: {
+          p_cleanup_id: string;
+          p_lock_token: string;
+          p_success: boolean;
+          p_error_code?: string | null;
+        };
+        Returns: string;
+      };
+      // Phase 14: Catalog asset publish RPC (private→public transition).
+      publish_catalog_asset: {
+        Args: {
+          p_asset_id: string;
+          p_public_file_url: string;
+          p_public_cover_image_url?: string | null;
+          p_actor_id?: string | null;
+          p_actor_email?: string | null;
+          p_actor_role?: string | null;
+        };
+        Returns: unknown;
+      };
+      // Phase 15: Two-phase catalog publish protocol (claim/finalize).
+      // See migration 20260725170000_storage_object_refs_and_publish_protocol.sql.
+      claim_catalog_asset_publish: {
+        Args: {
+          p_asset_id: string;
+          p_expected_updated_at: string;
+          p_actor_id?: string | null;
+          p_actor_email?: string | null;
+          p_actor_role?: string | null;
+        };
+        Returns: unknown;
+      };
+      finalize_catalog_asset_publish: {
+        Args: {
+          p_asset_id: string;
+          p_publish_token: string;
+          p_public_bucket: string;
+          p_public_object_path: string;
+          p_public_url: string;
+          p_mime_type?: string | null;
+          p_size_bytes?: number | null;
+          p_sha256?: string | null;
+        };
+        Returns: unknown;
+      };
+      recover_stale_catalog_publish: {
+        Args: {
+          p_asset_id: string;
+          p_stale_timeout_seconds?: number;
+        };
+        Returns: unknown;
+      };
+      // Phase 15: Strict managed-URL parser (Section 8).
+      // Rejects cross-host URLs, protocol-relative URLs, userinfo, etc.
+      extract_managed_storage_path_strict: {
+        Args: {
+          p_url: string;
+        };
+        Returns: string | null;
+      };
+      // Phase 15: Storage audit reconciliation claim/complete RPCs (Section 10).
+      // See migration 20260725180000_storage_audit_reconcile_claim.sql.
+      claim_storage_audit_reconcile: {
+        Args: {
+          p_min_age_seconds?: number;
+          p_limit?: number;
+          p_stale_timeout_seconds?: number;
+        };
+        Returns: unknown;
+      };
+      complete_storage_audit_reconcile: {
+        Args: {
+          p_operation_id: string;
+          p_lock_token: string;
+          p_success: boolean;
+          p_error_code?: string | null;
+        };
+        Returns: string;
+      };
+      // Phase 15 (Section 4/5/6): Catalog + Certificate publish close loop.
+      // See migration 20260725190000_catalog_certificate_publish_close_loop.sql.
+      authorize_product_asset: {
+        Args: {
+          p_asset_id: string;
+          p_expected_updated_at: string;
+          p_actor_id?: string | null;
+          p_actor_email?: string | null;
+          p_actor_role?: string | null;
+        };
+        Returns: string;
+      };
+      save_product_asset_draft: {
+        Args: {
+          p_id: string | null;
+          p_payload: unknown;
+          p_source_bucket: string;
+          p_source_object_path: string;
+          p_mime_type?: string | null;
+          p_file_size?: number | null;
+          p_sha256?: string | null;
+          p_expected_updated_at?: string | null;
+          p_actor_id?: string | null;
+          p_actor_email?: string | null;
+          p_actor_role?: string | null;
+        };
+        Returns: unknown;
+      };
+      update_product_asset_metadata: {
+        Args: {
+          p_id: string;
+          p_payload: unknown;
+          p_expected_updated_at: string;
+          p_actor_id?: string | null;
+          p_actor_email?: string | null;
+          p_actor_role?: string | null;
+        };
+        Returns: unknown;
+      };
+      delete_product_asset_with_cleanup: {
+        Args: {
+          p_id: string;
+          p_expected_updated_at: string;
+          p_actor_id?: string | null;
+          p_actor_email?: string | null;
+          p_actor_role?: string | null;
+        };
+        Returns: unknown;
+      };
+      unpublish_catalog_asset: {
+        Args: {
+          p_id: string;
+          p_expected_updated_at: string;
+          p_actor_id?: string | null;
+          p_actor_email?: string | null;
+          p_actor_role?: string | null;
+        };
+        Returns: unknown;
+      };
+      save_certificate_draft: {
+        Args: {
+          p_id: string | null;
+          p_payload: unknown;
+          p_source_bucket: string;
+          p_source_object_path: string;
+          p_mime_type?: string | null;
+          p_file_size?: number | null;
+          p_sha256?: string | null;
+          p_expected_updated_at?: string | null;
+          p_actor_id?: string | null;
+          p_actor_email?: string | null;
+          p_actor_role?: string | null;
+        };
+        Returns: unknown;
+      };
+      update_certificate_metadata: {
+        Args: {
+          p_id: string;
+          p_payload: unknown;
+          p_expected_updated_at: string;
+          p_actor_id?: string | null;
+          p_actor_email?: string | null;
+          p_actor_role?: string | null;
+        };
+        Returns: unknown;
+      };
+      authorize_certificate: {
+        Args: {
+          p_id: string;
+          p_expected_updated_at: string;
+          p_actor_id?: string | null;
+          p_actor_email?: string | null;
+          p_actor_role?: string | null;
+        };
+        Returns: string;
+      };
+      claim_certificate_publish: {
+        Args: {
+          p_id: string;
+          p_expected_updated_at?: string | null;
+          p_actor_id?: string | null;
+          p_actor_email?: string | null;
+          p_actor_role?: string | null;
+        };
+        Returns: unknown;
+      };
+      finalize_certificate_publish: {
+        Args: {
+          p_id: string;
+          p_publish_token: string;
+          p_public_bucket: string;
+          p_public_object_path: string;
+          p_public_url: string;
+          p_mime_type?: string | null;
+          p_size_bytes?: number | null;
+          p_sha256?: string | null;
+          p_actor_id?: string | null;
+          p_actor_email?: string | null;
+          p_actor_role?: string | null;
+        };
+        Returns: unknown;
+      };
+      unpublish_certificate: {
+        Args: {
+          p_id: string;
+          p_expected_updated_at: string;
+          p_actor_id?: string | null;
+          p_actor_email?: string | null;
+          p_actor_role?: string | null;
+        };
+        Returns: unknown;
+      };
+      delete_certificate_with_cleanup: {
+        Args: {
+          p_id: string;
+          p_expected_updated_at: string;
+          p_actor_id?: string | null;
+          p_actor_email?: string | null;
+          p_actor_role?: string | null;
+        };
+        Returns: unknown;
+      };
+      recover_stale_certificate_publish: {
+        Args: {
+          p_timeout_seconds?: number;
+          p_actor_id?: string | null;
+          p_actor_email?: string | null;
+          p_actor_role?: string | null;
+        };
+        Returns: number;
+      };
+      save_company_profile_with_audit: {
+        Args: {
+          p_id: string | null;
+          p_payload: unknown;
+          p_expected_updated_at?: string | null;
+          p_actor_id?: string | null;
+          p_actor_email?: string | null;
+          p_actor_role?: string | null;
+        };
+        Returns: unknown;
+      };
+      save_site_settings_with_audit: {
+        Args: {
+          p_id: string | null;
+          p_payload: unknown;
+          p_expected_updated_at?: string | null;
+          p_actor_id?: string | null;
+          p_actor_email?: string | null;
+          p_actor_role?: string | null;
+        };
+        Returns: unknown;
+      };
+      save_homepage_content_with_audit: {
+        Args: {
+          p_id: string | null;
+          p_payload: unknown;
+          p_expected_updated_at?: string | null;
+          p_actor_id?: string | null;
+          p_actor_email?: string | null;
+          p_actor_role?: string | null;
+        };
+        Returns: unknown;
+      };
+      save_page_content_with_audit: {
+        Args: {
+          p_id: string | null;
+          p_payload: unknown;
+          p_expected_updated_at?: string | null;
+          p_actor_id?: string | null;
+          p_actor_email?: string | null;
+          p_actor_role?: string | null;
+        };
+        Returns: unknown;
+      };
+      save_category_with_audit: {
+        Args: {
+          p_id: string | null;
+          p_payload: unknown;
+          p_expected_updated_at?: string | null;
+          p_actor_id?: string | null;
+          p_actor_email?: string | null;
+          p_actor_role?: string | null;
+        };
+        Returns: unknown;
+      };
+      delete_category_with_audit: {
+        Args: {
+          p_id: string;
+          p_expected_updated_at: string;
+          p_actor_id?: string | null;
+          p_actor_email?: string | null;
+          p_actor_role?: string | null;
+        };
+        Returns: unknown;
+      };
+      save_subcategory_with_audit: {
+        Args: {
+          p_id: string | null;
+          p_payload: unknown;
+          p_expected_updated_at?: string | null;
+          p_actor_id?: string | null;
+          p_actor_email?: string | null;
+          p_actor_role?: string | null;
+        };
+        Returns: unknown;
+      };
+      delete_subcategory_with_audit: {
+        Args: {
+          p_id: string;
+          p_expected_updated_at: string;
+          p_actor_id?: string | null;
+          p_actor_email?: string | null;
+          p_actor_role?: string | null;
+        };
+        Returns: unknown;
+      };
+      save_project_with_relations_and_audit: {
+        Args: {
+          p_id: string | null;
+          p_project: unknown;
+          p_images?: unknown;
+          p_products?: unknown;
+          p_expected_updated_at?: string | null;
+          p_actor_id?: string | null;
+          p_actor_email?: string | null;
+          p_actor_role?: string | null;
+        };
+        Returns: unknown;
+      };
+      delete_project_with_audit: {
+        Args: {
+          p_id: string;
+          p_expected_updated_at: string;
+          p_actor_id?: string | null;
+          p_actor_email?: string | null;
+          p_actor_role?: string | null;
+        };
         Returns: unknown;
       };
     };

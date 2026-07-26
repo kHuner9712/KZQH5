@@ -1,16 +1,8 @@
-import type { SupabaseClient } from "@supabase/supabase-js";
 import { isDemoMode } from "@/lib/demo";
 import { mockCatalogAssets } from "@/lib/mock-catalog-assets";
 import { createPublicSupabaseClient } from "@/lib/supabase/public";
-import {
-  formatFieldErrors,
-  validateProductAssetPayload,
-  type ProductAssetPayload,
-} from "@/lib/validation/product-asset";
 import { classifyAdminDataError } from "@/lib/services/admin-data-error";
-import type { Database, ProductAsset } from "@/types/database";
-
-type Client = SupabaseClient<Database>;
+import type { ProductAsset } from "@/types/database";
 
 /**
  * Returns true when the public Supabase env vars are missing OR obviously
@@ -101,44 +93,4 @@ export async function getPublishedProductAssets(productId: string | null): Promi
     }
     return [];
   }
-}
-
-export async function listProductAssets(client: Client): Promise<ProductAsset[]> {
-  const { data, error } = await client
-    .from("product_assets")
-    .select("*")
-    .order("sort_order", { ascending: true })
-    .order("created_at", { ascending: false });
-  if (error) throw error;
-  return (data as ProductAsset[] | null) || [];
-}
-
-/**
- * Inserts or updates a product asset row. Validates the payload through
- * `validateProductAssetPayload` BEFORE touching Supabase — even though this
- * runs in the browser, it is the last gate before the network call and
- * catches the case where a hand-edited URL or hidden field bypassed the
- * admin form's UI validation.
- *
- * Throws `Error` with a concatenated field-error message when invalid.
- */
-export async function saveProductAsset(
-  client: Client,
-  payload: ProductAssetPayload,
-  id?: string,
-): Promise<void> {
-  const validation = validateProductAssetPayload(payload);
-  if (!validation.ok) {
-    throw new Error(formatFieldErrors(validation.errors));
-  }
-
-  const result = id
-    ? await client.from("product_assets").update(payload as unknown as Record<string, unknown>).eq("id", id)
-    : await client.from("product_assets").insert(payload as unknown as Record<string, unknown>);
-  if (result.error) throw result.error;
-}
-
-export async function deleteProductAsset(client: Client, id: string): Promise<void> {
-  const { error } = await client.from("product_assets").delete().eq("id", id);
-  if (error) throw error;
 }

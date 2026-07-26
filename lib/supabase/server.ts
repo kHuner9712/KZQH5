@@ -4,9 +4,9 @@ import type { Database } from "@/types/database";
 
 // 服务端 Supabase 客户端（携带用户会话，受 RLS 约束）
 // 用于 Server Components / Route Handlers / Server Actions
-// 注：Next.js 14 中 cookies() 为同步，故此函数返回同步 client
-export function createServerSupabaseClient() {
-  const cookieStore = cookies();
+// Next.js 15: cookies() 变为异步，必须 await
+export async function createServerSupabaseClient() {
+  const cookieStore = await cookies();
 
   return createServerClient<Database>(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,

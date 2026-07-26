@@ -2,17 +2,40 @@
 
 import { useRef, useState } from "react";
 import { FileUp, Loader2 } from "lucide-react";
-import { uploadPublicFile } from "@/lib/supabase/storage";
+import {
+  uploadViaServerApi,
+  type StorageObjectRef,
+} from "@/lib/services/admin-storage-fetch";
+import type { StoragePurpose } from "@/lib/services/storage-purpose";
 
 export function FileUpload({
-  folder,
+  purpose,
   onUploaded,
+  onUploadedRef,
   label = "上传展示文件",
   accept = "application/pdf,image/jpeg,image/png,image/webp",
   hint = "PDF/JPG/PNG/WebP，最大 20MB；仅限展示版或水印版。",
 }: {
-  folder: string;
+  /**
+   * Storage 用途（必需）。客户端只提交 purpose，服务端决定 bucket /
+   * category / MIME 白名单。Catalog 资产默认 private-assets，需后续
+   * publish 流程才能公开。
+   */
+  purpose: StoragePurpose;
+  /**
+   * 上传成功后回调，传入兼容历史字段的 { url, size, mimeType }。
+   *   - public-assets：url 为公开 URL
+   *   - private-assets：url 为 private-assets://{path} 本地标识
+   *
+   * 父组件若需要完整 bucket + path，请改用 onUploadedRef（未提供时
+   * 通过 onUploaded 也能拿到基本信息）。
+   */
   onUploaded: (value: { url: string; size: number; mimeType: string }) => void;
+  /**
+   * 上传成功后回调（完整版），传入 StorageObjectRef。
+   * 父组件应至少保存 bucket + path 以便后续 cleanup / publish。
+   */
+  onUploadedRef?: (ref: StorageObjectRef) => void;
   label?: string;
   accept?: string;
   hint?: string;
@@ -25,13 +48,22 @@ export function FileUpload({
     if (!file) return;
     setUploading(true);
     setError("");
-    const result = await uploadPublicFile(file, folder);
+    const result = await uploadViaServerApi(file, purpose);
     setUploading(false);
-    if (!result.url) {
-      setError(result.error || "上传失败");
+    if (!result.ok) {
+      setError(result.error);
       return;
     }
-    onUploaded({ url: result.url, size: file.size, mimeType: file.type });
+    // private-assets 上传成功时 publicUrl 为 null —— 不得视为失败。
+    // 父组件通过 onUploadedRef 拿到完整 ref（含 bucket + path）。
+    const ref = result.data;
+    const url = ref.publicUrl ?? `private-assets://${ref.path}`;
+    onUploaded({
+      url,
+      size: ref.size,
+      mimeType: ref.mimeType,
+    });
+    onUploadedRef?.(ref);
     if (inputRef.current) inputRef.current.value = "";
   }
 

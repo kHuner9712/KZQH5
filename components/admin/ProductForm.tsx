@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createBrowserSupabaseClient } from "@/lib/supabase/client";
+import { saveProduct } from "@/lib/services/admin-fetch";
 import { useToast } from "@/components/admin/Toast";
 import { Button } from "@/components/ui/Button";
 import { Input, Textarea } from "@/components/ui/Input";
@@ -381,48 +382,47 @@ export function ProductForm({ initial, initialImages = [] }: ProductFormProps) {
       faq_en: faqEnFiltered.length > 0 ? faqEnFiltered : null,
     };
 
-    let productId = initial?.id;
-
-    if (isEdit && productId) {
-      const { error } = await supabase.from("products").update(payload).eq("id", productId);
-      if (error) {
-        setSaving(false);
-        show(error.message, "error");
-        return;
-      }
-    } else {
-      const { data: created, error } = await supabase
-        .from("products")
-        .insert(payload)
-        .select("id")
-        .single();
-      if (error || !created) {
-        setSaving(false);
-        show(error?.message || "创建失败", "error");
-        return;
-      }
-      productId = (created as { id: string }).id;
-    }
-
-    // 同步产品图片：先删旧、再插新（简单可靠）
-    if (productId) {
-      await supabase.from("product_images").delete().eq("product_id", productId);
-      if (images.length > 0) {
-        const imgPayload = images.map((img, i) => ({
-          product_id: productId,
-          image_url: img.image_url,
-          alt_cn: img.alt_cn || null,
-          alt_en: img.alt_en || null,
-          sort_order: i,
-        }));
-        const { error: imgError } = await supabase.from("product_images").insert(imgPayload);
-        if (imgError) {
-          show(`图片保存失败：${imgError.message}`, "error");
-        }
-      }
-    }
+    // Phase 2: persist product + images via the transactional server-side RPC.
+    // The /api/admin/products route enforces admin verification, fail-closed
+    // same-origin, Content-Type / size limits, field validation, and calls
+    // save_product_with_images_and_audit() which inserts/updates the product
+    // and replaces its images in a single transaction. Partial image failure
+    // rolls back the product save — no more "product saved, images lost".
+    //
+    // Phase 3 optimistic lock: when editing an existing product we pass
+    // `expected_updated_at` so the server RPC can compare it against
+    // products.updated_at using FOR UPDATE. If another edit landed
+    // between page load and save, the server returns ADMIN_WRITE_CONFLICT
+    // (409) and we surface a clear message to re-load the record.
+    const result = await saveProduct({
+      id: initial?.id,
+      product: payload,
+      images: images.map((img, i) => ({
+        image_url: img.image_url || "",
+        alt_cn: img.alt_cn || null,
+        alt_en: img.alt_en || null,
+        sort_order: i,
+      })),
+      expected_updated_at: initial?.updated_at ?? null,
+    });
 
     setSaving(false);
+
+    if (!result.ok) {
+      const message =
+        result.code === "ADMIN_WRITE_BAD_REQUEST"
+          ? "表单数据校验失败"
+          : result.code === "ADMIN_WRITE_CONFLICT"
+            ? "保存冲突：该产品可能已被其他人更新，或 slug 已被其他产品占用。请刷新后重试。"
+            : result.code === "ADMIN_WRITE_UNAUTHORIZED"
+              ? "登录已过期，请重新登录"
+              : result.code === "ADMIN_WRITE_FORBIDDEN_ORIGIN"
+                ? "请求来源不被信任"
+                : "保存失败，请稍后重试";
+      show(message, "error");
+      return;
+    }
+
     show(isEdit ? "产品已更新" : "产品已创建", "success");
     setTimeout(() => router.push("/admin/products"), 600);
   }
@@ -727,7 +727,7 @@ export function ProductForm({ initial, initialImages = [] }: ProductFormProps) {
       <Section title="媒体资源" subtitle="封面图、视频 URL、详情图片">
         <ImageUpload
           label="封面图"
-          folder="products/covers"
+          purpose="product-image"
           value={form.cover_image_url}
           onChange={(url) => update("cover_image_url", url)}
           aspect="wide"
@@ -939,7 +939,7 @@ function Toggle({
 function ImageUploadHelper({ onUploaded }: { onUploaded: (url: string) => void }) {
   return (
     <ImageUpload
-      folder="products/gallery"
+      purpose="product-image"
       value=""
       onChange={(url) => {
         if (url) onUploaded(url);

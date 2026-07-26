@@ -32,6 +32,7 @@ function inquiry(overrides: Partial<Inquiry> = {}): Inquiry {
     read_at: null,
     notes: null,
     assignee: null,
+    client_submission_id: null,
     created_at: new Date(0).toISOString(),
     updated_at: new Date(0).toISOString(),
     ...overrides,

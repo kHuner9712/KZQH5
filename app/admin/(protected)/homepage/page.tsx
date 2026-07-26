@@ -1,12 +1,30 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { createBrowserSupabaseClient } from "@/lib/supabase/client";
 import { useToast } from "@/components/admin/Toast";
 import { Button } from "@/components/ui/Button";
 import { Input, Textarea } from "@/components/ui/Input";
 import type { HomepageContent, HomeFeatureItem } from "@/types/database";
+import {
+  getHomepageContentApi,
+  saveHomepageContentApi,
+} from "@/lib/services/admin-fetch";
 import { Loader2, Plus, Trash2, Save, ChevronUp, ChevronDown } from "lucide-react";
+
+const CONTENT_ERROR_TEXT: Record<string, string> = {
+  ADMIN_WRITE_UNAUTHORIZED: "未登录或会话已过期",
+  ADMIN_WRITE_FORBIDDEN_ORIGIN: "请求来源被拒绝",
+  ADMIN_WRITE_FORBIDDEN_ROLE: "权限不足",
+  ADMIN_WRITE_BAD_REQUEST: "参数错误",
+  ADMIN_WRITE_CONFLICT: "数据已被他人更新，请刷新后重试",
+  ADMIN_WRITE_FAILED: "操作失败",
+  ADMIN_WRITE_NETWORK: "网络错误",
+  ADMIN_WRITE_DEMO: "Demo 模式下不可写",
+};
+
+function errorText(code: string): string {
+  return CONTENT_ERROR_TEXT[code] ?? "操作失败";
+}
 
 interface FormState {
   hero_eyebrow_cn: string;
@@ -65,10 +83,10 @@ const emptyForm: FormState = {
 };
 
 export default function HomepagePage() {
-  const supabase = createBrowserSupabaseClient();
   const { show } = useToast();
 
   const [contentId, setContentId] = useState<string | null>(null);
+  const [contentUpdatedAt, setContentUpdatedAt] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState<FormState>(emptyForm);
@@ -77,32 +95,11 @@ export default function HomepagePage() {
 
   useEffect(() => {
     (async () => {
-      let data: HomepageContent | null = null;
-
-      // 优先加载激活行
-      const { data: active } = await supabase
-        .from("homepage_content")
-        .select("*")
-        .eq("is_active", true)
-        .order("updated_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      data = (active as HomepageContent | null) || null;
-
-      // 若无激活行，尝试加载任意一行
-      if (!data) {
-        const { data: anyRow } = await supabase
-          .from("homepage_content")
-          .select("*")
-          .order("updated_at", { ascending: false })
-          .limit(1)
-          .maybeSingle();
-        data = (anyRow as HomepageContent | null) || null;
-      }
-
-      if (data) {
-        const h = data;
+      const result = await getHomepageContentApi();
+      if (result.ok && result.data.content) {
+        const h = result.data.content;
         setContentId(h.id);
+        setContentUpdatedAt(h.updated_at);
         setForm({
           hero_eyebrow_cn: h.hero_eyebrow_cn || "",
           hero_eyebrow_en: h.hero_eyebrow_en || "",
@@ -132,10 +129,12 @@ export default function HomepagePage() {
         });
         setFeaturesCn(h.features_cn || []);
         setFeaturesEn(h.features_en || []);
+      } else if (!result.ok) {
+        show(errorText(result.code), "error");
       }
       setLoading(false);
     })();
-  }, [supabase]);
+  }, [show]);
 
   function update<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((p) => ({ ...p, [key]: value }));
@@ -210,22 +209,19 @@ export default function HomepagePage() {
     };
 
     let errorMsg: string | null = null;
-    if (contentId) {
-      const { error } = await supabase
-        .from("homepage_content")
-        .update(payload)
-        .eq("id", contentId);
-      if (error) errorMsg = error.message;
+    const result = await saveHomepageContentApi({
+      id: contentId,
+      expectedUpdatedAt: contentId ? contentUpdatedAt : null,
+      payload,
+    });
+    if (!result.ok) {
+      errorMsg = errorText(result.code);
     } else {
-      const { data, error } = await supabase
-        .from("homepage_content")
-        .insert({ ...payload, is_active: true })
-        .select("id")
-        .single();
-      if (error) {
-        errorMsg = error.message;
-      } else if (data) {
-        setContentId((data as { id: string }).id);
+      if (!contentId && result.data.id) {
+        setContentId(result.data.id);
+      }
+      if (result.data.updatedAt) {
+        setContentUpdatedAt(result.data.updatedAt);
       }
     }
     setSaving(false);

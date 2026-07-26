@@ -1,10 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isDemoMode } from "@/lib/demo";
 import { getPublicProductSelections } from "@/lib/repositories/products";
+import { isSameSiteRequest } from "@/lib/services/http-security";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export async function POST(request: NextRequest) {
+  // Phase 6: CSRF defense — reject cross-site product selection requests.
+  // Although this endpoint is read-only (returns product data), validating
+  // origin prevents information disclosure to malicious sites.
+  if (!isSameSiteRequest(request)) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
   let body: { ids?: unknown };
   try {
     body = await request.json();

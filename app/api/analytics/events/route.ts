@@ -2,11 +2,22 @@ import { NextRequest, NextResponse } from "next/server";
 import { recordAnalyticsEvent } from "@/lib/repositories/analytics";
 import { validateAnalyticsEvent } from "@/lib/services/analytics/validation";
 import { getAnalyticsRateLimiter } from "@/lib/services/rate-limit";
-import { ephemeralRateKey } from "@/lib/services/http-security";
+import { ephemeralRateKey, isSameSiteRequest } from "@/lib/services/http-security";
 
 const MAX_BODY_BYTES = 8 * 1024;
 
 export async function POST(request: NextRequest) {
+  // Phase 6: CSRF defense — reject cross-site analytics injection.
+  // Analytics events should only come from our own site. A malicious site
+  // sending POST requests here could pollute analytics data or waste
+  // database resources.
+  if (!isSameSiteRequest(request)) {
+    return NextResponse.json(
+      { success: false, error: "Forbidden" },
+      { status: 403 },
+    );
+  }
+
   const contentLength = Number(request.headers.get("content-length") || 0);
   if (contentLength > MAX_BODY_BYTES) {
     return NextResponse.json(

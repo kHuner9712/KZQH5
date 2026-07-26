@@ -6,6 +6,16 @@ import type { Inquiry, InquiryItem } from "@/types/database";
 export interface InquirySubmissionResult {
   inquiry: Inquiry;
   submittedProductCount: number;
+  /**
+   * Phase 5: true when the submission was de-duplicated by client_submission_id
+   * (the same network-retried request hit an already-stored inquiry).
+   */
+  idempotent: boolean;
+  /**
+   * Phase 5: outbox event id created in the same transaction, or null when
+   * idempotent=true (no new outbox row was written).
+   */
+  outboxId: string | null;
 }
 
 export class InquiryProductUnavailableError extends Error {
@@ -18,6 +28,7 @@ export class InquiryProductUnavailableError extends Error {
 export async function submitInquiry(
   record: InquiryCreateRecord,
   requestedItems: ValidatedInquiryItem[],
+  clientSubmissionId?: string | null,
 ): Promise<InquirySubmissionResult> {
   const submittedItems =
     requestedItems.length || !record.product_id
@@ -69,7 +80,13 @@ export async function submitInquiry(
     };
   }
 
-  const inquiry = await createInquiryWithItems(record, items);
+  const rpcResult = await createInquiryWithItems(
+    record,
+    items as unknown as Array<Record<string, unknown>>,
+    clientSubmissionId ?? null,
+  );
+
+  const inquiry = rpcResult.inquiry;
   inquiry.inquiry_items = items.map(
     (item, index): InquiryItem => ({
       id: `submitted-${index}`,
@@ -83,5 +100,10 @@ export async function submitInquiry(
       created_at: inquiry.created_at,
     }),
   );
-  return { inquiry, submittedProductCount: items.length };
+  return {
+    inquiry,
+    submittedProductCount: items.length,
+    idempotent: rpcResult.idempotent,
+    outboxId: rpcResult.outboxId,
+  };
 }

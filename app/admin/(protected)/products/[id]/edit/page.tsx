@@ -10,16 +10,17 @@ export const dynamic = "force-dynamic";
 export default async function EditProductPage({
   params,
 }: {
-  params: { id: string };
+  params: Promise<{ id: string }>;
 }) {
-  const supabase = createServerSupabaseClient();
+  const { id } = await params;
+  const supabase = await createServerSupabaseClient();
 
   const [{ data: product }, { data: images }] = await Promise.all([
-    supabase.from("products").select("*").eq("id", params.id).maybeSingle(),
+    supabase.from("products").select("*").eq("id", id).maybeSingle(),
     supabase
       .from("product_images")
       .select("*")
-      .eq("product_id", params.id)
+      .eq("product_id", id)
       .order("sort_order", { ascending: true }),
   ]);
 
