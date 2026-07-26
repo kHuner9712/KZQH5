@@ -36,7 +36,7 @@
     "check": "npm run typecheck && npm run lint && npm run test:unit && npm run build:demo"
   },
   "dependencies": {
-    "@supabase/ssr": "^0.5.2",
+    "@supabase/ssr": "^0.12.3",
     "@supabase/supabase-js": "^2.45.4",
     "clsx": "^2.1.1",
     "lucide-react": "^0.454.0",
@@ -47,7 +47,7 @@
     "tailwind-merge": "^2.5.4"
   },
   "devDependencies": {
-    "@playwright/test": "^1.61.1",
+    "@playwright/test": "^1.62.0",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
@@ -62,7 +62,7 @@
     "jsdom": "^29.1.1",
     "mupdf": "^1.28.0",
     "postcss": "^8.5.16",
-    "prettier": "3.6.2",
+    "prettier": "3.9.6",
     "supabase": "^2.109.1",
     "tailwindcss": "^3.4.13",
     "typescript": "^5.6.3",
