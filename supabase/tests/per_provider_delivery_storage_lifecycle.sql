@@ -654,6 +654,19 @@ rollback;
 begin;
 set local role service_role;
 
+-- Configure the trusted managed storage host. The round-4 strict URL
+-- parser (`extract_managed_storage_path_strict`) and the fail-closed
+-- `check_storage_object_referenced` both consult
+-- `site_settings.managed_storage_host`. Without this row, the strict
+-- parser returns NULL for every URL and `check_storage_object_referenced`
+-- fails closed (returns true) for every path, which would cause S.3
+-- (unreferenced path should return false) to fail. The host must
+-- match the URLs used in the seed data below.
+insert into public.site_settings (id, managed_storage_host)
+values ('00000000-0000-4000-8000-000000000399', 'example.supabase.co')
+on conflict (id) do update
+  set managed_storage_host = excluded.managed_storage_host;
+
 -- Seed a product to use as reference target for check_storage_object_referenced.
 insert into public.categories (id, name_cn, slug, is_active) values
   ('00000000-0000-4000-8000-000000000100', '[CLEANUP TEST] category', 'cleanup-test-cat', true)
