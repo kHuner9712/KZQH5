@@ -1,15 +1,41 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { useState } from "react";
 import { ExternalLink, FileText } from "lucide-react";
 import { localizeProductAsset } from "@/lib/i18n/content";
 import type { Locale } from "@/lib/i18n/config";
 import type { ProductAsset } from "@/types/database";
-import {
-  formatProductAssetSize,
-  productAssetTypeLabels,
-  ProductAssetViewer,
-} from "./ProductAssetViewer";
+import { formatProductAssetSize, productAssetTypeLabels } from "@/lib/client/viewer-utils";
+
+// ProductAssetViewer → PdfViewer → usePdfDocument → pdfjs-dist is a
+// browser-only chain. SSR of /documents must never evaluate it. Load the
+// viewer chunk lazily on the client, only after a user selects an asset.
+// Helpers (formatProductAssetSize, productAssetTypeLabels) are imported
+// directly from the pdfjs-dist-free viewer-utils module so they remain
+// available during SSR without dragging in the viewer.
+const ProductAssetViewer = dynamic<{
+  asset: ProductAsset;
+  locale: Locale;
+  onClose: () => void;
+}>(
+  () => import("./ProductAssetViewer").then((mod) => mod.ProductAssetViewer),
+  {
+    ssr: false,
+    loading: () => (
+      <div
+        className="fixed inset-0 z-[80] flex items-center justify-center bg-page/98"
+        style={{ height: "100dvh" }}
+        role="status"
+        aria-live="polite"
+      >
+        <div className="flex flex-col items-center gap-3 text-white/60">
+          <span className="h-7 w-7 animate-spin rounded-full border-2 border-white/20 border-t-gold-light" />
+        </div>
+      </div>
+    ),
+  },
+);
 
 export function ProductAssetList({
   assets,

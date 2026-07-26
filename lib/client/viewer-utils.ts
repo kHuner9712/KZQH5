@@ -2,7 +2,7 @@
 // scope. Functions that need a user agent accept it as a parameter so they can
 // be unit-tested in Node without jsdom.
 
-import type { ProductAsset } from "@/types/database";
+import type { ProductAsset, ProductAssetType } from "@/types/database";
 import type { Locale } from "@/lib/i18n/config";
 
 // ---------------------------------------------------------------------------
@@ -42,6 +42,19 @@ export function formatProductAssetSize(size: number | null): string | null {
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
   return `${(size / 1024 / 1024).toFixed(1)} MB`;
 }
+
+/**
+ * Localized labels for each ProductAssetType. Pure data — no viewer dependency
+ * — so it can be imported by components that must NOT pull in pdfjs-dist
+ * (e.g. ProductAssetList on the SSR /documents route).
+ */
+export const productAssetTypeLabels: Record<
+  Locale,
+  Record<ProductAssetType, string>
+> = {
+  zh: { catalog: "产品目录", datasheet: "技术资料", installation: "安装说明", certificate: "证书资料", packaging: "包装资料", other: "其他资料" },
+  en: { catalog: "Catalog", datasheet: "Datasheet", installation: "Installation", certificate: "Certificate", packaging: "Packaging", other: "Other" },
+};
 
 // ---------------------------------------------------------------------------
 // URL validation (security)

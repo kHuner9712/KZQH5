@@ -1,12 +1,50 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useState } from "react";
 import { BookOpen, CheckCircle2, FileSearch, MessageCircle } from "lucide-react";
 import type { CatalogTopic } from "@/lib/catalog-topics";
 import type { Locale } from "@/lib/i18n/config";
 import type { ProductAsset } from "@/types/database";
-import { ProductAssetViewer } from "./ProductAssetViewer";
+
+// ProductAssetViewer pulls in PdfViewer → usePdfDocument → pdfjs-dist, which
+// is a browser-only module that must NEVER be imported during SSR. EdgeOne's
+// server runtime fails the entire /documents route if pdfjs-dist is evaluated
+// at module load time (the static `pdfjs.GlobalWorkerOptions.workerSrc = ...`
+// assignment in usePdfDocument.ts runs on import).
+//
+// Using next/dynamic with ssr:false ensures the ProductAssetViewer chunk
+// (and its transitive pdfjs-dist dependency) is only fetched on the client,
+// and only after a user selects an asset. When no asset is selected the
+// chunk is never requested at all. The server render of /documents stops at
+// CatalogTopicGrid and never reaches ProductAssetViewer.
+//
+// The `.then((mod) => mod.ProductAssetViewer)` form is required because
+// ProductAssetViewer is a named export (the wrapper file re-exports it from
+// ./product-asset-viewer/ProductAssetViewer).
+const ProductAssetViewer = dynamic<{
+  asset: ProductAsset;
+  locale: Locale;
+  onClose: () => void;
+}>(
+  () => import("./ProductAssetViewer").then((mod) => mod.ProductAssetViewer),
+  {
+    ssr: false,
+    loading: () => (
+      <div
+        className="fixed inset-0 z-[80] flex items-center justify-center bg-page/98"
+        style={{ height: "100dvh" }}
+        role="status"
+        aria-live="polite"
+      >
+        <div className="flex flex-col items-center gap-3 text-white/60">
+          <span className="h-7 w-7 animate-spin rounded-full border-2 border-white/20 border-t-gold-light" />
+        </div>
+      </div>
+    ),
+  },
+);
 
 export interface CatalogTopicGridItem {
   topic: CatalogTopic;
