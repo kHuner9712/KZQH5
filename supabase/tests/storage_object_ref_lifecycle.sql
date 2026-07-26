@@ -2356,6 +2356,24 @@ end $$;
 -- ============================================================
 -- Round-4: Per-object Product image Registry (P series)
 -- ============================================================
+-- P.1 creates 3 managed images -> 3 active refs.
+-- P.2 keeps p1, p2 (UPDATE by id) and removes p3 -> 2 active, 1 pending_delete.
+-- P.3 replaces p1's URL by id (UPDATE-by-id URL-change path) ->
+--     1 pending_delete for old p1.jpg, 1 active for p1-new.jpg,
+--     >=1 cleanup row for p1.jpg.
+--
+-- Why ids are required here:
+--   Without `id` in each image object, save_product_with_images_and_audit
+--   treats every save as delete-all + re-insert. That accumulates
+--   pending_delete refs for the SAME object_path across saves
+--   (P.2 would create a pending_delete for p1.jpg even though p1 was
+--   "kept", because the old row is deleted and a new row inserted).
+--   P.3 would then see 2 pending_delete refs for p1.jpg (one from
+--   P.1 via P.2 delete, one from P.3 delete) instead of 1.
+--   Passing `id` makes the function UPDATE the existing row, which
+--   (with migration 20260725316000) detects URL changes and marks
+--   the old active ref pending_delete exactly once.
+-- ============================================================
 do $$
 declare
   v_product_id uuid;
@@ -2363,6 +2381,8 @@ declare
   v_active_count integer;
   v_pending_count integer;
   v_cleanup_count integer;
+  v_p1_id uuid;
+  v_p2_id uuid;
 begin
   perform public.save_product_with_images_and_audit(
     p_id := null,
@@ -2385,6 +2405,13 @@ begin
   select id, updated_at into v_product_id, v_updated_at
     from public.products where slug = 'p-reg-product';
 
+  -- Capture the image row ids assigned by P.1 so P.2/P.3 can UPDATE
+  -- them by id (true reconciliation) instead of delete + re-insert.
+  select id into v_p1_id from public.product_images
+    where product_id = v_product_id and image_url like '%/p1.jpg' limit 1;
+  select id into v_p2_id from public.product_images
+    where product_id = v_product_id and image_url like '%/p2.jpg' limit 1;
+
   select count(*) into v_active_count
     from public.storage_object_refs
     where owner_type = 'product_image' and role = 'image' and status = 'active'
@@ -2403,8 +2430,8 @@ begin
       'is_published', false
     ),
     p_images := jsonb_build_array(
-      jsonb_build_object('image_url', 'https://example.supabase.co/storage/v1/object/public/public-assets/products/p1.jpg', 'sort_order', 0),
-      jsonb_build_object('image_url', 'https://example.supabase.co/storage/v1/object/public/public-assets/products/p2.jpg', 'sort_order', 1)
+      jsonb_build_object('id', v_p1_id, 'image_url', 'https://example.supabase.co/storage/v1/object/public/public-assets/products/p1.jpg', 'sort_order', 0),
+      jsonb_build_object('id', v_p2_id, 'image_url', 'https://example.supabase.co/storage/v1/object/public/public-assets/products/p2.jpg', 'sort_order', 1)
     ),
     p_expected_updated_at := v_updated_at,
     p_actor_email := 'test@example.invalid',
@@ -2440,8 +2467,8 @@ begin
       'is_published', false
     ),
     p_images := jsonb_build_array(
-      jsonb_build_object('image_url', 'https://example.supabase.co/storage/v1/object/public/public-assets/products/p1-new.jpg', 'sort_order', 0),
-      jsonb_build_object('image_url', 'https://example.supabase.co/storage/v1/object/public/public-assets/products/p2.jpg', 'sort_order', 1)
+      jsonb_build_object('id', v_p1_id, 'image_url', 'https://example.supabase.co/storage/v1/object/public/public-assets/products/p1-new.jpg', 'sort_order', 0),
+      jsonb_build_object('id', v_p2_id, 'image_url', 'https://example.supabase.co/storage/v1/object/public/public-assets/products/p2.jpg', 'sort_order', 1)
     ),
     p_expected_updated_at := v_updated_at,
     p_actor_email := 'test@example.invalid',
@@ -2478,6 +2505,17 @@ end $$;
 -- ============================================================
 -- Round-4: Per-object Project image Registry (Q series)
 -- ============================================================
+-- Q.1 creates 3 managed images -> 3 active refs.
+-- Q.2 replaces q2's URL by id (UPDATE-by-id URL-change path) and
+--     keeps q1, q3 by id -> 1 pending_delete for q2.jpg,
+--     1 active for q2-new.jpg, >=1 cleanup row for q2.jpg.
+-- Ids are required for the same reason as the P series: without
+-- ids the function falls back to delete-all + re-insert, which
+-- creates spurious pending_delete refs and cleanup rows for q1
+-- and q3 even though their URLs did not change. Passing ids makes
+-- the UPDATE-by-id path (with migration 20260725316000) detect
+-- the URL change on q2 only.
+-- ============================================================
 do $$
 declare
   v_project_id uuid;
@@ -2485,6 +2523,9 @@ declare
   v_active_count integer;
   v_pending_count integer;
   v_cleanup_count integer;
+  v_q1_id uuid;
+  v_q2_id uuid;
+  v_q3_id uuid;
 begin
   perform public.save_project_with_relations_and_audit(
     p_id := null,
@@ -2507,6 +2548,14 @@ begin
   select id, updated_at into v_project_id, v_updated_at
     from public.projects where slug = 'q-reg-project';
 
+  -- Capture image row ids for Q.2 UPDATE-by-id reconciliation.
+  select id into v_q1_id from public.project_images
+    where project_id = v_project_id and image_url like '%/q1.jpg' limit 1;
+  select id into v_q2_id from public.project_images
+    where project_id = v_project_id and image_url like '%/q2.jpg' limit 1;
+  select id into v_q3_id from public.project_images
+    where project_id = v_project_id and image_url like '%/q3.jpg' limit 1;
+
   select count(*) into v_active_count
     from public.storage_object_refs
     where owner_type = 'project_image' and role = 'image' and status = 'active'
@@ -2524,9 +2573,9 @@ begin
       'is_published', false
     ),
     p_images := jsonb_build_array(
-      jsonb_build_object('image_url', 'https://example.supabase.co/storage/v1/object/public/public-assets/projects/q1.jpg', 'sort_order', 0),
-      jsonb_build_object('image_url', 'https://example.supabase.co/storage/v1/object/public/public-assets/projects/q2-new.jpg', 'sort_order', 1),
-      jsonb_build_object('image_url', 'https://example.supabase.co/storage/v1/object/public/public-assets/projects/q3.jpg', 'sort_order', 2)
+      jsonb_build_object('id', v_q1_id, 'image_url', 'https://example.supabase.co/storage/v1/object/public/public-assets/projects/q1.jpg', 'sort_order', 0),
+      jsonb_build_object('id', v_q2_id, 'image_url', 'https://example.supabase.co/storage/v1/object/public/public-assets/projects/q2-new.jpg', 'sort_order', 1),
+      jsonb_build_object('id', v_q3_id, 'image_url', 'https://example.supabase.co/storage/v1/object/public/public-assets/projects/q3.jpg', 'sort_order', 2)
     ),
     p_products := '[]'::jsonb,
     p_expected_updated_at := v_updated_at,
