@@ -14,7 +14,26 @@ export function ProductCard({ product, variant = "compact", locale = "zh" }: { p
   const copy = getDictionary(locale);
   return (
     <article className={cn("group overflow-hidden rounded-lg border border-ink-line bg-canvas-warm transition duration-300 hover:-translate-y-0.5 hover:shadow-card-hover", isFull && "flex")}>
-      <Link href={localePath(locale, `/products/${product.slug}`)} className={cn(isFull ? "flex flex-1" : "block")}>
+      <Link
+        href={localePath(locale, `/products/${product.slug}`)}
+        // Disable automatic prefetch on product card links.
+        //
+        // On the product list page many cards render simultaneously,
+        // and Next.js App Router prefetches every visible product
+        // detail route in parallel. When Playwright clicks one card
+        // before all prefetches complete, the Router cancels the
+        // in-flight RSC requests (net::ERR_ABORTED), including the
+        // navigation-triggered request for the clicked card, and
+        // the URL never commits. This produced a 30s waitForURL
+        // timeout in demo-e2e (Run 30200357750).
+        //
+        // prefetch={false} keeps the click-driven client-side
+        // navigation but stops the parallel prefetch storm. The
+        // click still issues exactly one RSC request for the
+        // target route and commits the URL deterministically.
+        prefetch={false}
+        className={cn(isFull ? "flex flex-1" : "block")}
+      >
       <div className={cn("relative shrink-0 overflow-hidden", isFull ? "aspect-[4/3] w-2/5" : "aspect-[4/3] w-full md:aspect-[16/10]")}>
         <ProductImage src={product.cover_image_url} alt={content.name} placeholder="product" loading="lazy" sizes={isFull ? "(max-width: 768px) 40vw, 360px" : "(max-width: 640px) 50vw, (max-width: 1024px) 33vw, 25vw"} />
         {product.is_featured && <span className="absolute left-2 top-2 rounded-sm bg-page/[0.85] px-2 py-1 text-[9px] font-medium tracking-wide text-gold-light backdrop-blur-sm">{copy.products.featured}</span>}

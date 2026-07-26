@@ -270,7 +270,10 @@ export async function ProductDetailPageContent(locale: Locale, slug: string) {
                 ? ` · ${localizeSubcategory(subcategory, locale).name}`
                 : ""}
             </p>
-            <h1 className="mt-2 text-2xl font-bold text-ink md:text-4xl">
+            <h1
+              data-testid="product-detail-title"
+              className="mt-2 text-2xl font-bold text-ink md:text-4xl"
+            >
               {content.name}
             </h1>
             {content.summary && (
