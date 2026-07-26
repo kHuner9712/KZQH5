@@ -8,7 +8,7 @@ import { copyFileSync, existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 const root = process.cwd();
-const src = join(root, "node_modules/pdfjs-dist/build/pdf.worker.min.mjs");
+const src = join(root, "node_modules/pdfjs-dist/legacy/build/pdf.worker.min.mjs");
 const dest = join(root, "public/lib/pdfjs/pdf.worker.min.mjs");
 
 if (!existsSync(src)) {

@@ -4,9 +4,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Locale } from "@/lib/i18n/config";
 import { mapPdfError, type ViewerErrorKind } from "@/lib/client/viewer-utils";
 
-// We import the main entry (`build/pdf.mjs`) for broad Chromium support.
-// Next.js 14's webpack cannot resolve the deep `pdfjs-dist/legacy/build/pdf.mjs`
-// subpath at build time, so we use the package main entry instead.
+// We import the legacy entry for browser support and SSR-safe module evaluation.
+// The matching legacy worker is synchronized during package installation.
+
 // The matching worker file is served from /lib/pdfjs/pdf.worker.min.mjs.
 const WORKER_SRC = "/lib/pdfjs/pdf.worker.min.mjs" as const;
 const LOAD_TIMEOUT_MS = 30_000;
@@ -40,7 +40,7 @@ interface PdfjsModule {
 // webpack can transpile the ESM source. The webpack fallback config
 // empties Node built-ins (fs, http, etc.) that pdfjs-dist references
 // but are never used in the browser.
-import * as pdfjsLib from "pdfjs-dist/build/pdf.mjs";
+import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf.mjs";
 
 const pdfjs = pdfjsLib as unknown as PdfjsModule;
 pdfjs.GlobalWorkerOptions.workerSrc = WORKER_SRC;
