@@ -51,9 +51,18 @@ jobs:
         # mode from running in CI. --initialize rewrites the entire
         # manifest from scratch, defeating the immutability gate. It
         # is a one-time local bootstrap tool only.
+        #
+        # MIGRATION_FREEZE_REF pins the trust baseline to commit
+        # 1f89392. The immutability script reads this env var and
+        # runs in --verify-against-ref mode against that commit,
+        # refusing to fall back to self-consistency. A PR that
+        # rewrites BOTH the manifest AND all migration files in one
+        # commit would pass self-consistency but FAIL this check,
+        # because the historical baseline disagrees.
         env:
           CI_DISALLOW_INITIALIZE: "true"
-        run: npm run check:migration-immutability
+          MIGRATION_FREEZE_REF: "1f893925f49619d0d30c871732ba3067f341fcc4"
+        run: npm run check:migration-immutability:ci
       - run: npm run typecheck
       - run: npm run lint
       - run: npm run test:unit
@@ -110,7 +119,8 @@ jobs:
       - name: Verify frozen migration hashes
         env:
           CI_DISALLOW_INITIALIZE: "true"
-        run: npm run check:migration-immutability
+          MIGRATION_FREEZE_REF: "1f893925f49619d0d30c871732ba3067f341fcc4"
+        run: npm run check:migration-immutability:ci
       - name: Wait for PostgreSQL and create test databases
         run: |
           until pg_isready -h localhost -p 5432 -U postgres; do

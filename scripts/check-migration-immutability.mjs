@@ -76,9 +76,22 @@ const MODE_UPDATE = argv.includes("--update"); // legacy, removed
 const MODE_VERIFY_AGAINST_REF_ARG = argv.find((a) =>
   a.startsWith("--verify-against-ref="),
 );
-const MODE_VERIFY_AGAINST_REF = MODE_VERIFY_AGAINST_REF_ARG
+const MODE_VERIFY_AGAINST_REF_FROM_ARG = MODE_VERIFY_AGAINST_REF_ARG
   ? MODE_VERIFY_AGAINST_REF_ARG.slice("--verify-against-ref=".length)
   : null;
+// CI trust baseline: when MIGRATION_FREEZE_REF is set in the environment,
+// it takes precedence over the --verify-against-ref CLI arg. This lets CI
+// pin the trust anchor without allowing PR authors to override it via a
+// command-line flag. If the env var is set to a non-empty value, the
+// script ALWAYS runs in --verify-against-ref mode against that ref, even
+// if no CLI flag was passed. If both are set, the env var wins.
+const MODE_VERIFY_AGAINST_REF_FROM_ENV =
+  process.env.MIGRATION_FREEZE_REF &&
+  process.env.MIGRATION_FREEZE_REF.trim() !== ""
+    ? process.env.MIGRATION_FREEZE_REF.trim()
+    : null;
+const MODE_VERIFY_AGAINST_REF =
+  MODE_VERIFY_AGAINST_REF_FROM_ENV || MODE_VERIFY_AGAINST_REF_FROM_ARG;
 
 if (MODE_UPDATE) {
   console.error(
@@ -113,6 +126,29 @@ if (MODE_VERIFY_AGAINST_REF === "") {
   console.error(
     "BLOCK: --verify-against-ref requires a non-empty git ref, " +
       "e.g. --verify-against-ref=origin/main",
+  );
+  process.exit(1);
+}
+
+// CI fail-closed: when running in CI (CI=true), the MIGRATION_FREEZE_REF
+// env var MUST be set. If it is missing, the script refuses to run at
+// all — it does NOT silently fall back to the weaker self-consistency
+// check. This prevents a PR from bypassing the trust baseline by simply
+// not setting the env var in the workflow file.
+//
+// Local development is unaffected: when CI is not set, the script runs
+// whatever mode was requested on the command line.
+if (
+  process.env.CI === "true" &&
+  !process.env.MIGRATION_FREEZE_REF &&
+  !MODE_VERIFY_AGAINST_REF_FROM_ARG
+) {
+  console.error(
+    "BLOCK: CI is running without MIGRATION_FREEZE_REF. The trust " +
+      "baseline is mandatory in CI — without it, a PR could rewrite " +
+      "the entire manifest + all migrations in one commit and pass. " +
+      "Set MIGRATION_FREEZE_REF=<sha> in the CI workflow to the " +
+      "frozen-baseline commit.",
   );
   process.exit(1);
 }
@@ -608,7 +644,11 @@ async function modeVerifyAgainstRef(ref) {
   const errors = [];
 
   // 3. Every ref manifest entry must be present at HEAD with the
-  //    SAME sha256, both in the manifest and on disk.
+  //    SAME sha256, both in the manifest and on disk. Additionally,
+  //    the ref entries must appear in the HEAD manifest in the SAME
+  //    ORDER — this catches a PR that reorders frozen entries (which
+  //    could mask a swap) even when each individual hash still matches.
+  let lastHeadIndex = -1;
   for (const refEntry of refEntries) {
     const headEntry = headByFilename.get(refEntry.filename);
     if (!headEntry) {
@@ -631,6 +671,22 @@ async function modeVerifyAgainstRef(ref) {
           `file itself is unchanged, the manifest must not be edited.`,
       );
     }
+
+    // Order check: the HEAD manifest index of this ref entry must be
+    // strictly greater than the previous ref entry's HEAD index. A
+    // reorder would make this comparison fail.
+    const headIndex = headEntries.findIndex(
+      (e) => e.filename === refEntry.filename,
+    );
+    if (headIndex <= lastHeadIndex) {
+      errors.push(
+        `BLOCK: manifest entry order changed. '${refEntry.filename}' ` +
+          `appears at HEAD index ${headIndex} but the previous ref ` +
+          `entry appeared at HEAD index ${lastHeadIndex}. Frozen ` +
+          `entries must remain in their original order.`,
+      );
+    }
+    lastHeadIndex = headIndex;
 
     // Verify the on-disk file still hash-matches the ref baseline.
     const fullPath = join(MIGRATIONS_DIR, refEntry.filename);
