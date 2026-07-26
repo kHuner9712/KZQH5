@@ -35,7 +35,7 @@ export function ProductCard({
 
   if (editorial) {
     return (
-      <article className="group flex min-w-0 overflow-hidden rounded-md border border-black/[0.06] bg-white transition-colors duration-200 hover:border-gold/30 md:rounded-lg">
+      <article className="kzq-interactive-card group flex min-w-0 overflow-hidden rounded-md border border-black/[0.06] bg-white transition-colors duration-200 hover:border-gold/30 md:rounded-lg">
         <Link
           href={localePath(locale, `/products/${product.slug}`)}
           prefetch={false}
@@ -47,6 +47,7 @@ export function ProductCard({
               src={imageSource}
               alt={content.name}
               placeholder="product"
+              fit="contain"
               sizes="(max-width: 767px) 50vw, (max-width: 1279px) 33vw, 25vw"
               className="transition-transform duration-300 group-hover:scale-[1.025]"
             />
@@ -85,7 +86,7 @@ export function ProductCard({
   return (
     <article
       className={cn(
-        "group overflow-hidden rounded-md border border-black/[0.06] bg-white transition-colors duration-200 hover:border-gold/30 md:rounded-lg",
+        "kzq-interactive-card group overflow-hidden rounded-md border border-black/[0.06] bg-white transition-colors duration-200 hover:border-gold/30 md:rounded-lg",
         isFull && "flex",
       )}
     >
@@ -106,7 +107,9 @@ export function ProductCard({
             src={imageSource}
             alt={content.name}
             placeholder="product"
+            fit="contain"
             loading="lazy"
+            className="transition-transform duration-300 md:group-hover:scale-[1.02]"
             sizes={
               isFull
                 ? "(max-width: 768px) 40vw, 360px"
@@ -121,7 +124,7 @@ export function ProductCard({
         </div>
         <div
           className={cn(
-            "flex min-h-[154px] flex-col p-3 md:min-h-[158px] md:p-3.5",
+            "flex min-h-[132px] flex-col p-3 md:min-h-[148px] md:p-3.5",
             isFull && "flex-1 p-3.5 md:p-5",
           )}
         >
@@ -136,14 +139,11 @@ export function ProductCard({
               {content.secondaryName}
             </p>
           )}
-          <div className="mt-2 flex flex-wrap gap-1">
-            {product.fire_rating && (
-              <span className="chip chip-fire">{product.fire_rating}</span>
-            )}
-            {product.eco_grade && (
-              <span className="chip chip-eco">{product.eco_grade}</span>
-            )}
-          </div>
+          {editorialTag && (
+            <div className="mt-2">
+              <span className="chip chip-fire">{editorialTag}</span>
+            </div>
+          )}
           {product.size && (
             <p className="mt-2 line-clamp-1 text-[10px] text-ink-soft md:text-xs">
               <span className="text-ink-mute">

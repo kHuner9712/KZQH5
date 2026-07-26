@@ -55,7 +55,11 @@ export function MorePageContent({ locale }: { locale: Locale }) {
 
   return (
     <div className="bg-canvas">
-      <PublicPageHero eyebrow="KZQ Navigation" title={copy.more.title} />
+      <PublicPageHero
+        eyebrow="KZQ Navigation"
+        title={copy.more.title}
+        variant="utility"
+      />
       <ResponsiveContainer className="py-8 md:py-16">
         <div className="grid gap-3 sm:grid-cols-2 md:gap-5">
           {links.map((item) => {
@@ -102,6 +106,7 @@ export async function PrivacyPageContent({ locale }: { locale: Locale }) {
     <div className="bg-canvas">
       <PublicPageHero
         eyebrow="KZQ Privacy"
+        variant="utility"
         title={copy.title}
         subtitle={copy.intro}
       />

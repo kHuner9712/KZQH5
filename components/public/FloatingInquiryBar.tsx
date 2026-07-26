@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Phone } from "lucide-react";
+import { MessageSquareText } from "lucide-react";
 import { localePath, pathWithoutLocale, type Locale } from "@/lib/i18n/config";
 import { getDictionary } from "@/lib/i18n/dictionary";
 
@@ -17,7 +17,7 @@ export function FloatingInquiryBar({ locale = "zh" }: { locale?: Locale }) {
       style={{ bottom: "calc(56px + env(safe-area-inset-bottom) + 12px)" }}
       aria-label={getDictionary(locale).home.inquiry}
     >
-      <Phone className="h-5 w-5" />
+      <MessageSquareText className="h-5 w-5" />
     </Link>
   );
 }

@@ -1,29 +1,52 @@
+import {
+  forwardRef,
+  useId,
+  type InputHTMLAttributes,
+  type TextareaHTMLAttributes,
+} from "react";
 import { cn } from "@/lib/utils";
-import { InputHTMLAttributes, TextareaHTMLAttributes, forwardRef, useId } from "react";
 
 interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
   label?: string;
   error?: string;
   required?: boolean;
   hint?: string;
+  containerClassName?: string;
 }
 
 export const Input = forwardRef<HTMLInputElement, InputProps>(
-  ({ className, label, error, required, hint, id, "aria-describedby": ariaDescribedBy, ...props }, ref) => {
+  (
+    {
+      className,
+      containerClassName,
+      label,
+      error,
+      required,
+      hint,
+      id,
+      "aria-describedby": ariaDescribedBy,
+      ...props
+    },
+    ref,
+  ) => {
     const generatedId = useId();
     const inputId = id || props.name || generatedId;
     const errorId = `${inputId}-error`;
     const hintId = `${inputId}-hint`;
-    const describedBy = [ariaDescribedBy, error ? errorId : hint ? hintId : null].filter(Boolean).join(" ") || undefined;
+    const describedBy =
+      [ariaDescribedBy, error ? errorId : hint ? hintId : null]
+        .filter(Boolean)
+        .join(" ") || undefined;
+
     return (
-      <div className="space-y-1.5">
+      <div className={cn("space-y-1.5", containerClassName)}>
         {label && (
           <label
             htmlFor={inputId}
-            className="block text-[12px] font-medium text-ink-soft"
+            className="block text-xs font-medium text-ink-soft"
           >
             {label}
-            {required && <span className="ml-0.5 text-red-500">*</span>}
+            {required && <span className="ml-0.5 text-red-600">*</span>}
           </label>
         )}
         <input
@@ -32,17 +55,25 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
           aria-invalid={error ? true : undefined}
           aria-describedby={describedBy}
           className={cn(
-            "h-11 w-full rounded-xl border bg-white px-3.5 text-sm text-ink outline-none transition placeholder:text-ink-mute focus:border-industrial focus:ring-2 focus:ring-industrial/15",
-            error ? "border-red-400" : "border-ink-line",
-            className
+            "h-11 w-full rounded-md border bg-white px-3.5 text-sm text-ink outline-none transition placeholder:text-ink-mute focus:border-gold focus:ring-2 focus:ring-gold/15",
+            error ? "border-red-500" : "border-ink-line",
+            className,
           )}
           {...props}
         />
-        {hint && !error && <p id={hintId} className="text-[11px] text-ink-mute">{hint}</p>}
-        {error && <p id={errorId} className="text-[11px] text-red-500" role="alert">{error}</p>}
+        {hint && !error && (
+          <p id={hintId} className="text-[11px] text-ink-mute">
+            {hint}
+          </p>
+        )}
+        {error && (
+          <p id={errorId} className="text-[11px] text-red-600" role="alert">
+            {error}
+          </p>
+        )}
       </div>
     );
-  }
+  },
 );
 Input.displayName = "Input";
 
@@ -51,24 +82,42 @@ interface TextareaProps extends TextareaHTMLAttributes<HTMLTextAreaElement> {
   error?: string;
   required?: boolean;
   hint?: string;
+  containerClassName?: string;
 }
 
 export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(
-  ({ className, label, error, required, hint, id, "aria-describedby": ariaDescribedBy, ...props }, ref) => {
+  (
+    {
+      className,
+      containerClassName,
+      label,
+      error,
+      required,
+      hint,
+      id,
+      "aria-describedby": ariaDescribedBy,
+      ...props
+    },
+    ref,
+  ) => {
     const generatedId = useId();
     const inputId = id || props.name || generatedId;
     const errorId = `${inputId}-error`;
     const hintId = `${inputId}-hint`;
-    const describedBy = [ariaDescribedBy, error ? errorId : hint ? hintId : null].filter(Boolean).join(" ") || undefined;
+    const describedBy =
+      [ariaDescribedBy, error ? errorId : hint ? hintId : null]
+        .filter(Boolean)
+        .join(" ") || undefined;
+
     return (
-      <div className="space-y-1.5">
+      <div className={cn("space-y-1.5", containerClassName)}>
         {label && (
           <label
             htmlFor={inputId}
-            className="block text-[12px] font-medium text-ink-soft"
+            className="block text-xs font-medium text-ink-soft"
           >
             {label}
-            {required && <span className="ml-0.5 text-red-500">*</span>}
+            {required && <span className="ml-0.5 text-red-600">*</span>}
           </label>
         )}
         <textarea
@@ -77,16 +126,24 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(
           aria-invalid={error ? true : undefined}
           aria-describedby={describedBy}
           className={cn(
-            "w-full rounded-xl border bg-white px-3.5 py-2.5 text-sm text-ink outline-none transition placeholder:text-ink-mute focus:border-industrial focus:ring-2 focus:ring-industrial/15",
-            error ? "border-red-400" : "border-ink-line",
-            className
+            "w-full rounded-md border bg-white px-3.5 py-2.5 text-sm text-ink outline-none transition placeholder:text-ink-mute focus:border-gold focus:ring-2 focus:ring-gold/15",
+            error ? "border-red-500" : "border-ink-line",
+            className,
           )}
           {...props}
         />
-        {hint && !error && <p id={hintId} className="text-[11px] text-ink-mute">{hint}</p>}
-        {error && <p id={errorId} className="text-[11px] text-red-500" role="alert">{error}</p>}
+        {hint && !error && (
+          <p id={hintId} className="text-[11px] text-ink-mute">
+            {hint}
+          </p>
+        )}
+        {error && (
+          <p id={errorId} className="text-[11px] text-red-600" role="alert">
+            {error}
+          </p>
+        )}
       </div>
     );
-  }
+  },
 );
 Textarea.displayName = "Textarea";

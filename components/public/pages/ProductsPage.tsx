@@ -137,7 +137,7 @@ export async function ProductsPageContent(
         subtitle={content.subtitle || copy.products.subtitle}
         description={content.description}
       />
-      <div className="sticky top-12 z-30 border-b border-ink-line bg-white/95 backdrop-blur-lg md:top-16">
+      <div className="border-b border-ink-line bg-white/95 backdrop-blur-lg lg:sticky lg:top-16 lg:z-30">
         <ResponsiveContainer className="py-3">
           <SearchBox locale={locale} />
           <div className="mt-3 flex gap-2 overflow-x-auto pb-1 no-scrollbar">
@@ -148,7 +148,7 @@ export async function ProductsPageContent(
                 page: undefined,
               })}
               className={cn(
-                "shrink-0 rounded-md border px-3.5 py-2 text-[12px] font-medium",
+                "inline-flex min-h-11 shrink-0 items-center rounded-md border px-3.5 py-2 text-xs font-medium",
                 !searchParams.category
                   ? "border-gold/40 bg-page text-gold-light"
                   : "border-ink-line bg-canvas-warm text-ink-soft",
@@ -165,7 +165,7 @@ export async function ProductsPageContent(
                   page: undefined,
                 })}
                 className={cn(
-                  "shrink-0 rounded-md border px-3.5 py-2 text-[12px] font-medium",
+                  "inline-flex min-h-11 shrink-0 items-center rounded-md border px-3.5 py-2 text-xs font-medium",
                   searchParams.category === category.slug
                     ? "border-gold/40 bg-page text-gold-light"
                     : "border-ink-line bg-canvas-warm text-ink-soft",
@@ -180,10 +180,10 @@ export async function ProductsPageContent(
               <Link
                 href={buildUrl({ subcategory: undefined, page: undefined })}
                 className={cn(
-                  "shrink-0 rounded-full px-3 py-1 text-[11px]",
+                  "inline-flex min-h-11 shrink-0 items-center rounded-md border px-3 text-[11px]",
                   !searchParams.subcategory
-                    ? "bg-ink text-white"
-                    : "bg-canvas-cool text-ink-mute",
+                    ? "border-page bg-page text-white"
+                    : "border-ink-line bg-canvas-cool text-ink-mute",
                 )}
               >
                 {copy.common.all}
@@ -196,10 +196,10 @@ export async function ProductsPageContent(
                     page: undefined,
                   })}
                   className={cn(
-                    "shrink-0 rounded-full px-3 py-1 text-[11px]",
+                    "inline-flex min-h-11 shrink-0 items-center rounded-md border px-3 text-[11px]",
                     searchParams.subcategory === subcategory.slug
-                      ? "bg-ink text-white"
-                      : "bg-canvas-cool text-ink-mute",
+                      ? "border-page bg-page text-white"
+                      : "border-ink-line bg-canvas-cool text-ink-mute",
                   )}
                 >
                   {localizeSubcategory(subcategory, locale).name}
@@ -210,7 +210,7 @@ export async function ProductsPageContent(
         </ResponsiveContainer>
       </div>
       <ResponsiveContainer className="pt-4">
-        <div className="flex items-center justify-between text-[11px] text-ink-mute">
+        <div className="hidden items-center justify-between text-[11px] text-ink-mute sm:flex">
           <div>
             <Link href={localePath(locale)}>{copy.common.home}</Link>
             <ChevronRight className="mx-1 inline h-3 w-3" />

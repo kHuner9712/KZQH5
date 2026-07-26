@@ -22,7 +22,7 @@ const config: Config = {
         ink: {
           DEFAULT: "#25282B",
           soft: "#4A4D50",
-          mute: "#8D9093",
+          mute: "#686B6E",
           line: "rgba(20,23,25,0.10)",
         },
         industrial: {
@@ -37,7 +37,7 @@ const config: Config = {
         brass: {
           DEFAULT: "#C5A15A",
           light: "#D9BD82",
-          dark: "#A8853F",
+          dark: "#7A5B26",
         },
         graphite: {
           DEFAULT: "#141719",
@@ -54,7 +54,7 @@ const config: Config = {
         gold: {
           DEFAULT: "#C5A15A",
           light: "#D9BD82",
-          dark: "#A8853F",
+          dark: "#7A5B26",
         },
       },
       fontFamily: {

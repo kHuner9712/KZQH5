@@ -238,17 +238,17 @@ export async function ProductDetailPageContent(locale: Locale, slug: string) {
   });
   const inquiryUrl = `${localePath(locale, "/contact")}?${inquiryParams.toString()}`;
   return (
-    <div className="animate-fade-in bg-canvas pb-24 md:pb-0">
+    <div className="animate-fade-in bg-canvas pb-28 md:pb-0">
       <ContextEventTracker
         eventName="product_view"
         locale={locale}
         productId={product.id}
       />
-      <div className="sticky top-12 z-30 border-b border-white/10 bg-page/95 backdrop-blur-lg md:top-16">
+      <div className="border-b border-white/10 bg-page/95 backdrop-blur-lg">
         <ResponsiveContainer className="flex items-center gap-3 py-3">
           <Link
             href={localePath(locale, "/products")}
-            className="flex h-8 w-8 items-center justify-center rounded-full bg-white/10 text-gold-light"
+            className="flex h-11 w-11 items-center justify-center rounded-md border border-white/10 bg-white/[0.06] text-gold-light"
             aria-label={copy.common.back}
           >
             <ArrowLeft className="h-4 w-4" />
@@ -385,29 +385,33 @@ export async function ProductDetailPageContent(locale: Locale, slug: string) {
           </section>
         )}
       </ResponsiveContainer>
-      <div className="safe-bottom fixed bottom-0 left-0 z-50 grid w-full grid-cols-3 gap-2 border-t border-white/10 bg-graphite/95 p-3 md:hidden">
+      <div className="fixed inset-x-0 bottom-0 z-50 grid grid-cols-[48px_minmax(0,1fr)_minmax(0,1.15fr)] gap-2 border-t border-white/10 bg-graphite/95 px-2 pt-2 pb-[max(8px,env(safe-area-inset-bottom))] backdrop-blur-xl md:hidden">
         {safePhoneNumber ? (
           <a
             href={`tel:${safePhoneNumber.replace(/[^+\d]/g, "")}`}
-            className="btn-outline h-12 border-white/20 px-2 text-xs text-white"
+            className="flex h-12 w-12 items-center justify-center rounded-md border border-white/20 text-white"
+            aria-label={locale === "zh" ? "电话联系" : "Call us"}
           >
-            <Phone className="h-4 w-4" />
-            {locale === "zh" ? "联系" : "Contact"}
+            <Phone className="h-5 w-5" />
           </a>
         ) : (
           <Link
             href={localePath(locale, "/contact")}
-            className="btn-outline h-12 border-white/20 px-2 text-xs text-white"
+            className="flex h-12 w-12 items-center justify-center rounded-md border border-white/20 text-white"
+            aria-label={locale === "zh" ? "联系我们" : "Contact us"}
           >
-            {locale === "zh" ? "联系" : "Contact"}
+            <Phone className="h-5 w-5" />
           </Link>
         )}
         <AddToInquiryButton
           product={product}
           locale={locale}
-          className="h-12 border-white/20 px-1 text-center text-[11px] text-gold-light"
+          className="h-12 min-w-0 border-white/20 px-2 text-center text-[11px] text-gold-light"
         />
-        <Link href={inquiryUrl} className="btn-primary h-12 px-2 text-xs">
+        <Link
+          href={inquiryUrl}
+          className="btn-primary h-12 min-w-0 px-2 text-xs"
+        >
           {locale === "zh" ? "立即询盘" : "Inquire now"}
         </Link>
       </div>

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Menu } from "lucide-react";
+import { Ellipsis } from "lucide-react";
 import { BrandLogo } from "./BrandLogo";
 import { LanguageSwitcher } from "./LanguageSwitcher";
 import { localePath, type Locale } from "@/lib/i18n/config";
@@ -18,7 +18,7 @@ export function MobileHeader({ company, locale }: MobileHeaderProps) {
   const copy = getDictionary(locale);
 
   return (
-    <header className="fixed inset-x-0 top-0 z-50 h-12 border-b border-white/10 bg-page/90 backdrop-blur-xl md:hidden">
+    <header className="fixed inset-x-0 top-0 z-50 h-12 border-b border-white/10 bg-page/90 backdrop-blur-xl lg:hidden">
       <div className="flex h-full items-center justify-between px-4">
         <Link
           href={localePath(locale)}
@@ -31,7 +31,7 @@ export function MobileHeader({ company, locale }: MobileHeaderProps) {
             variant="wordmark"
             className="text-gold"
           />
-          <span className="truncate text-[10px] text-white/45">
+          <span className="truncate text-[10px] text-white/60">
             {copy.header.mobileTagline}
           </span>
         </Link>
@@ -41,7 +41,7 @@ export function MobileHeader({ company, locale }: MobileHeaderProps) {
             className="inline-flex h-11 w-11 items-center justify-center text-white"
             aria-label={copy.nav.more}
           >
-            <Menu className="h-6 w-6" />
+            <Ellipsis className="h-6 w-6" />
           </Link>
           <LanguageSwitcher
             locale={locale}

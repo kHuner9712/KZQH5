@@ -44,7 +44,7 @@ export function DesktopHeader({
       : pathname === href || pathname.startsWith(`${href}/`);
 
   return (
-    <header className="fixed inset-x-0 top-0 z-50 hidden h-16 border-b border-white/10 bg-page/[0.85] backdrop-blur-xl md:block">
+    <header className="fixed inset-x-0 top-0 z-50 hidden h-16 border-b border-white/10 bg-page/[0.85] backdrop-blur-xl lg:block">
       <div className="flex h-full items-center justify-between gap-6 px-8 lg:px-12">
         <Link
           href={localePath(locale)}
@@ -73,7 +73,7 @@ export function DesktopHeader({
                 href={localePath(locale, item.href)}
                 className={cn(
                   "relative px-2 py-5 text-sm font-medium transition-colors lg:px-3 xl:px-4",
-                  active ? "text-gold" : "text-ink-mute hover:text-gold",
+                  active ? "text-gold" : "text-white/60 hover:text-gold",
                 )}
                 aria-current={active ? "page" : undefined}
               >
@@ -85,7 +85,7 @@ export function DesktopHeader({
         <div className="flex shrink-0 items-center gap-4">
           <LanguageSwitcher
             locale={locale}
-            className="text-xs text-ink-mute hover:text-gold"
+            className="text-xs text-white/60 hover:text-gold"
           />
           <Link
             href={localePath(locale, "/contact")}

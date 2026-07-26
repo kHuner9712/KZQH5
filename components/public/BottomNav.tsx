@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
@@ -24,6 +25,7 @@ interface BottomTab {
 
 export function BottomNav({ locale }: { locale: Locale }) {
   const pathname = pathWithoutLocale(usePathname());
+  const [hash, setHash] = useState("");
   const copy = getDictionary(locale);
   const tabs: BottomTab[] = [
     { href: localePath(locale), label: copy.nav.home, icon: Home, key: "home" },
@@ -52,9 +54,18 @@ export function BottomNav({ locale }: { locale: Locale }) {
       key: "contact",
     },
   ];
+
+  useEffect(() => {
+    const syncHash = () => setHash(window.location.hash);
+    syncHash();
+    window.addEventListener("hashchange", syncHash);
+    return () => window.removeEventListener("hashchange", syncHash);
+  }, [pathname]);
+
   const isActive = (tab: BottomTab) => {
-    if (tab.key === "home") return pathname === "/";
-    if (tab.key === "categories") return false;
+    if (tab.key === "home") return pathname === "/" && hash !== "#categories";
+    if (tab.key === "categories")
+      return pathname === "/" && hash === "#categories";
     const path = tab.href.replace(/^\/en/, "").split("#")[0] || "/";
     return pathname === path || pathname.startsWith(`${path}/`);
   };
@@ -73,11 +84,18 @@ export function BottomNav({ locale }: { locale: Locale }) {
               key={tab.key}
               href={tab.href}
               className={cn(
-                "relative flex min-h-11 min-w-0 flex-1 flex-col items-center justify-center gap-0.5 px-1 transition-colors",
-                active ? "text-gold" : "text-ink-mute",
+                "relative flex min-h-11 min-w-0 flex-1 flex-col items-center justify-center gap-0.5 px-1 transition-colors duration-200",
+                active ? "text-gold" : "text-white/50",
               )}
               aria-current={active ? "page" : undefined}
             >
+              <span
+                className={cn(
+                  "absolute inset-x-0 top-0 mx-auto h-0.5 w-6 rounded-b bg-gold transition-opacity",
+                  active ? "opacity-100" : "opacity-0",
+                )}
+                aria-hidden="true"
+              />
               <Icon className="h-5 w-5" strokeWidth={active ? 2.2 : 1.8} />
               {tab.key === "contact" && (
                 <InquiryCountBadge className="absolute left-[calc(50%+8px)] top-1 bg-gold text-page" />

@@ -45,7 +45,7 @@ export function ResponsiveShell({
           siteSettings={siteSettings}
           locale={locale}
         />
-        <main className="flex-1 pt-12 md:pt-16">{children}</main>
+        <main className="flex-1 pt-12 lg:pt-16">{children}</main>
         <Footer company={company} siteSettings={siteSettings} locale={locale} />
         <MobileNavController locale={locale} />
       </div>

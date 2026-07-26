@@ -77,6 +77,7 @@ export async function ContactPageContent(
     <div className="animate-fade-in bg-canvas">
       <PublicPageHero
         eyebrow="Contact Us"
+        variant="utility"
         title={content.title || copy.title}
         subtitle={content.subtitle || copy.subtitle}
         description={content.description}
@@ -122,7 +123,7 @@ export async function ContactPageContent(
                 />
               )}
               {!hasAnyContact && (
-                <p className="rounded-xl border border-ink-line bg-canvas-warm px-4 py-3 text-[12px] leading-5 text-ink-mute">
+                <p className="rounded-md border border-ink-line bg-canvas-warm px-4 py-3 text-[12px] leading-5 text-ink-mute">
                   {placeholderContactNotice[locale]}
                 </p>
               )}
@@ -133,7 +134,7 @@ export async function ContactPageContent(
               locale={locale}
             />
             {wechatQrUrl && (
-              <div className="mt-4 flex flex-col items-center rounded-2xl border border-ink-line bg-canvas-warm p-4 md:mt-6">
+              <div className="mt-4 flex flex-col items-center rounded-md border border-ink-line bg-canvas-warm p-4 md:mt-6">
                 <div className="flex items-center gap-1.5 text-[11px] text-ink-soft">
                   <QrCode className="h-4 w-4 text-industrial" />
                   {copy.wechat}

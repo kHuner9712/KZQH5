@@ -102,6 +102,7 @@ export async function AboutPageContent(locale: Locale) {
     <div className="animate-fade-in bg-canvas">
       <PublicPageHero
         eyebrow="About KZQ"
+        variant="brand"
         title={content.title || localizedCompany.title || copy.title}
         subtitle={content.subtitle || copy.subtitle}
         description={content.description || localizedCompany.description}
@@ -124,7 +125,7 @@ export async function AboutPageContent(locale: Locale) {
               return (
                 <div
                   key={`${card.title}-${index}`}
-                  className="flex gap-4 rounded-md border border-black/[0.06] bg-canvas-warm p-4 transition-colors hover:border-gold/30 md:rounded-lg md:p-6"
+                  className="kzq-interactive-card flex gap-4 rounded-md border border-black/[0.06] bg-canvas-warm p-4 transition-colors hover:border-gold/30 md:rounded-lg md:p-6"
                 >
                   <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-industrial-50">
                     <Icon className="h-5 w-5 text-industrial" />

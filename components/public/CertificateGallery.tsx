@@ -144,7 +144,7 @@ export function CertificateGallery({
               className={
                 compact
                   ? "overflow-hidden rounded-md border border-white/10 bg-white/[0.04] text-left"
-                  : "overflow-hidden rounded-md border border-black/[0.06] bg-white text-left transition-colors hover:border-gold/30 md:rounded-lg"
+                  : "kzq-interactive-card overflow-hidden rounded-md border border-black/[0.06] bg-white text-left hover:border-gold/30 md:rounded-lg"
               }
               aria-label={`${locale === "zh" ? "全屏查看" : "View full screen"}: ${content.name}`}
             >
@@ -157,6 +157,7 @@ export function CertificateGallery({
                   src={certificate.image_url}
                   alt={content.name}
                   placeholder="cert"
+                  fit="contain"
                   fallbackText={<Award className="h-8 w-8 text-brass/50" />}
                   sizes="(max-width: 768px) 50vw, 280px"
                 />
@@ -283,7 +284,7 @@ export function CertificateGallery({
                 onClick={() =>
                   setScale((current) => Math.max(1, current - 0.5))
                 }
-                className="flex h-10 w-10 items-center justify-center rounded-full bg-black/65 text-white"
+                className="flex h-11 w-11 items-center justify-center rounded-md bg-black/65 text-white"
                 aria-label={locale === "zh" ? "缩小" : "Zoom out"}
               >
                 <Minus className="h-4 w-4" />
@@ -300,7 +301,7 @@ export function CertificateGallery({
                 onClick={() =>
                   setScale((current) => Math.min(5, current + 0.5))
                 }
-                className="flex h-10 w-10 items-center justify-center rounded-full bg-black/65 text-white"
+                className="flex h-11 w-11 items-center justify-center rounded-md bg-black/65 text-white"
                 aria-label={locale === "zh" ? "放大" : "Zoom in"}
               >
                 <Plus className="h-4 w-4" />

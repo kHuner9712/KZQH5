@@ -1,32 +1,37 @@
-import { cn } from "@/lib/utils";
-import { PackageOpen } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
+import type { ReactNode } from "react";
+import { cn } from "@/lib/utils";
 
 interface EmptyStateProps {
-  title?: string;
-  description?: string;
-  icon?: LucideIcon;
+  title: string;
+  description: string;
+  icon: LucideIcon;
   className?: string;
+  action?: ReactNode;
 }
 
 export function EmptyState({
-  title = "暂无数据",
-  description = "稍后再来看看吧",
-  icon: Icon = PackageOpen,
+  title,
+  description,
+  icon: Icon,
   className,
+  action,
 }: EmptyStateProps) {
   return (
     <div
       className={cn(
-        "flex flex-col items-center justify-center rounded-lg border border-dashed border-ink-line bg-canvas-warm px-6 py-16 text-center",
+        "flex flex-col items-center justify-center rounded-md border border-dashed border-ink-line bg-canvas-warm px-6 py-12 text-center md:py-16",
         className,
       )}
     >
-      <div className="flex h-16 w-16 items-center justify-center rounded-full border border-ink-line bg-white">
-        <Icon className="h-7 w-7 text-ink-mute" />
+      <div className="flex h-14 w-14 items-center justify-center rounded-md border border-ink-line bg-white md:h-16 md:w-16">
+        <Icon className="h-6 w-6 text-ink-mute md:h-7 md:w-7" />
       </div>
-      <p className="mt-4 text-base font-medium text-ink">{title}</p>
-      <p className="mt-1 text-sm text-ink-mute">{description}</p>
+      <p className="mt-4 text-base font-semibold text-ink">{title}</p>
+      <p className="mt-1 max-w-md text-sm leading-6 text-ink-mute">
+        {description}
+      </p>
+      {action && <div className="mt-5">{action}</div>}
     </div>
   );
 }

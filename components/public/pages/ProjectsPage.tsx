@@ -39,7 +39,7 @@ export async function ProjectsPageContent(locale: Locale) {
               return (
                 <article
                   key={project.id}
-                  className="group overflow-hidden rounded-md border border-black/[0.06] bg-canvas-warm transition-colors hover:border-gold/30 md:rounded-lg"
+                  className="kzq-interactive-card group overflow-hidden rounded-md border border-black/[0.06] bg-canvas-warm transition-colors hover:border-gold/30 md:rounded-lg"
                 >
                   <Link href={localePath(locale, `/projects/${project.slug}`)}>
                     <div className="relative aspect-[16/10] overflow-hidden">
@@ -47,6 +47,7 @@ export async function ProjectsPageContent(locale: Locale) {
                         src={project.cover_image_url}
                         alt={content.title}
                         sizes="(max-width: 768px) 100vw, 33vw"
+                        className="transition-transform duration-500 md:group-hover:scale-[1.025]"
                       />
                       {project.is_featured && (
                         <span className="absolute left-3 top-3 rounded bg-page/85 px-2 py-1 text-[10px] text-gold-light">
@@ -84,6 +85,14 @@ export async function ProjectsPageContent(locale: Locale) {
             icon={FolderKanban}
             title={copy.empty}
             description={copy.emptyHint}
+            action={
+              <Link
+                href={localePath(locale, "/products")}
+                className="btn-primary h-11 px-5 text-xs"
+              >
+                {locale === "zh" ? "浏览产品" : "Browse products"}
+              </Link>
+            }
           />
         )}
       </ResponsiveContainer>

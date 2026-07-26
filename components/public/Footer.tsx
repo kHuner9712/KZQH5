@@ -54,18 +54,18 @@ export function Footer({ company, siteSettings, locale }: FooterProps) {
               <span className="font-display text-lg font-semibold tracking-[0.06em] text-gold md:text-2xl">
                 KZQ
               </span>
-              <span className="text-[10px] text-white/45 md:text-xs">
+              <span className="text-[10px] text-white/60 md:text-xs">
                 {copy.header.tagline}
               </span>
             </div>
-            <p className="mt-3 max-w-sm text-[11px] leading-5 text-white/45 md:mt-4 md:text-[13px] md:leading-6">
+            <p className="mt-3 max-w-sm text-[11px] leading-5 text-white/60 md:mt-4 md:text-[13px] md:leading-6">
               {localizedCompany.description ||
                 localizedCompany.title ||
                 settings.siteName}
             </p>
             <div className="mt-4 space-y-1.5 text-[11px] leading-5 text-white/55 md:mt-5 md:text-[13px]">
               {!phone && !email && !address && (
-                <p className="text-white/45">
+                <p className="text-white/60">
                   {placeholderContactNotice[locale]}
                 </p>
               )}
@@ -107,13 +107,13 @@ export function Footer({ company, siteSettings, locale }: FooterProps) {
             <div className="mt-4 flex flex-wrap gap-x-4 gap-y-3 md:flex-col">
               <Link
                 href={localePath(locale, "/contact")}
-                className="text-[11px] text-white/45 transition-colors hover:text-gold md:text-[13px]"
+                className="text-[11px] text-white/60 transition-colors hover:text-gold md:text-[13px]"
               >
                 {copy.nav.inquiry}
               </Link>
               <Link
                 href={localePath(locale, "/privacy")}
-                className="text-[11px] text-white/45 transition-colors hover:text-gold md:text-[13px]"
+                className="text-[11px] text-white/60 transition-colors hover:text-gold md:text-[13px]"
               >
                 {copy.footer.privacy}
               </Link>
@@ -121,7 +121,7 @@ export function Footer({ company, siteSettings, locale }: FooterProps) {
           </div>
         </div>
 
-        <div className="mx-auto mt-5 max-w-content border-t border-white/[0.08] pt-3 text-[10px] leading-5 text-white/35 md:mt-8 md:pt-8 md:text-xs">
+        <div className="mx-auto mt-5 max-w-content border-t border-white/[0.08] pt-3 text-[10px] leading-5 text-white/50 md:mt-8 md:pt-8 md:text-xs">
           {settings.footerText || copy.footer.fallback}
         </div>
       </div>
@@ -148,7 +148,7 @@ function FooterColumn({
           <Link
             key={item.href}
             href={localePath(locale, item.href)}
-            className="text-[13px] text-white/45 transition-colors hover:text-gold"
+            className="text-[13px] text-white/60 transition-colors hover:text-gold"
           >
             {localizeNavItem(item, locale)}
           </Link>

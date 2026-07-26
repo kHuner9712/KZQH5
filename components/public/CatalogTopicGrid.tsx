@@ -48,7 +48,7 @@ function CardCover({
 
   return (
     <div
-      className="relative aspect-[4/3] overflow-hidden bg-page p-5 text-white"
+      className="relative aspect-[16/7] overflow-hidden bg-page p-4 text-white sm:aspect-[4/3] sm:p-5"
       style={
         cover
           ? {
@@ -143,7 +143,7 @@ export function CatalogTopicGrid({
             <article
               key={item.topic.id}
               id={item.topic.id}
-              className="group scroll-mt-24 overflow-hidden rounded-md border border-black/[0.06] bg-white transition-colors hover:border-gold/30 md:rounded-lg"
+              className="kzq-interactive-card group scroll-mt-24 overflow-hidden rounded-md border border-black/[0.06] bg-white transition-colors hover:border-gold/30 md:rounded-lg"
             >
               {item.asset ? (
                 <button
