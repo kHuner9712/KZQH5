@@ -26,17 +26,22 @@ export function ContactCard({
   external,
   className,
 }: ContactCardProps) {
-  const Icon = { phone: Phone, email: Mail, whatsapp: MessageCircle, address: MapPin }[icon];
+  const Icon = {
+    phone: Phone,
+    email: Mail,
+    whatsapp: MessageCircle,
+    address: MapPin,
+  }[icon];
   const content = (
     <div
       className={cn(
-        "card-base flex items-center gap-3 p-3.5",
+        "flex min-h-16 items-center gap-3 rounded-md border border-black/[0.06] bg-canvas-warm p-3.5 transition-colors hover:border-gold/30 md:rounded-lg",
         href && "active:bg-canvas-warm",
-        className
+        className,
       )}
     >
-      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-industrial-50">
-        <Icon className="h-4 w-4 text-industrial" />
+      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-gold/10">
+        <Icon className="h-4 w-4 text-gold-dark" />
       </div>
       <div className="min-w-0 flex-1">
         <p className="text-[10px] text-ink-mute">{label}</p>
@@ -44,9 +49,7 @@ export function ContactCard({
           {value}
         </p>
       </div>
-      {href && (
-        <ArrowRight className="h-4 w-4 shrink-0 text-ink-mute" />
-      )}
+      {href && <ArrowRight className="h-4 w-4 shrink-0 text-ink-mute" />}
     </div>
   );
 

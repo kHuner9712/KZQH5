@@ -73,27 +73,27 @@ export async function ProjectDetailPageContent(locale: Locale, slug: string) {
         locale={locale}
         projectId={project.id}
       />
-      <div className="border-b border-ink-line bg-white">
+      <div className="border-b border-white/10 bg-page">
         <ResponsiveContainer className="py-3">
           <Link
             href={localePath(locale, "/projects")}
-            className="inline-flex items-center gap-2 text-xs text-ink-mute hover:text-ink"
+            className="inline-flex items-center gap-2 text-xs text-white/55 hover:text-gold-light"
           >
             <ArrowLeft className="h-4 w-4" />
             {copy.title}
           </Link>
         </ResponsiveContainer>
       </div>
-      <ResponsiveContainer className="py-6 md:py-10">
-        <div className="grid gap-7 lg:grid-cols-2 lg:gap-10">
-          <div className="overflow-hidden rounded-xl border border-ink-line bg-white">
+      <ResponsiveContainer className="py-8 md:py-16">
+        <div className="grid gap-8 lg:grid-cols-[minmax(0,1.08fr)_minmax(0,0.92fr)] lg:gap-16">
+          <div className="overflow-hidden rounded-lg border border-black/[0.06] bg-white">
             <ImageCarousel images={images} />
           </div>
           <div>
             <p className="text-[10px] uppercase tracking-[0.2em] text-brass">
               KZQ Project
             </p>
-            <h1 className="mt-2 text-2xl font-bold text-ink md:text-4xl">
+            <h1 className="font-display mt-2 text-[30px] font-semibold leading-tight text-ink md:text-[44px]">
               {content.title}
             </h1>
             <div className="mt-4 flex flex-wrap gap-3 text-xs text-ink-mute">
@@ -118,18 +118,18 @@ export async function ProjectDetailPageContent(locale: Locale, slug: string) {
           </div>
         </div>
         {content.description && (
-          <section className="mt-9 max-w-4xl">
+          <section className="mt-10 max-w-4xl border-t border-ink-line pt-8 md:mt-14 md:pt-10">
             <p className="whitespace-pre-line text-sm leading-8 text-ink-soft">
               {content.description}
             </p>
           </section>
         )}
         {(project.products || []).length > 0 && (
-          <section className="mt-10">
+          <section className="mt-10 border-t border-ink-line pt-8 md:mt-14 md:pt-10">
             <h2 className="text-lg font-semibold text-ink">
               {copy.relatedProducts}
             </h2>
-            <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-4">
+            <div className="mt-5 grid grid-cols-2 gap-2.5 md:grid-cols-3 md:gap-5 lg:grid-cols-4">
               {project.products!.map((product) => (
                 <ProductCard
                   key={product.id}

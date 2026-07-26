@@ -8,12 +8,14 @@
 
 html,
 body {
-  background: #0D0F10;
-  color: #25282B;
-  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC",
-    "HarmonyOS Sans SC", "Segoe UI", "Microsoft YaHei", sans-serif;
+  background: #0d0f10;
+  color: #25282b;
+  font-family:
+    -apple-system, BlinkMacSystemFont, "PingFang SC", "HarmonyOS Sans SC",
+    "Segoe UI", "Microsoft YaHei", sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  overflow-x: hidden;
 }
 
 /* 桌面浏览：body 不再 flex 居中，由 ResponsiveShell 控制宽度 */
@@ -32,23 +34,24 @@ body {
 
 /* ============ 设计系统 token ============ */
 :root {
-  --kzq-page: #0D0F10;
+  --kzq-page: #0d0f10;
   --kzq-graphite: #141719;
-  --kzq-graphite-elevated: #1D2023;
-  --kzq-gold: #C5A15A;
-  --kzq-gold-light: #D9BD82;
-  --kzq-warm-white: #F4F1EA;
-  --kzq-soft-white: #FAF8F3;
-  --kzq-body: #25282B;
-  --kzq-muted: #8D9093;
-  --kzq-dark-border: rgba(255, 255, 255, 0.10);
-  --kzq-light-border: rgba(20, 23, 25, 0.10);
+  --kzq-graphite-elevated: #1d2023;
+  --kzq-gold: #c5a15a;
+  --kzq-gold-light: #d9bd82;
+  --kzq-warm-white: #f4f1ea;
+  --kzq-soft-white: #faf8f3;
+  --kzq-body: #25282b;
+  --kzq-muted: #686b6e;
+  --kzq-gold-text: #7a5b26;
+  --kzq-dark-border: rgba(255, 255, 255, 0.1);
+  --kzq-light-border: rgba(20, 23, 25, 0.1);
 
   /* Backwards-compatible aliases used by existing public components. */
   --c-ink: var(--kzq-body);
-  --c-ink-soft: #5B5F62;
+  --c-ink-soft: #5b5f62;
   --c-ink-mute: var(--kzq-muted);
-  --c-line: rgba(20, 23, 25, 0.10);
+  --c-line: rgba(20, 23, 25, 0.1);
   --c-canvas: var(--kzq-warm-white);
   --c-canvas-warm: var(--kzq-soft-white);
   --c-industrial: var(--kzq-body);
@@ -76,7 +79,7 @@ body {
   }
   @media (min-width: 1024px) {
     .container-responsive {
-      @apply max-w-content px-10;
+      @apply max-w-content px-12;
     }
   }
 
@@ -102,6 +105,15 @@ body {
     border-color: rgba(20, 23, 25, 0.28);
   }
 
+  .btn-secondary-dark {
+    @apply inline-flex items-center justify-center gap-2 rounded-md border bg-transparent font-medium text-white transition-colors;
+    border-color: rgba(255, 255, 255, 0.3);
+  }
+  .btn-secondary-dark:hover {
+    border-color: var(--kzq-gold);
+    color: var(--kzq-gold-light);
+  }
+
   /* 品牌徽标字母（fallback） */
   .brand-monogram {
     @apply inline-flex items-center justify-center font-medium tracking-tight;
@@ -119,11 +131,27 @@ body {
     @apply overflow-hidden rounded-lg bg-white;
     border: 1px solid rgba(20, 23, 25, 0.08);
     box-shadow: 0 1px 2px rgba(13, 15, 16, 0.05);
-    transition: transform 0.2s ease, box-shadow 0.2s ease;
+    transition:
+      transform 0.2s ease,
+      box-shadow 0.2s ease;
   }
   .card-base:active {
     transform: translateY(-1px);
     box-shadow: 0 8px 24px rgba(13, 15, 16, 0.08);
+  }
+
+  .kzq-interactive-card {
+    transition:
+      transform 0.24s ease,
+      border-color 0.24s ease,
+      box-shadow 0.24s ease;
+  }
+
+  @media (hover: hover) {
+    .kzq-interactive-card:hover {
+      transform: translateY(-3px);
+      box-shadow: 0 16px 38px rgba(13, 15, 16, 0.09);
+    }
   }
 
   /* 防火 / 环保 信息胶囊 */
@@ -132,11 +160,11 @@ body {
   }
   .chip-fire {
     @apply bg-canvas-cool text-ink-soft;
-    border: 1px solid rgba(20, 23, 25, 0.10);
+    border: 1px solid rgba(20, 23, 25, 0.1);
   }
   .chip-eco {
     @apply bg-canvas-cool text-ink-soft;
-    border: 1px solid rgba(20, 23, 25, 0.10);
+    border: 1px solid rgba(20, 23, 25, 0.1);
   }
   .chip-feature {
     @apply bg-brass/10 text-brass-dark;
@@ -146,7 +174,11 @@ body {
   /* 产品占位渐变（按 slug hash 着色） */
   .product-placeholder {
     background:
-      linear-gradient(135deg, rgba(176, 133, 66, 0.08) 0%, rgba(30, 58, 95, 0.06) 100%),
+      linear-gradient(
+        135deg,
+        rgba(176, 133, 66, 0.08) 0%,
+        rgba(30, 58, 95, 0.06) 100%
+      ),
       repeating-linear-gradient(
         90deg,
         rgba(26, 29, 33, 0.03) 0,
@@ -154,35 +186,65 @@ body {
         transparent 1px,
         transparent 14px
       ),
-      #F2F0EB;
+      #f2f0eb;
   }
 
   /* 证书占位卡（更克制、像资质卡） */
   .cert-placeholder {
-    background:
-      linear-gradient(160deg, #FAF8F4 0%, #F2F0EB 100%);
+    background: linear-gradient(160deg, #faf8f4 0%, #f2f0eb 100%);
   }
 
   .material-pattern-0 {
     background:
-      linear-gradient(110deg, rgba(255,255,255,0.10), transparent 28%),
-      repeating-linear-gradient(90deg, #4a3728 0 12px, #6a5039 12px 18px, #1d2023 18px 22px);
+      linear-gradient(110deg, rgba(255, 255, 255, 0.1), transparent 28%),
+      repeating-linear-gradient(
+        90deg,
+        #4a3728 0 12px,
+        #6a5039 12px 18px,
+        #1d2023 18px 22px
+      );
   }
   .material-pattern-1 {
     background:
-      radial-gradient(circle at 30% 20%, rgba(217,189,130,0.16), transparent 25%),
+      radial-gradient(
+        circle at 30% 20%,
+        rgba(217, 189, 130, 0.16),
+        transparent 25%
+      ),
       repeating-linear-gradient(90deg, #2c3033 0 28px, #1d2023 28px 30px);
   }
   .material-pattern-2 {
     background:
-      linear-gradient(118deg, transparent 0 31%, rgba(93, 85, 76, 0.24) 31.5%, transparent 32.5% 58%, rgba(117, 106, 94, 0.18) 58.5%, transparent 60%),
-      linear-gradient(24deg, transparent 0 47%, rgba(255, 255, 255, 0.72) 48%, transparent 50%),
-      repeating-linear-gradient(115deg, #d4cfc5 0 30px, #e8e3d9 30px 55px, #b9b0a2 55px 57px);
+      linear-gradient(
+        118deg,
+        transparent 0 31%,
+        rgba(93, 85, 76, 0.24) 31.5%,
+        transparent 32.5% 58%,
+        rgba(117, 106, 94, 0.18) 58.5%,
+        transparent 60%
+      ),
+      linear-gradient(
+        24deg,
+        transparent 0 47%,
+        rgba(255, 255, 255, 0.72) 48%,
+        transparent 50%
+      ),
+      repeating-linear-gradient(
+        115deg,
+        #d4cfc5 0 30px,
+        #e8e3d9 30px 55px,
+        #b9b0a2 55px 57px
+      );
   }
   .material-pattern-3 {
     background:
-      linear-gradient(120deg, rgba(197,161,90,0.14), transparent 42%),
-      repeating-linear-gradient(92deg, #73573d 0 22px, #8b6a4b 22px 32px, #4b392b 32px 34px);
+      linear-gradient(120deg, rgba(197, 161, 90, 0.14), transparent 42%),
+      repeating-linear-gradient(
+        92deg,
+        #73573d 0 22px,
+        #8b6a4b 22px 32px,
+        #4b392b 32px 34px
+      );
   }
 }
 
@@ -198,7 +260,7 @@ body {
 
   /* 骨架屏 shimmer */
   .skeleton {
-    background: linear-gradient(90deg, #EDEBE6 25%, #F4F2ED 50%, #EDEBE6 75%);
+    background: linear-gradient(90deg, #edebe6 25%, #f4f2ed 50%, #edebe6 75%);
     background-size: 200% 100%;
     animation: shimmer 1.5s infinite;
   }
@@ -210,7 +272,7 @@ body {
 
   /* 文字渐变：工业蓝 */
   .text-industrial-gradient {
-    background: linear-gradient(135deg, #4A7BA8 0%, #1E3A5F 100%);
+    background: linear-gradient(135deg, #4a7ba8 0%, #1e3a5f 100%);
     -webkit-background-clip: text;
     background-clip: text;
     -webkit-text-fill-color: transparent;
@@ -219,32 +281,58 @@ body {
   /* 纸张纹理（用于背景增加质感） */
   .texture-paper {
     background-image:
-      radial-gradient(circle at 20% 30%, rgba(176, 133, 66, 0.03), transparent 40%),
-      radial-gradient(circle at 80% 70%, rgba(30, 58, 95, 0.03), transparent 40%);
+      radial-gradient(
+        circle at 20% 30%,
+        rgba(176, 133, 66, 0.03),
+        transparent 40%
+      ),
+      radial-gradient(
+        circle at 80% 70%,
+        rgba(30, 58, 95, 0.03),
+        transparent 40%
+      );
   }
 }
 
 @keyframes fadeIn {
-  0% { opacity: 0; }
-  100% { opacity: 1; }
+  0% {
+    opacity: 0;
+  }
+  100% {
+    opacity: 1;
+  }
 }
 
 @keyframes slideUp {
-  0% { opacity: 0; transform: translateY(10px); }
-  100% { opacity: 1; transform: translateY(0); }
+  0% {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 @keyframes shimmer {
-  0% { background-position: -200% 0; }
-  100% { background-position: 200% 0; }
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
 }
 
 /* ============ 向后兼容旧工具类（前台重构过渡期，勿删） ============ */
 .bg-hero-gradient,
 .bg-hero-pro {
   background:
-    radial-gradient(ellipse 70% 70% at 80% 20%, rgba(197, 161, 90, 0.14), transparent 60%),
-    linear-gradient(135deg, #0D0F10 0%, #141719 55%, #1D2023 100%);
+    radial-gradient(
+      ellipse 70% 70% at 80% 20%,
+      rgba(197, 161, 90, 0.14),
+      transparent 60%
+    ),
+    linear-gradient(135deg, #0d0f10 0%, #141719 55%, #1d2023 100%);
 }
 .bg-grid,
 .bg-grid-sm {
@@ -275,39 +363,62 @@ body {
   -webkit-backdrop-filter: blur(12px);
 }
 .text-gradient-gold {
-  background: linear-gradient(135deg, #D9BD82 0%, #C5A15A 55%, #9A7838 100%);
+  background: linear-gradient(135deg, #d9bd82 0%, #c5a15a 55%, #9a7838 100%);
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
 }
 .text-gradient-steel {
-  background: linear-gradient(135deg, #4A7BA8 0%, #1E3A5F 100%);
+  background: linear-gradient(135deg, #4a7ba8 0%, #1e3a5f 100%);
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
 }
 .card-lift {
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  transition:
+    transform 0.2s ease,
+    box-shadow 0.2s ease;
 }
 .card-lift:active {
   transform: translateY(-1px);
 }
 @keyframes pulseGold {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(197, 161, 90, 0.25); }
-  50% { box-shadow: 0 0 0 6px rgba(197, 161, 90, 0); }
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(197, 161, 90, 0.25);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(197, 161, 90, 0);
+  }
 }
 .pulse-gold {
   animation: pulseGold 2s infinite;
 }
 
+@keyframes heroAmbient {
+  from {
+    opacity: 0.72;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  to {
+    opacity: 0.92;
+    transform: translate3d(-1.25%, 0.75%, 0) scale(1.025);
+  }
+}
+
+.hero-ambient {
+  animation: heroAmbient 14s ease-in-out infinite alternate;
+}
+
 ::selection {
   background: rgba(197, 161, 90, 0.35);
-  color: #0D0F10;
+  color: #0d0f10;
 }
 
 :focus-visible {
   outline: 2px solid var(--kzq-gold-light);
   outline-offset: 3px;
+  box-shadow: 0 0 0 1px rgba(13, 15, 16, 0.58);
 }
 
 @media (prefers-reduced-motion: reduce) {

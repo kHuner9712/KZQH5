@@ -1,37 +1,108 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Home, LayoutGrid, Menu, MessageCircle, type LucideIcon } from "lucide-react";
+import {
+  Boxes,
+  Folder,
+  Grid2X2,
+  Home,
+  Phone,
+  type LucideIcon,
+} from "lucide-react";
 import { localePath, pathWithoutLocale, type Locale } from "@/lib/i18n/config";
 import { getDictionary } from "@/lib/i18n/dictionary";
 import { cn } from "@/lib/utils";
 import { InquiryCountBadge } from "./inquiry-list/InquiryCountBadge";
 
+interface BottomTab {
+  href: string;
+  label: string;
+  icon: LucideIcon;
+  key: "home" | "categories" | "products" | "projects" | "contact";
+}
+
 export function BottomNav({ locale }: { locale: Locale }) {
   const pathname = pathWithoutLocale(usePathname());
+  const [hash, setHash] = useState("");
   const copy = getDictionary(locale);
-  const tabs: Array<{ href: string; label: string; icon: LucideIcon }> = [
-    { href: "/", label: copy.nav.home, icon: Home },
-    { href: "/products", label: copy.nav.products, icon: LayoutGrid },
-    { href: "/contact", label: copy.nav.inquiry, icon: MessageCircle },
-    { href: "/more", label: copy.nav.more, icon: Menu },
+  const tabs: BottomTab[] = [
+    { href: localePath(locale), label: copy.nav.home, icon: Home, key: "home" },
+    {
+      href: `${localePath(locale)}#categories`,
+      label: locale === "zh" ? "分类" : "Categories",
+      icon: Grid2X2,
+      key: "categories",
+    },
+    {
+      href: localePath(locale, "/products"),
+      label: copy.nav.products,
+      icon: Boxes,
+      key: "products",
+    },
+    {
+      href: localePath(locale, "/projects"),
+      label: locale === "zh" ? "案例" : "Projects",
+      icon: Folder,
+      key: "projects",
+    },
+    {
+      href: localePath(locale, "/contact"),
+      label: copy.nav.inquiry,
+      icon: Phone,
+      key: "contact",
+    },
   ];
-  const isActive = (href: string) =>
-    href === "/" ? pathname === "/" : pathname === href || pathname.startsWith(`${href}/`);
+
+  useEffect(() => {
+    const syncHash = () => setHash(window.location.hash);
+    syncHash();
+    window.addEventListener("hashchange", syncHash);
+    return () => window.removeEventListener("hashchange", syncHash);
+  }, [pathname]);
+
+  const isActive = (tab: BottomTab) => {
+    if (tab.key === "home") return pathname === "/" && hash !== "#categories";
+    if (tab.key === "categories")
+      return pathname === "/" && hash === "#categories";
+    const path = tab.href.replace(/^\/en/, "").split("#")[0] || "/";
+    return pathname === path || pathname.startsWith(`${path}/`);
+  };
 
   return (
-    <nav className="safe-bottom fixed bottom-0 left-0 z-50 w-full border-t border-white/10 bg-graphite/95 backdrop-blur-lg md:hidden" aria-label={copy.header.mobileNavigation}>
-      <div className="flex min-h-[62px] items-stretch justify-around px-2">
+    <nav
+      className="safe-bottom fixed inset-x-0 bottom-0 z-50 h-[calc(56px+env(safe-area-inset-bottom))] border-t border-white/[0.08] bg-page/[0.95] backdrop-blur-xl md:hidden"
+      aria-label={copy.header.mobileNavigation}
+    >
+      <div className="flex h-14 items-stretch">
         {tabs.map((tab) => {
-          const active = isActive(tab.href);
+          const active = isActive(tab);
           const Icon = tab.icon;
           return (
-            <Link key={tab.href} href={localePath(locale, tab.href)} className={cn("relative flex min-h-[62px] flex-1 flex-col items-center justify-center gap-1 py-2 transition", active ? "text-gold-light" : "text-white/50")} aria-current={active ? "page" : undefined}>
-              {active && <span className="absolute top-0 h-px w-8 bg-gold" />}
+            <Link
+              key={tab.key}
+              href={tab.href}
+              className={cn(
+                "relative flex min-h-11 min-w-0 flex-1 flex-col items-center justify-center gap-0.5 px-1 transition-colors duration-200",
+                active ? "text-gold" : "text-white/50",
+              )}
+              aria-current={active ? "page" : undefined}
+            >
+              <span
+                className={cn(
+                  "absolute inset-x-0 top-0 mx-auto h-0.5 w-6 rounded-b bg-gold transition-opacity",
+                  active ? "opacity-100" : "opacity-0",
+                )}
+                aria-hidden="true"
+              />
               <Icon className="h-5 w-5" strokeWidth={active ? 2.2 : 1.8} />
-              {tab.href === "/contact" && <InquiryCountBadge className="absolute right-[calc(50%-24px)] top-1.5" />}
-              <span className={cn("text-[10px]", active ? "font-semibold" : "font-medium")}>{tab.label}</span>
+              {tab.key === "contact" && (
+                <InquiryCountBadge className="absolute left-[calc(50%+8px)] top-1 bg-gold text-page" />
+              )}
+              <span className="max-w-full truncate text-[10px] font-medium leading-none">
+                {tab.label}
+              </span>
             </Link>
           );
         })}
