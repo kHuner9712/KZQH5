@@ -50,10 +50,16 @@ on conflict (id) do nothing;
 -- every URL is classified as external and no refs are created
 -- (fail-closed). The host must match the URLs used throughout the
 -- test suite.
-insert into public.site_settings (id, managed_storage_host)
-values ('00000000-0000-4000-8000-000000000399', 'example.supabase.co')
-on conflict (id) do update
-  set managed_storage_host = excluded.managed_storage_host;
+--
+-- NOTE: use UPDATE not INSERT. The seed file already created a
+-- site_settings row (id 66666666-...) with managed_storage_host=''
+-- (the column default). `get_managed_storage_host()` reads
+-- `limit 1` without ORDER BY, so inserting a second row with a
+-- different id would not reliably be picked up. Update the existing
+-- seed row(s) in place instead.
+update public.site_settings
+  set managed_storage_host = 'example.supabase.co'
+  where managed_storage_host is null or btrim(managed_storage_host) = '';
 
 -- ============================================================
 -- A. Product Asset Draft creates an active 'source' ref.
