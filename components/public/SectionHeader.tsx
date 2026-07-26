@@ -3,42 +3,46 @@ import { cn } from "@/lib/utils";
 interface SectionHeaderProps {
   title: string;
   subtitle?: string;
+  eyebrow?: string;
   action?: React.ReactNode;
   className?: string;
   light?: boolean;
-  /** 大屏模式：desktop 标题更大 */
   size?: "default" | "large";
 }
 
-/**
- * 分区标题
- * - 左侧竖条 + 标题
- * - mobile 紧凑，desktop 标题更大
- */
 export function SectionHeader({
   title,
   subtitle,
+  eyebrow = "KZQ Collection",
   action,
   className,
   light = false,
   size = "default",
 }: SectionHeaderProps) {
   return (
-    <div className={cn("flex items-end justify-between gap-4", className)}>
+    <div
+      className={cn(
+        "flex items-start justify-between gap-4 md:items-end",
+        className,
+      )}
+    >
       <div className="min-w-0">
-        <div className="mb-1.5 flex items-center gap-2">
-          <span className="h-px w-7 bg-gold" />
-          <span className={cn("text-[9px] font-medium uppercase tracking-[0.2em]", light ? "text-gold-light" : "text-gold-dark")}>
-            KZQ Collection
+        <div className="flex items-center gap-2.5 md:gap-3">
+          <span className="h-px w-6 shrink-0 bg-gold md:w-8" />
+          <span
+            className={cn(
+              "text-[10px] font-medium uppercase tracking-[0.2em] md:text-xs md:tracking-[0.24em]",
+              light ? "text-gold-light" : "text-gold-dark",
+            )}
+          >
+            {eyebrow}
           </span>
         </div>
         <h2
           className={cn(
-            "font-semibold leading-tight tracking-tight",
-            size === "large"
-              ? "text-lg md:text-2xl"
-              : "text-base md:text-xl",
-            light ? "text-white" : "text-ink"
+            "mt-1.5 font-semibold leading-tight tracking-[-0.015em] md:mt-3",
+            size === "large" ? "text-xl md:text-[28px]" : "text-lg md:text-2xl",
+            light ? "text-white" : "text-ink",
           )}
         >
           {title}
@@ -46,15 +50,15 @@ export function SectionHeader({
         {subtitle && (
           <p
             className={cn(
-              "mt-1.5 max-w-2xl text-xs leading-relaxed md:text-sm",
-              light ? "text-white/60" : "text-ink-mute"
+              "mt-1 max-w-2xl text-xs leading-5 md:mt-1.5 md:text-sm",
+              light ? "text-white/55" : "text-ink-mute",
             )}
           >
             {subtitle}
           </p>
         )}
       </div>
-      {action && <div className="shrink-0">{action}</div>}
+      {action && <div className="shrink-0 pt-1 text-right">{action}</div>}
     </div>
   );
 }

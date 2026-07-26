@@ -9,7 +9,6 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        // KZQ public-site design tokens: premium graphite + restrained warm gold.
         page: "#0D0F10",
         surface: {
           DEFAULT: "#141719",
@@ -22,11 +21,10 @@ const config: Config = {
         },
         ink: {
           DEFAULT: "#25282B",
-          soft: "#5B5F62",
+          soft: "#4A4D50",
           mute: "#8D9093",
           line: "rgba(20,23,25,0.10)",
         },
-        // Legacy semantic palette retained for existing public/admin screens.
         industrial: {
           DEFAULT: "#25282B",
           50: "#EEE9DE",
@@ -39,9 +37,8 @@ const config: Config = {
         brass: {
           DEFAULT: "#C5A15A",
           light: "#D9BD82",
-          dark: "#8C6B30",
+          dark: "#A8853F",
         },
-        // —— 向后兼容旧配色（后台仍在使用，勿删） ——
         graphite: {
           DEFAULT: "#141719",
           50: "#1D2023",
@@ -57,7 +54,7 @@ const config: Config = {
         gold: {
           DEFAULT: "#C5A15A",
           light: "#D9BD82",
-          dark: "#8C6B30",
+          dark: "#A8853F",
         },
       },
       fontFamily: {
@@ -70,13 +67,19 @@ const config: Config = {
           "Microsoft YaHei",
           "sans-serif",
         ],
-        display: ["Manrope", "PingFang SC", "HarmonyOS Sans SC", "sans-serif"],
+        display: [
+          "Songti SC",
+          "STSong",
+          "Noto Serif CJK SC",
+          "Georgia",
+          "Times New Roman",
+          "serif",
+        ],
       },
       maxWidth: {
         h5: "440px",
-        // 响应式内容容器宽度
-        content: "1360px", // desktop B2B catalog content width
-        "content-narrow": "1024px", // 窄内容（如关于页正文）
+        content: "1320px",
+        "content-narrow": "1024px",
       },
       screens: {
         xs: "375px",
@@ -88,12 +91,12 @@ const config: Config = {
         ring: "0 0 0 1px rgba(20,23,25,0.08)",
       },
       borderRadius: {
-        '4xl': '2rem',
+        "4xl": "2rem",
       },
       animation: {
         "fade-in": "fadeIn 0.35s ease-out",
         "slide-up": "slideUp 0.4s ease-out",
-        "shimmer": "shimmer 1.5s infinite",
+        shimmer: "shimmer 1.5s infinite",
       },
       keyframes: {
         fadeIn: {

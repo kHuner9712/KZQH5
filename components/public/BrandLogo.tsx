@@ -9,30 +9,34 @@ interface BrandLogoProps {
   alt?: string;
   size?: number;
   className?: string;
+  variant?: "mark" | "wordmark";
 }
 
-/**
- * 品牌徽标
- * - 有 logo_url 时显示图片，加载失败 fallback 到 KZQ 字母标识
- * - 无 logo_url 直接显示字母标识
- * - 使用 useState 管理 fallback 状态，不操作 DOM
- */
 export function BrandLogo({
   logoUrl,
   alt = "KZQ",
   size = 40,
   className,
+  variant = "mark",
 }: BrandLogoProps) {
   const [failed, setFailed] = useState(false);
-  const showImage = logoUrl && !failed;
+  const showImage = Boolean(logoUrl) && !failed;
+  const wordmark = variant === "wordmark";
 
   return (
-    <div
+    <span
       className={cn(
-        "brand-monogram relative shrink-0 overflow-hidden rounded-xl bg-industrial text-white",
-        className
+        "brand-monogram relative shrink-0 overflow-hidden",
+        wordmark
+          ? "h-7 rounded-none bg-transparent text-gold"
+          : "rounded-xl bg-industrial text-white",
+        className,
       )}
-      style={{ width: size, height: size, fontSize: size * 0.38 }}
+      style={{
+        width: wordmark ? size : size,
+        height: wordmark ? 28 : size,
+        fontSize: wordmark ? 18 : size * 0.38,
+      }}
     >
       {showImage ? (
         <Image
@@ -40,12 +44,12 @@ export function BrandLogo({
           alt={alt}
           fill
           sizes={`${size}px`}
-          className="object-cover"
+          className={wordmark ? "object-contain object-left" : "object-cover"}
           onError={() => setFailed(true)}
         />
       ) : (
-        <span className="select-none">KZQ</span>
+        <span className="select-none font-semibold tracking-[0.06em]">KZQ</span>
       )}
-    </div>
+    </span>
   );
 }

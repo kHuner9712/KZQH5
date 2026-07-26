@@ -11,34 +11,46 @@ import { PageViewTracker } from "./AnalyticsTracker";
 import { OfflineNotice } from "./OfflineNotice";
 import { WechatShareBridge } from "./WechatShareBridge";
 
+interface ResponsiveShellProps {
+  children: React.ReactNode;
+  company?: CompanyProfile | null;
+  siteSettings?: SiteSettings | null;
+  locale: Locale;
+  wechatEnabled?: boolean;
+}
+
 export function ResponsiveShell({
   children,
   company,
   siteSettings,
   locale,
   wechatEnabled = false,
-}: {
-  children: React.ReactNode;
-  company?: CompanyProfile | null;
-  siteSettings?: SiteSettings | null;
-  locale: Locale;
-  wechatEnabled?: boolean;
-}) {
+}: ResponsiveShellProps) {
   return (
-    <InquiryListProvider><div className="flex min-h-screen flex-col overflow-x-clip bg-canvas">
-      <Suspense fallback={null}>
-        <InquiryAttributionCapture />
-        <PageViewTracker locale={locale} />
-        {wechatEnabled && <WechatShareBridge />}
-      </Suspense>
-      <OfflineNotice locale={locale} />
-      <DesktopHeader company={company} siteSettings={siteSettings} locale={locale} />
-      <MobileHeader company={company} siteSettings={siteSettings} locale={locale} />
-      <main className="flex-1 pb-[calc(5.25rem+env(safe-area-inset-bottom))] md:pb-0">
-        {children}
-      </main>
-      <Footer company={company} siteSettings={siteSettings} locale={locale} />
-      <MobileNavController locale={locale} />
-    </div></InquiryListProvider>
+    <InquiryListProvider>
+      <div className="flex min-h-screen flex-col overflow-x-clip bg-canvas">
+        <Suspense fallback={null}>
+          <InquiryAttributionCapture />
+          <PageViewTracker locale={locale} />
+          {wechatEnabled && <WechatShareBridge />}
+        </Suspense>
+        <OfflineNotice locale={locale} />
+        <DesktopHeader
+          company={company}
+          siteSettings={siteSettings}
+          locale={locale}
+        />
+        <MobileHeader
+          company={company}
+          siteSettings={siteSettings}
+          locale={locale}
+        />
+        <main className="flex-1 pb-[calc(56px+env(safe-area-inset-bottom))] pt-12 md:pb-0 md:pt-16">
+          {children}
+        </main>
+        <Footer company={company} siteSettings={siteSettings} locale={locale} />
+        <MobileNavController locale={locale} />
+      </div>
+    </InquiryListProvider>
   );
 }
