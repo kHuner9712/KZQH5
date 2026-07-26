@@ -22,7 +22,19 @@ const SCRIPT = join(ROOT, "scripts", "check-migration-immutability.mjs");
 interface RunResult { status: number; stdout: string; stderr: string; }
 
 function runScript(scriptPath: string, args: string[] = []): RunResult {
-  const result = spawnSync(process.execPath, [scriptPath, ...args], { encoding: "utf8" });
+  // Build a clean env: start from process.env (for PATH etc.) but
+  // explicitly unset CI-specific vars so they don't leak from the
+  // shell. These self-consistency tests exercise the default mode,
+  // not the CI trust-anchor mode (covered by
+  // migration-immutability-trust-anchor.test.ts).
+  const cleanEnv: NodeJS.ProcessEnv = { ...process.env };
+  delete cleanEnv.CI;
+  delete cleanEnv.MIGRATION_FREEZE_REF;
+  delete cleanEnv.CI_DISALLOW_INITIALIZE;
+  const result = spawnSync(process.execPath, [scriptPath, ...args], {
+    encoding: "utf8",
+    env: cleanEnv,
+  });
   return { status: result.status ?? -1, stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
 }
 
