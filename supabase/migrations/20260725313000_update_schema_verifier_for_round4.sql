@@ -479,3 +479,5 @@ begin
       v_count, coalesce(v_missing, '<null>')
       using errcode = 'P0001';
   end if;
+end;
+$$;
