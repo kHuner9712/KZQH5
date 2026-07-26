@@ -31,7 +31,7 @@ jobs:
       # clone (default depth=1) does not contain that commit, causing
       # "fatal: bad object" failures. We fetch full history here so
       # the immutability trust baseline is verifiable in CI.
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
           fetch-depth: 0
@@ -101,7 +101,7 @@ jobs:
       # (LEGACY_BASELINE_COMMIT, default d5c5822) via `git show <sha>:<path>`
       # to simulate an incremental upgrade. A shallow clone (default depth=1)
       # does not contain that commit, causing "Unable to read ... from <sha>".
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
           fetch-depth: 0
@@ -145,7 +145,7 @@ jobs:
     timeout-minutes: 30
     steps:
       # actions/checkout@v4.2.2
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
       # actions/setup-node@v4.4.0
