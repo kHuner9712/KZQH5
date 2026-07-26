@@ -104,8 +104,6 @@ declare
   -- Snapshots of OLD state (before mutation)
   v_old_cover_image_url text;
   v_old_video_url text;
-  type t_existing_image is table of record (id uuid, image_url text);
-  v_existing_images t_existing_image;
   v_existing_ids uuid[] := array[]::uuid[];
   v_input_ids uuid[] := array[]::uuid[];
   v_removed_ids uuid[] := array[]::uuid[];
@@ -113,8 +111,6 @@ declare
   v_kept_image_id uuid;
   v_kept_image_url text;
   v_i integer;
-  -- For mark_storage_object_refs_pending_delete + cleanup enqueue
-  v_removed_image record;
 begin
   if p_product is null
      or btrim(p_product->>'name_cn') is null
@@ -232,9 +228,9 @@ begin
       from public.products
       where id = p_id;
 
-    -- Snapshot existing image rows (id + url) for reconciliation
-    select array_agg(row(id, image_url)::record)
-      into v_existing_images
+    -- Snapshot existing image ids for reconciliation
+    select coalesce(array_agg(id), array[]::uuid[])
+      into v_existing_ids
       from public.product_images
       where product_id = p_id;
 
@@ -297,14 +293,6 @@ begin
         if v_input_id is not null and btrim(v_input_id) <> '' then
           v_input_ids := array_append(v_input_ids, v_input_id::uuid);
         end if;
-      end loop;
-    end if;
-
-    -- Build the list of existing image ids
-    if v_existing_images is not null then
-      for i in 1 .. array_length(v_existing_images, 1) loop
-        v_existing_image_id := (v_existing_images[i]).id;
-        v_existing_ids := array_append(v_existing_ids, v_existing_image_id);
       end loop;
     end if;
 
@@ -492,8 +480,6 @@ declare
   v_input_id text;
   v_input_image_id uuid;
   v_existing_image_id uuid;
-  type t_existing_image is table of record (id uuid, image_url text);
-  v_existing_images t_existing_image;
   v_existing_ids uuid[] := array[]::uuid[];
   v_input_ids uuid[] := array[]::uuid[];
   v_removed_ids uuid[] := array[]::uuid[];
@@ -519,8 +505,8 @@ begin
       from public.projects
       where id = p_id;
 
-    select array_agg(row(id, image_url)::record)
-      into v_existing_images
+    select coalesce(array_agg(id), array[]::uuid[])
+      into v_existing_ids
       from public.project_images
       where project_id = p_id;
   end if;
@@ -638,14 +624,6 @@ begin
         if v_input_id is not null and btrim(v_input_id) <> '' then
           v_input_ids := array_append(v_input_ids, v_input_id::uuid);
         end if;
-      end loop;
-    end if;
-
-    -- Build existing ids list
-    if v_existing_images is not null then
-      for i in 1 .. array_length(v_existing_images, 1) loop
-        v_existing_image_id := (v_existing_images[i]).id;
-        v_existing_ids := array_append(v_existing_ids, v_existing_image_id);
       end loop;
     end if;
 
