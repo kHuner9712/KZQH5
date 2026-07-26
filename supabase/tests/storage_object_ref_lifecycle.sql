@@ -2613,12 +2613,20 @@ end $$;
 -- ============================================================
 -- Round-4: Cleanup state transitions (S series)
 -- ============================================================
+-- S.1  Cleanup success -> ref transitions to 'deleted'.
+-- complete_storage_cleanup requires (p_cleanup_id, p_lock_token,
+-- p_success, ...). The lock_token is obtained by claiming the row
+-- first via claim_storage_cleanup. Without a valid lock_token the
+-- complete RPC returns NOT_FOUND_OR_TOKEN_MISMATCH.
 do $$
 declare
   v_product_id uuid;
   v_updated_at timestamptz;
   v_cleanup_id uuid;
   v_ref_count_deleted integer;
+  v_claim_result jsonb;
+  v_lock_token uuid;
+  v_complete_result text;
 begin
   perform public.save_product_with_images_and_audit(
     p_id := null,
@@ -2663,12 +2671,37 @@ begin
       using errcode = 'P0001';
   end if;
 
-  perform public.complete_storage_cleanup(
-    p_id := v_cleanup_id,
-    p_final_status := 'deleted',
-    p_operator := 'test',
-    p_message := 'S.1 success'
+  -- Claim the row to obtain a real lock_token. complete_storage_cleanup
+  -- rejects calls where (id, status='claimed', lock_token) does not
+  -- match a row locked by the caller.
+  v_claim_result := public.claim_storage_cleanup(p_limit := 50, p_stale_timeout_seconds := 300);
+  select (value->>'lock_token')::uuid into v_lock_token
+    from jsonb_array_elements(v_claim_result)
+    where value->>'id' = v_cleanup_id::text
+    limit 1;
+
+  if v_lock_token is null then
+    -- Fallback: read the lock_token directly. This handles the case
+    -- where the row was already claimed by an earlier claim call in
+    -- the same transaction.
+    select lock_token into v_lock_token
+      from public.storage_cleanup_queue
+      where id = v_cleanup_id;
+  end if;
+
+  v_complete_result := public.complete_storage_cleanup(
+    p_cleanup_id := v_cleanup_id,
+    p_lock_token := v_lock_token,
+    p_success := true,
+    p_final_status := 'deleted'
   );
+
+  if v_complete_result <> 'completed' then
+    raise exception
+      'S.1: complete_storage_cleanup should return completed, got %',
+      v_complete_result
+      using errcode = 'P0001';
+  end if;
 
   select count(*) into v_ref_count_deleted
     from public.storage_object_refs
@@ -2688,6 +2721,9 @@ declare
   v_updated_at timestamptz;
   v_cleanup_id uuid;
   v_ref_count_pending integer;
+  v_claim_result jsonb;
+  v_lock_token uuid;
+  v_complete_result text;
 begin
   perform public.save_product_with_images_and_audit(
     p_id := null,
@@ -2732,12 +2768,36 @@ begin
       using errcode = 'P0001';
   end if;
 
-  perform public.complete_storage_cleanup(
-    p_id := v_cleanup_id,
-    p_final_status := 'error',
-    p_operator := 'test',
-    p_message := 'S.2 simulated failure'
+  -- Claim to obtain a real lock_token before calling complete.
+  v_claim_result := public.claim_storage_cleanup(p_limit := 50, p_stale_timeout_seconds := 300);
+  select (value->>'lock_token')::uuid into v_lock_token
+    from jsonb_array_elements(v_claim_result)
+    where value->>'id' = v_cleanup_id::text
+    limit 1;
+
+  if v_lock_token is null then
+    select lock_token into v_lock_token
+      from public.storage_cleanup_queue
+      where id = v_cleanup_id;
+  end if;
+
+  -- On failure (p_success=false), the row transitions to 'retry' or
+  -- 'dead_letter' (depending on attempts vs max_attempts). The ref
+  -- must remain pending_delete, NOT transition to 'deleted'.
+  v_complete_result := public.complete_storage_cleanup(
+    p_cleanup_id := v_cleanup_id,
+    p_lock_token := v_lock_token,
+    p_success := false,
+    p_error_code := 'STORAGE_DELETE_FAILED',
+    p_final_status := 'storage_delete_failed'
   );
+
+  if v_complete_result <> 'retry' and v_complete_result <> 'dead_letter' then
+    raise exception
+      'S.2: complete_storage_cleanup should return retry or dead_letter, got %',
+      v_complete_result
+      using errcode = 'P0001';
+  end if;
 
   select count(*) into v_ref_count_pending
     from public.storage_object_refs
