@@ -78,7 +78,7 @@ const config: Config = {
       },
       maxWidth: {
         h5: "440px",
-        content: "1320px",
+        content: "1440px",
         "content-narrow": "1024px",
       },
       screens: {

@@ -35,14 +35,14 @@ export function ProductCard({
 
   if (editorial) {
     return (
-      <article className="group min-w-0 overflow-hidden rounded-md border border-black/[0.06] bg-white transition-colors duration-200 hover:border-gold/30 md:rounded-lg">
+      <article className="group flex min-w-0 overflow-hidden rounded-md border border-black/[0.06] bg-white transition-colors duration-200 hover:border-gold/30 md:rounded-lg">
         <Link
           href={localePath(locale, `/products/${product.slug}`)}
           prefetch={false}
-          className="block h-full"
+          className="flex h-full w-full flex-col"
           aria-label={`${content.name} — ${copy.common.viewAll}`}
         >
-          <div className="aspect-square w-full overflow-hidden bg-canvas">
+          <div className="aspect-square w-full shrink-0 overflow-hidden bg-canvas">
             <ProductImage
               src={imageSource}
               alt={content.name}
@@ -51,7 +51,7 @@ export function ProductCard({
               className="transition-transform duration-300 group-hover:scale-[1.025]"
             />
           </div>
-          <div className="p-2.5 md:p-4">
+          <div className="flex min-h-[108px] flex-1 flex-col p-2.5 md:min-h-[124px] md:p-4">
             <p className="text-[9px] font-medium uppercase tracking-[0.08em] text-ink-mute md:text-[10px]">
               {content.secondaryName || "KZQ Material"}
             </p>
@@ -63,7 +63,7 @@ export function ProductCard({
                 {product.size}
               </p>
             )}
-            <div className="mt-2 flex min-h-6 items-center justify-between gap-2 md:mt-3">
+            <div className="mt-auto flex min-h-6 items-center justify-between gap-2 pt-2 md:pt-3">
               {editorialTag ? (
                 <span className="inline-flex rounded-[3px] border border-gold/30 px-1.5 py-0.5 text-[9px] font-semibold text-gold-dark md:px-2 md:text-[11px]">
                   {editorialTag}

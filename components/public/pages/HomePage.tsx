@@ -225,15 +225,15 @@ export async function HomePageContent(locale: Locale) {
             alt={home.heroTitle || copy.heroTitle}
             loading="eager"
             sizes="100vw"
-            className="[&_img]:object-[62%_center] md:[&_img]:object-center"
+            className="[&_img]:object-[57%_center] md:[&_img]:object-center"
           />
         </div>
-        <div className="absolute inset-0 bg-[linear-gradient(0deg,rgba(13,15,16,0.95)_0%,rgba(13,15,16,0.60)_50%,rgba(13,15,16,0.30)_100%)] md:bg-[linear-gradient(90deg,rgba(13,15,16,0.96)_0%,rgba(13,15,16,0.83)_42%,rgba(13,15,16,0.34)_100%)]" />
-        <div className="container-responsive relative flex h-full items-end pb-7 md:items-center md:pb-0">
+        <div className="absolute inset-0 bg-[linear-gradient(0deg,rgba(13,15,16,0.96)_0%,rgba(13,15,16,0.58)_52%,rgba(13,15,16,0.24)_100%)] md:bg-[linear-gradient(90deg,rgba(13,15,16,0.93)_0%,rgba(13,15,16,0.78)_36%,rgba(13,15,16,0.28)_68%,rgba(13,15,16,0.08)_100%)]" />
+        <div className="container-responsive relative flex h-full items-end pb-8 md:items-center md:pb-0">
           <div className="w-full max-w-[620px] md:w-[55%]">
             <div className="flex items-center gap-2 text-gold md:gap-3">
               <span className="h-px w-8 bg-gold md:w-10" />
-              <p className="text-[10px] font-medium uppercase tracking-[0.2em] text-gold md:text-xs md:tracking-[0.24em] md:text-gold-light">
+              <p className="line-clamp-1 text-[10px] font-medium uppercase tracking-[0.2em] text-gold md:text-xs md:tracking-[0.24em] md:text-gold-light">
                 {home.heroEyebrow || "Engineering Boards · Decorative Panels"}
               </p>
             </div>
@@ -243,7 +243,7 @@ export async function HomePageContent(locale: Locale) {
                 {home.heroHighlight || copy.heroHighlight}
               </span>
             </h1>
-            <p className="mt-2 max-w-[280px] text-xs leading-[1.6] text-white/65 md:mt-6 md:max-w-[480px] md:text-[15px] md:leading-7">
+            <p className="mt-3 line-clamp-1 max-w-[320px] text-xs leading-[1.6] md:line-clamp-none text-white/65 md:mt-6 md:max-w-[480px] md:text-[15px] md:leading-7">
               {home.heroDescription || copy.heroDescription}
             </p>
             <div className="mt-4 flex gap-2.5 md:mt-9 md:gap-4">
@@ -270,7 +270,7 @@ export async function HomePageContent(locale: Locale) {
         className="border-b border-ink-line bg-canvas-warm px-2 py-3 md:px-12 md:py-10"
         aria-label={copy.trustTitle}
       >
-        <div className="mx-auto grid max-w-[1320px] grid-cols-4">
+        <div className="mx-auto grid max-w-content grid-cols-4">
           {trustItems.slice(0, 4).map((item, index) => {
             const Icon = featureIcons[item.icon] || ShieldCheck;
             return (
@@ -364,7 +364,7 @@ export async function HomePageContent(locale: Locale) {
       </section>
 
       <section className="bg-graphite py-10 text-white md:py-24">
-        <div className="container-responsive grid gap-8 lg:grid-cols-[45%_55%] lg:gap-16">
+        <div className="container-responsive grid gap-8 lg:grid-cols-2 lg:gap-16">
           <div>
             <SectionHeader
               eyebrow="Why KZQ"
@@ -508,8 +508,8 @@ export async function HomePageContent(locale: Locale) {
       </section>
 
       <section className="bg-canvas px-4 py-6 md:px-12 md:py-16">
-        <div className="mx-auto max-w-[1320px] rounded-lg bg-page px-5 py-6 text-white md:rounded-xl md:px-16 md:py-14">
-          <div className="flex flex-col items-start justify-between gap-4 md:flex-row md:items-center md:gap-8">
+        <div className="mx-auto max-w-content rounded-lg bg-page px-5 py-6 text-white md:rounded-xl md:px-16 md:py-14">
+          <div className="flex flex-col items-start justify-between gap-3 md:flex-row md:items-center md:gap-8">
             <div>
               <div className="flex items-center gap-2 text-gold md:gap-3">
                 <span className="h-px w-6 bg-gold md:w-8" />

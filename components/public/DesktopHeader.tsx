@@ -72,7 +72,7 @@ export function DesktopHeader({
                 key={item.href}
                 href={localePath(locale, item.href)}
                 className={cn(
-                  "relative px-2 py-5 text-[13px] font-medium transition-colors lg:px-3 xl:px-4 xl:text-sm",
+                  "relative px-2 py-5 text-sm font-medium transition-colors lg:px-3 xl:px-4",
                   active ? "text-gold" : "text-ink-mute hover:text-gold",
                 )}
                 aria-current={active ? "page" : undefined}

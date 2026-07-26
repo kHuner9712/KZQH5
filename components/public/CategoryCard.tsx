@@ -25,7 +25,7 @@ export function CategoryCard({
     <Link
       href={`${localePath(locale, "/products")}?category=${category.slug}`}
       className={cn(
-        "group flex min-w-0 flex-col overflow-hidden rounded-md border border-black/[0.06] bg-canvas-warm transition-colors duration-200 hover:border-gold/30 md:rounded-lg md:border-ink-line",
+        "group flex min-w-0 flex-col overflow-hidden rounded-md border border-black/[0.06] bg-canvas-warm transition-colors duration-200 hover:border-gold/30 md:rounded-lg md:border-black/[0.08]",
         className,
       )}
     >

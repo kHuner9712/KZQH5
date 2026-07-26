@@ -58,7 +58,9 @@ export function SectionHeader({
           </p>
         )}
       </div>
-      {action && <div className="shrink-0 pt-1 text-right">{action}</div>}
+      {action && (
+        <div className="shrink-0 pt-1 text-right md:pb-1">{action}</div>
+      )}
     </div>
   );
 }

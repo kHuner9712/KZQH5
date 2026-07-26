@@ -48,7 +48,7 @@ export function Footer({ company, siteSettings, locale }: FooterProps) {
   return (
     <footer className="border-t border-white/10 bg-page pb-[calc(56px+env(safe-area-inset-bottom))] text-white md:pb-0">
       <div className="px-4 py-8 md:px-12 md:py-16">
-        <div className="mx-auto grid max-w-[1320px] gap-8 md:grid-cols-[40%_20%_20%_20%] md:gap-0">
+        <div className="mx-auto grid max-w-content gap-8 md:grid-cols-[40%_20%_20%_20%] md:gap-0">
           <div className="md:pr-12">
             <div className="flex items-baseline gap-2">
               <span className="font-display text-lg font-semibold tracking-[0.06em] text-gold md:text-2xl">
@@ -121,7 +121,7 @@ export function Footer({ company, siteSettings, locale }: FooterProps) {
           </div>
         </div>
 
-        <div className="mx-auto mt-5 max-w-[1320px] border-t border-white/[0.08] pt-3 text-[10px] leading-5 text-white/35 md:mt-8 md:pt-8 md:text-xs">
+        <div className="mx-auto mt-5 max-w-content border-t border-white/[0.08] pt-3 text-[10px] leading-5 text-white/35 md:mt-8 md:pt-8 md:text-xs">
           {settings.footerText || copy.footer.fallback}
         </div>
       </div>
