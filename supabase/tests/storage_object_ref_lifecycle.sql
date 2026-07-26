@@ -44,6 +44,17 @@ insert into public.products (
 )
 on conflict (id) do nothing;
 
+-- Round-4: configure the trusted managed-storage host so the strict
+-- URL parser (extract_managed_storage_path_strict) recognizes
+-- https://example.supabase.co/... URLs as managed. Without this,
+-- every URL is classified as external and no refs are created
+-- (fail-closed). The host must match the URLs used throughout the
+-- test suite.
+insert into public.site_settings (id, managed_storage_host)
+values ('00000000-0000-4000-8000-000000000399', 'example.supabase.co')
+on conflict (id) do update
+  set managed_storage_host = excluded.managed_storage_host;
+
 -- ============================================================
 -- A. Product Asset Draft creates an active 'source' ref.
 -- ============================================================
@@ -1647,6 +1658,9 @@ end $$;
 
 -- ============================================================
 -- N.1  Product write registers product_cover / product_video / product_image refs.
+--      Round-4 update: per-object Registry. Each image now gets its
+--      own ref with owner_id = product_images.id (not product.id).
+--      We insert 3 images and expect 3 active refs.
 -- ============================================================
 do $$
 declare
@@ -1654,6 +1668,7 @@ declare
   v_cover_count integer;
   v_video_count integer;
   v_image_count integer;
+  v_image_count_by_owner integer;
 begin
   perform public.save_product_with_images_and_audit(
     p_id := null,
@@ -1666,7 +1681,9 @@ begin
       'is_published', false
     ),
     p_images := jsonb_build_array(
-      jsonb_build_object('image_url', 'https://example.supabase.co/storage/v1/object/public/public-assets/products/n1-img1.jpg', 'sort_order', 0)
+      jsonb_build_object('image_url', 'https://example.supabase.co/storage/v1/object/public/public-assets/products/n1-img1.jpg', 'sort_order', 0),
+      jsonb_build_object('image_url', 'https://example.supabase.co/storage/v1/object/public/public-assets/products/n1-img2.jpg', 'sort_order', 1),
+      jsonb_build_object('image_url', 'https://example.supabase.co/storage/v1/object/public/public-assets/products/n1-img3.jpg', 'sort_order', 2)
     ),
     p_expected_updated_at := null,
     p_actor_email := 'test@example.invalid',
@@ -1693,12 +1710,31 @@ begin
       using errcode = 'P0001';
   end if;
 
+  -- Per-object Registry: 3 images -> 3 active refs, each with
+  -- owner_id = product_images.id (NOT product.id).
   select count(*) into v_image_count
+    from public.storage_object_refs r
+    where r.owner_type = 'product_image'
+      and r.role = 'image'
+      and r.status = 'active'
+      and exists (
+        select 1 from public.product_images pi
+          where pi.id = r.owner_id
+            and pi.product_id = v_product_id
+      );
+  if v_image_count <> 3 then
+    raise exception 'N.1: expected 3 active per-image product_image refs (one per image), got %', v_image_count
+      using errcode = 'P0001';
+  end if;
+
+  -- Negative: there must be NO product_image ref with owner_id = product.id
+  -- (the old contract). Per-image refs use owner_id = product_images.id.
+  select count(*) into v_image_count_by_owner
     from public.storage_object_refs
     where owner_type = 'product_image' and owner_id = v_product_id
       and role = 'image' and status = 'active';
-  if v_image_count <> 1 then
-    raise exception 'N.1: expected 1 active product_image ref, got %', v_image_count
+  if v_image_count_by_owner <> 0 then
+    raise exception 'N.1: expected 0 active product_image refs with owner_id=product.id (old contract), got %', v_image_count_by_owner
       using errcode = 'P0001';
   end if;
 end $$;
@@ -1706,12 +1742,16 @@ end $$;
 -- ============================================================
 -- N.2  Project write registers project_cover / project_image refs
 --      AND does not raise on the dead video_url column.
+--      Round-4 update: per-object Registry. Each image now gets its
+--      own ref with owner_id = project_images.id (not project.id).
+--      We insert 3 images and expect 3 active refs.
 -- ============================================================
 do $$
 declare
   v_project_id uuid;
   v_cover_count integer;
   v_image_count integer;
+  v_image_count_by_owner integer;
 begin
   -- This call MUST NOT raise `column projects.video_url does not exist`.
   perform public.save_project_with_relations_and_audit(
@@ -1723,7 +1763,9 @@ begin
       'is_published', false
     ),
     p_images := jsonb_build_array(
-      jsonb_build_object('image_url', 'https://example.supabase.co/storage/v1/object/public/public-assets/projects/n2-img1.jpg', 'sort_order', 0)
+      jsonb_build_object('image_url', 'https://example.supabase.co/storage/v1/object/public/public-assets/projects/n2-img1.jpg', 'sort_order', 0),
+      jsonb_build_object('image_url', 'https://example.supabase.co/storage/v1/object/public/public-assets/projects/n2-img2.jpg', 'sort_order', 1),
+      jsonb_build_object('image_url', 'https://example.supabase.co/storage/v1/object/public/public-assets/projects/n2-img3.jpg', 'sort_order', 2)
     ),
     p_products := '[]'::jsonb,
     p_expected_updated_at := null,
@@ -1742,12 +1784,31 @@ begin
       using errcode = 'P0001';
   end if;
 
+  -- Per-object Registry: 3 images -> 3 active refs, each with
+  -- owner_id = project_images.id (NOT project.id).
   select count(*) into v_image_count
+    from public.storage_object_refs r
+    where r.owner_type = 'project_image'
+      and r.role = 'image'
+      and r.status = 'active'
+      and exists (
+        select 1 from public.project_images pi
+          where pi.id = r.owner_id
+            and pi.project_id = v_project_id
+      );
+  if v_image_count <> 3 then
+    raise exception 'N.2: expected 3 active per-image project_image refs (one per image), got %', v_image_count
+      using errcode = 'P0001';
+  end if;
+
+  -- Negative: there must be NO project_image ref with owner_id = project.id
+  -- (the old contract). Per-image refs use owner_id = project_images.id.
+  select count(*) into v_image_count_by_owner
     from public.storage_object_refs
     where owner_type = 'project_image' and owner_id = v_project_id
       and role = 'image' and status = 'active';
-  if v_image_count <> 1 then
-    raise exception 'N.2: expected 1 active project_image ref, got %', v_image_count
+  if v_image_count_by_owner <> 0 then
+    raise exception 'N.2: expected 0 active project_image refs with owner_id=project.id (old contract), got %', v_image_count_by_owner
       using errcode = 'P0001';
   end if;
 end $$;
@@ -1829,6 +1890,15 @@ end $$;
 -- ============================================================
 -- N.5  delete_project_with_audit marks project refs as pending_delete
 --      AND does not raise on the dead video_url column.
+--      Round-4 update: per-image Registry. The project from N.2 has
+--      3 images, each with its own ref (owner_id = project_images.id).
+--      After delete, we expect:
+--        - 1 pending_delete project_cover ref (owner_id = project.id)
+--        - 3 pending_delete project_image refs (owner_id = each image id)
+--      The previous version of this test asserted 1 pending_delete
+--      project_image ref with owner_id = project.id, which was the
+--      OLD contract. The fix in 20260725314000 makes delete mark
+--      each per-image ref by its image id.
 -- ============================================================
 do $$
 declare
@@ -1836,6 +1906,7 @@ declare
   v_updated_at timestamptz;
   v_pending_cover integer;
   v_pending_image integer;
+  v_pending_image_by_project integer;
 begin
   select id, updated_at into v_project_id, v_updated_at
     from public.projects where slug = 'registry-n2-project';
@@ -1857,12 +1928,40 @@ begin
       using errcode = 'P0001';
   end if;
 
+  -- Per-image Registry: 3 images -> 3 pending_delete refs, each with
+  -- owner_id = project_images.id. The project_images rows themselves
+  -- were CASCADE-deleted, but the storage_object_refs rows persist.
+  -- We verify by counting all pending_delete project_image refs that
+  -- existed for this project's images (the image ids are gone, so we
+  -- count all pending_delete project_image refs created in this
+  -- transaction's scope — but since the test runs in a single
+  -- transaction with ROLLBACK, we count ALL pending_delete
+  -- project_image refs with role='image' that match the URLs we
+  -- inserted in N.2).
   select count(*) into v_pending_image
+    from public.storage_object_refs
+    where owner_type = 'project_image'
+      and role = 'image'
+      and status = 'pending_delete'
+      and object_path in (
+        'projects/n2-img1.jpg',
+        'projects/n2-img2.jpg',
+        'projects/n2-img3.jpg'
+      );
+  if v_pending_image <> 3 then
+    raise exception 'N.5: expected 3 pending_delete per-image project_image refs, got %', v_pending_image
+      using errcode = 'P0001';
+  end if;
+
+  -- Negative: there must be NO pending_delete project_image ref with
+  -- owner_id = project.id (the old contract). Per-image refs use
+  -- owner_id = project_images.id.
+  select count(*) into v_pending_image_by_project
     from public.storage_object_refs
     where owner_type = 'project_image' and owner_id = v_project_id
       and role = 'image' and status = 'pending_delete';
-  if v_pending_image <> 1 then
-    raise exception 'N.5: expected 1 pending_delete project_image ref, got %', v_pending_image
+  if v_pending_image_by_project <> 0 then
+    raise exception 'N.5: expected 0 pending_delete project_image refs with owner_id=project.id (old contract), got %', v_pending_image_by_project
       using errcode = 'P0001';
   end if;
 end $$;
@@ -1943,6 +2042,649 @@ begin
     raise exception
       'N.7: check_storage_object_referenced returned false for a path '
       'held by project_images.image_url (cleanup dispatcher would delete it)'
+      using errcode = 'P0001';
+  end if;
+end $$;
+
+-- ============================================================
+-- Round-4: Strict URL Parser security tests (R series)
+-- ============================================================
+do $$
+declare
+  v_host text;
+  v_path text;
+begin
+  v_host := public.get_managed_storage_host();
+  if v_host <> 'example.supabase.co' then
+    raise exception 'R.0: expected managed_storage_host=example.supabase.co, got %', v_host
+      using errcode = 'P0001';
+  end if;
+
+  v_path := public.extract_managed_storage_path_strict(
+    'https://example.supabase.co/storage/v1/object/public/public-assets/products/r1.jpg',
+    v_host
+  );
+  if v_path is null or v_path <> 'products/r1.jpg' then
+    raise exception 'R.1: expected products/r1.jpg, got %', v_path
+      using errcode = 'P0001';
+  end if;
+
+  v_path := public.extract_managed_storage_path_strict(
+    'https://external.example/storage/v1/object/public/public-assets/products/r1.jpg',
+    v_host
+  );
+  if v_path is not null then
+    raise exception 'R.2: external host must return null, got %', v_path
+      using errcode = 'P0001';
+  end if;
+
+  v_path := public.extract_managed_storage_path_strict(
+    'https://evil-example.supabase.co/storage/v1/object/public/public-assets/products/r1.jpg',
+    v_host
+  );
+  if v_path is not null then
+    raise exception 'R.3: subdomain spoof must return null, got %', v_path
+      using errcode = 'P0001';
+  end if;
+
+  v_path := public.extract_managed_storage_path_strict(
+    'https://example.supabase.co@evil.example/storage/v1/object/public/public-assets/products/r1.jpg',
+    v_host
+  );
+  if v_path is not null then
+    raise exception 'R.4: userinfo spoof must return null, got %', v_path
+      using errcode = 'P0001';
+  end if;
+
+  v_path := public.extract_managed_storage_path_strict(
+    'http://example.supabase.co/storage/v1/object/public/public-assets/products/r1.jpg',
+    v_host
+  );
+  if v_path is not null then
+    raise exception 'R.5: non-HTTPS must return null, got %', v_path
+      using errcode = 'P0001';
+  end if;
+
+  v_path := public.extract_managed_storage_path_strict(
+    'https://example.supabase.co:8080/storage/v1/object/public/public-assets/products/r1.jpg',
+    v_host
+  );
+  if v_path is not null then
+    raise exception 'R.6: non-443 port must return null, got %', v_path
+      using errcode = 'P0001';
+  end if;
+
+  v_path := public.extract_managed_storage_path_strict(
+    'https://example.supabase.co:443/storage/v1/object/public/public-assets/products/r7.jpg',
+    v_host
+  );
+  if v_path is null or v_path <> 'products/r7.jpg' then
+    raise exception 'R.7: port 443 should be allowed, got %', v_path
+      using errcode = 'P0001';
+  end if;
+
+  v_path := public.extract_managed_storage_path_strict(
+    'https://example.supabase.co/storage/v1/object/public/public-assets/products/../../etc/passwd',
+    v_host
+  );
+  if v_path is not null then
+    raise exception 'R.8: path traversal must return null, got %', v_path
+      using errcode = 'P0001';
+  end if;
+
+  v_path := public.extract_managed_storage_path_strict(
+    'https://example.supabase.co/storage/v1/object/public/public-assets/products/r9.jpg#evil',
+    v_host
+  );
+  if v_path is not null then
+    raise exception 'R.9: fragment must return null, got %', v_path
+      using errcode = 'P0001';
+  end if;
+end $$;
+
+-- ============================================================
+-- Round-4: External host impersonation — no refs, no cleanup
+-- ============================================================
+do $$
+declare
+  v_ref_id uuid;
+  v_cleanup_id uuid;
+  v_ref_count integer;
+  v_cleanup_count integer;
+  v_owner_id uuid := '00000000-0000-4000-8000-0000000003a1';
+  v_impersonation_url text;
+begin
+  v_impersonation_url :=
+    'https://external.example/path/storage/v1/object/public/public-assets/company/logo.png';
+
+  v_ref_id := public.register_managed_storage_ref_from_url(
+    p_owner_type := 'company_logo',
+    p_owner_id := v_owner_id,
+    p_role := 'logo',
+    p_url := v_impersonation_url
+  );
+  if v_ref_id is not null then
+    raise exception 'IMPERSONATION: register must return null for external host, got %', v_ref_id
+      using errcode = 'P0001';
+  end if;
+
+  v_cleanup_id := public.enqueue_managed_storage_cleanup(
+    p_owner_type := 'company_logo',
+    p_owner_id := v_owner_id,
+    p_role := 'logo',
+    p_url := v_impersonation_url
+  );
+  if v_cleanup_id is not null then
+    raise exception 'IMPERSONATION: enqueue must return null for external host, got %', v_cleanup_id
+      using errcode = 'P0001';
+  end if;
+
+  select count(*) into v_ref_count
+    from public.storage_object_refs
+    where owner_id = v_owner_id
+      and object_path = 'company/logo.png';
+  if v_ref_count <> 0 then
+    raise exception 'IMPERSONATION: expected 0 ref rows, got %', v_ref_count
+      using errcode = 'P0001';
+  end if;
+
+  select count(*) into v_cleanup_count
+    from public.storage_cleanup_queue
+    where object_path = 'company/logo.png'
+      and source_id = v_owner_id;
+  if v_cleanup_count <> 0 then
+    raise exception 'IMPERSONATION: expected 0 cleanup rows, got %', v_cleanup_count
+      using errcode = 'P0001';
+  end if;
+end $$;
+
+-- ============================================================
+-- Round-4: Optimistic lock enforcement (O series)
+-- ============================================================
+do $$
+declare
+  v_product_id uuid;
+  v_updated_at timestamptz;
+  v_threw boolean := false;
+begin
+  perform public.save_product_with_images_and_audit(
+    p_id := null,
+    p_product := jsonb_build_object(
+      'category_id', '00000000-0000-4000-8000-000000000300',
+      'name_cn', '[O-LOCK] product',
+      'slug', 'o-lock-product',
+      'is_published', false
+    ),
+    p_images := '[]'::jsonb,
+    p_expected_updated_at := null,
+    p_actor_email := 'test@example.invalid',
+    p_actor_role := 'editor'
+  );
+
+  select id, updated_at into v_product_id, v_updated_at
+    from public.products where slug = 'o-lock-product';
+  if v_product_id is null then
+    raise exception 'O.0: product create failed'
+      using errcode = 'P0001';
+  end if;
+
+  begin
+    perform public.save_product_with_images_and_audit(
+      p_id := v_product_id,
+      p_product := jsonb_build_object(
+        'category_id', '00000000-0000-4000-8000-000000000300',
+        'name_cn', '[O-LOCK] product updated',
+        'slug', 'o-lock-product',
+        'is_published', false
+      ),
+      p_images := '[]'::jsonb,
+      p_expected_updated_at := null,
+      p_actor_email := 'test@example.invalid',
+      p_actor_role := 'editor'
+    );
+  exception when sqlstate '22004' then
+    v_threw := true;
+  end;
+  if v_threw is not true then
+    raise exception 'O.1: expected 22004 on NULL timestamp update, but no exception'
+      using errcode = 'P0001';
+  end if;
+
+  v_threw := false;
+  begin
+    perform public.save_product_with_images_and_audit(
+      p_id := v_product_id,
+      p_product := jsonb_build_object(
+        'category_id', '00000000-0000-4000-8000-000000000300',
+        'name_cn', '[O-LOCK] product stale',
+        'slug', 'o-lock-product',
+        'is_published', false
+      ),
+      p_images := '[]'::jsonb,
+      p_expected_updated_at := v_updated_at - interval '1 hour',
+      p_actor_email := 'test@example.invalid',
+      p_actor_role := 'editor'
+    );
+  exception when sqlstate '40P01' then
+    v_threw := true;
+  end;
+  if v_threw is not true then
+    raise exception 'O.2: expected 40P01 on stale timestamp update, but no exception'
+      using errcode = 'P0001';
+  end if;
+
+  select updated_at into v_updated_at
+    from public.products where id = v_product_id;
+  perform public.save_product_with_images_and_audit(
+    p_id := v_product_id,
+    p_product := jsonb_build_object(
+      'category_id', '00000000-0000-4000-8000-000000000300',
+      'name_cn', '[O-LOCK] product ok',
+      'slug', 'o-lock-product',
+      'is_published', false
+    ),
+    p_images := '[]'::jsonb,
+    p_expected_updated_at := v_updated_at,
+    p_actor_email := 'test@example.invalid',
+    p_actor_role := 'editor'
+  );
+end $$;
+
+-- ============================================================
+-- Round-4: Project update optimistic lock (O.5)
+-- ============================================================
+do $$
+declare
+  v_project_id uuid;
+  v_threw boolean := false;
+begin
+  perform public.save_project_with_relations_and_audit(
+    p_id := null,
+    p_project := jsonb_build_object(
+      'title_cn', '[O-LOCK] project',
+      'slug', 'o-lock-project',
+      'is_published', false
+    ),
+    p_images := '[]'::jsonb,
+    p_products := '[]'::jsonb,
+    p_expected_updated_at := null,
+    p_actor_email := 'test@example.invalid',
+    p_actor_role := 'editor'
+  );
+
+  select id into v_project_id from public.projects where slug = 'o-lock-project';
+  if v_project_id is null then
+    raise exception 'O.5: project create failed'
+      using errcode = 'P0001';
+  end if;
+
+  begin
+    perform public.save_project_with_relations_and_audit(
+      p_id := v_project_id,
+      p_project := jsonb_build_object(
+        'title_cn', '[O-LOCK] project updated',
+        'slug', 'o-lock-project',
+        'is_published', false
+      ),
+      p_images := '[]'::jsonb,
+      p_products := '[]'::jsonb,
+      p_expected_updated_at := null,
+      p_actor_email := 'test@example.invalid',
+      p_actor_role := 'editor'
+    );
+  exception when sqlstate '22004' then
+    v_threw := true;
+  end;
+  if v_threw is not true then
+    raise exception 'O.5: expected 22004 on NULL timestamp project update, but no exception'
+      using errcode = 'P0001';
+  end if;
+end $$;
+
+-- ============================================================
+-- Round-4: Per-object Product image Registry (P series)
+-- ============================================================
+do $$
+declare
+  v_product_id uuid;
+  v_updated_at timestamptz;
+  v_active_count integer;
+  v_pending_count integer;
+  v_cleanup_count integer;
+begin
+  perform public.save_product_with_images_and_audit(
+    p_id := null,
+    p_product := jsonb_build_object(
+      'category_id', '00000000-0000-4000-8000-000000000300',
+      'name_cn', '[P-REG] product',
+      'slug', 'p-reg-product',
+      'is_published', false
+    ),
+    p_images := jsonb_build_array(
+      jsonb_build_object('image_url', 'https://example.supabase.co/storage/v1/object/public/public-assets/products/p1.jpg', 'sort_order', 0),
+      jsonb_build_object('image_url', 'https://example.supabase.co/storage/v1/object/public/public-assets/products/p2.jpg', 'sort_order', 1),
+      jsonb_build_object('image_url', 'https://example.supabase.co/storage/v1/object/public/public-assets/products/p3.jpg', 'sort_order', 2)
+    ),
+    p_expected_updated_at := null,
+    p_actor_email := 'test@example.invalid',
+    p_actor_role := 'editor'
+  );
+
+  select id, updated_at into v_product_id, v_updated_at
+    from public.products where slug = 'p-reg-product';
+
+  select count(*) into v_active_count
+    from public.storage_object_refs
+    where owner_type = 'product_image' and role = 'image' and status = 'active'
+      and object_path in ('products/p1.jpg', 'products/p2.jpg', 'products/p3.jpg');
+  if v_active_count <> 3 then
+    raise exception 'P.1: expected 3 active product_image refs, got %', v_active_count
+      using errcode = 'P0001';
+  end if;
+
+  perform public.save_product_with_images_and_audit(
+    p_id := v_product_id,
+    p_product := jsonb_build_object(
+      'category_id', '00000000-0000-4000-8000-000000000300',
+      'name_cn', '[P-REG] product',
+      'slug', 'p-reg-product',
+      'is_published', false
+    ),
+    p_images := jsonb_build_array(
+      jsonb_build_object('image_url', 'https://example.supabase.co/storage/v1/object/public/public-assets/products/p1.jpg', 'sort_order', 0),
+      jsonb_build_object('image_url', 'https://example.supabase.co/storage/v1/object/public/public-assets/products/p2.jpg', 'sort_order', 1)
+    ),
+    p_expected_updated_at := v_updated_at,
+    p_actor_email := 'test@example.invalid',
+    p_actor_role := 'editor'
+  );
+
+  select updated_at into v_updated_at from public.products where id = v_product_id;
+
+  select count(*) into v_active_count
+    from public.storage_object_refs
+    where owner_type = 'product_image' and role = 'image' and status = 'active'
+      and object_path in ('products/p1.jpg', 'products/p2.jpg');
+  if v_active_count <> 2 then
+    raise exception 'P.2: expected 2 active refs after remove, got %', v_active_count
+      using errcode = 'P0001';
+  end if;
+
+  select count(*) into v_pending_count
+    from public.storage_object_refs
+    where owner_type = 'product_image' and role = 'image' and status = 'pending_delete'
+      and object_path = 'products/p3.jpg';
+  if v_pending_count <> 1 then
+    raise exception 'P.2: expected 1 pending_delete ref for p3.jpg, got %', v_pending_count
+      using errcode = 'P0001';
+  end if;
+
+  perform public.save_product_with_images_and_audit(
+    p_id := v_product_id,
+    p_product := jsonb_build_object(
+      'category_id', '00000000-0000-4000-8000-000000000300',
+      'name_cn', '[P-REG] product',
+      'slug', 'p-reg-product',
+      'is_published', false
+    ),
+    p_images := jsonb_build_array(
+      jsonb_build_object('image_url', 'https://example.supabase.co/storage/v1/object/public/public-assets/products/p1-new.jpg', 'sort_order', 0),
+      jsonb_build_object('image_url', 'https://example.supabase.co/storage/v1/object/public/public-assets/products/p2.jpg', 'sort_order', 1)
+    ),
+    p_expected_updated_at := v_updated_at,
+    p_actor_email := 'test@example.invalid',
+    p_actor_role := 'editor'
+  );
+
+  select count(*) into v_pending_count
+    from public.storage_object_refs
+    where owner_type = 'product_image' and role = 'image' and status = 'pending_delete'
+      and object_path = 'products/p1.jpg';
+  if v_pending_count <> 1 then
+    raise exception 'P.3: expected 1 pending_delete ref for old p1.jpg, got %', v_pending_count
+      using errcode = 'P0001';
+  end if;
+
+  select count(*) into v_active_count
+    from public.storage_object_refs
+    where owner_type = 'product_image' and role = 'image' and status = 'active'
+      and object_path = 'products/p1-new.jpg';
+  if v_active_count <> 1 then
+    raise exception 'P.3: expected 1 active ref for p1-new.jpg, got %', v_active_count
+      using errcode = 'P0001';
+  end if;
+
+  select count(*) into v_cleanup_count
+    from public.storage_cleanup_queue
+    where object_path = 'products/p1.jpg';
+  if v_cleanup_count < 1 then
+    raise exception 'P.3: expected >=1 cleanup row for p1.jpg, got %', v_cleanup_count
+      using errcode = 'P0001';
+  end if;
+end $$;
+
+-- ============================================================
+-- Round-4: Per-object Project image Registry (Q series)
+-- ============================================================
+do $$
+declare
+  v_project_id uuid;
+  v_updated_at timestamptz;
+  v_active_count integer;
+  v_pending_count integer;
+  v_cleanup_count integer;
+begin
+  perform public.save_project_with_relations_and_audit(
+    p_id := null,
+    p_project := jsonb_build_object(
+      'title_cn', '[Q-REG] project',
+      'slug', 'q-reg-project',
+      'is_published', false
+    ),
+    p_images := jsonb_build_array(
+      jsonb_build_object('image_url', 'https://example.supabase.co/storage/v1/object/public/public-assets/projects/q1.jpg', 'sort_order', 0),
+      jsonb_build_object('image_url', 'https://example.supabase.co/storage/v1/object/public/public-assets/projects/q2.jpg', 'sort_order', 1),
+      jsonb_build_object('image_url', 'https://example.supabase.co/storage/v1/object/public/public-assets/projects/q3.jpg', 'sort_order', 2)
+    ),
+    p_products := '[]'::jsonb,
+    p_expected_updated_at := null,
+    p_actor_email := 'test@example.invalid',
+    p_actor_role := 'editor'
+  );
+
+  select id, updated_at into v_project_id, v_updated_at
+    from public.projects where slug = 'q-reg-project';
+
+  select count(*) into v_active_count
+    from public.storage_object_refs
+    where owner_type = 'project_image' and role = 'image' and status = 'active'
+      and object_path in ('projects/q1.jpg', 'projects/q2.jpg', 'projects/q3.jpg');
+  if v_active_count <> 3 then
+    raise exception 'Q.1: expected 3 active project_image refs, got %', v_active_count
+      using errcode = 'P0001';
+  end if;
+
+  perform public.save_project_with_relations_and_audit(
+    p_id := v_project_id,
+    p_project := jsonb_build_object(
+      'title_cn', '[Q-REG] project',
+      'slug', 'q-reg-project',
+      'is_published', false
+    ),
+    p_images := jsonb_build_array(
+      jsonb_build_object('image_url', 'https://example.supabase.co/storage/v1/object/public/public-assets/projects/q1.jpg', 'sort_order', 0),
+      jsonb_build_object('image_url', 'https://example.supabase.co/storage/v1/object/public/public-assets/projects/q2-new.jpg', 'sort_order', 1),
+      jsonb_build_object('image_url', 'https://example.supabase.co/storage/v1/object/public/public-assets/projects/q3.jpg', 'sort_order', 2)
+    ),
+    p_products := '[]'::jsonb,
+    p_expected_updated_at := v_updated_at,
+    p_actor_email := 'test@example.invalid',
+    p_actor_role := 'editor'
+  );
+
+  select count(*) into v_pending_count
+    from public.storage_object_refs
+    where owner_type = 'project_image' and role = 'image' and status = 'pending_delete'
+      and object_path = 'projects/q2.jpg';
+  if v_pending_count <> 1 then
+    raise exception 'Q.2: expected 1 pending_delete ref for q2.jpg, got %', v_pending_count
+      using errcode = 'P0001';
+  end if;
+
+  select count(*) into v_active_count
+    from public.storage_object_refs
+    where owner_type = 'project_image' and role = 'image' and status = 'active'
+      and object_path = 'projects/q2-new.jpg';
+  if v_active_count <> 1 then
+    raise exception 'Q.2: expected 1 active ref for q2-new.jpg, got %', v_active_count
+      using errcode = 'P0001';
+  end if;
+
+  select count(*) into v_cleanup_count
+    from public.storage_cleanup_queue
+    where object_path = 'projects/q2.jpg';
+  if v_cleanup_count < 1 then
+    raise exception 'Q.2: expected >=1 cleanup row for q2.jpg, got %', v_cleanup_count
+      using errcode = 'P0001';
+  end if;
+end $$;
+
+-- ============================================================
+-- Round-4: Cleanup state transitions (S series)
+-- ============================================================
+do $$
+declare
+  v_product_id uuid;
+  v_updated_at timestamptz;
+  v_cleanup_id uuid;
+  v_ref_count_deleted integer;
+begin
+  perform public.save_product_with_images_and_audit(
+    p_id := null,
+    p_product := jsonb_build_object(
+      'category_id', '00000000-0000-4000-8000-000000000300',
+      'name_cn', '[S-CLEANUP] product',
+      'slug', 's-cleanup-product',
+      'is_published', false
+    ),
+    p_images := jsonb_build_array(
+      jsonb_build_object('image_url', 'https://example.supabase.co/storage/v1/object/public/public-assets/products/s1.jpg', 'sort_order', 0)
+    ),
+    p_expected_updated_at := null,
+    p_actor_email := 'test@example.invalid',
+    p_actor_role := 'editor'
+  );
+
+  select id, updated_at into v_product_id, v_updated_at
+    from public.products where slug = 's-cleanup-product';
+
+  perform public.save_product_with_images_and_audit(
+    p_id := v_product_id,
+    p_product := jsonb_build_object(
+      'category_id', '00000000-0000-4000-8000-000000000300',
+      'name_cn', '[S-CLEANUP] product',
+      'slug', 's-cleanup-product',
+      'is_published', false
+    ),
+    p_images := '[]'::jsonb,
+    p_expected_updated_at := v_updated_at,
+    p_actor_email := 'test@example.invalid',
+    p_actor_role := 'editor'
+  );
+
+  select id into v_cleanup_id
+    from public.storage_cleanup_queue
+    where object_path = 'products/s1.jpg'
+    order by created_at desc limit 1;
+
+  if v_cleanup_id is null then
+    raise exception 'S.1: no cleanup queue entry found for products/s1.jpg'
+      using errcode = 'P0001';
+  end if;
+
+  perform public.complete_storage_cleanup(
+    p_id := v_cleanup_id,
+    p_final_status := 'deleted',
+    p_operator := 'test',
+    p_message := 'S.1 success'
+  );
+
+  select count(*) into v_ref_count_deleted
+    from public.storage_object_refs
+    where owner_type = 'product_image' and role = 'image'
+      and object_path = 'products/s1.jpg'
+      and status = 'deleted';
+  if v_ref_count_deleted <> 1 then
+    raise exception 'S.1: expected 1 deleted ref after successful cleanup, got %', v_ref_count_deleted
+      using errcode = 'P0001';
+  end if;
+end $$;
+
+-- S.2  Cleanup failure -> ref stays pending_delete.
+do $$
+declare
+  v_product_id uuid;
+  v_updated_at timestamptz;
+  v_cleanup_id uuid;
+  v_ref_count_pending integer;
+begin
+  perform public.save_product_with_images_and_audit(
+    p_id := null,
+    p_product := jsonb_build_object(
+      'category_id', '00000000-0000-4000-8000-000000000300',
+      'name_cn', '[S-CLEANUP-FAIL] product',
+      'slug', 's-cleanup-fail-product',
+      'is_published', false
+    ),
+    p_images := jsonb_build_array(
+      jsonb_build_object('image_url', 'https://example.supabase.co/storage/v1/object/public/public-assets/products/s2.jpg', 'sort_order', 0)
+    ),
+    p_expected_updated_at := null,
+    p_actor_email := 'test@example.invalid',
+    p_actor_role := 'editor'
+  );
+
+  select id, updated_at into v_product_id, v_updated_at
+    from public.products where slug = 's-cleanup-fail-product';
+
+  perform public.save_product_with_images_and_audit(
+    p_id := v_product_id,
+    p_product := jsonb_build_object(
+      'category_id', '00000000-0000-4000-8000-000000000300',
+      'name_cn', '[S-CLEANUP-FAIL] product',
+      'slug', 's-cleanup-fail-product',
+      'is_published', false
+    ),
+    p_images := '[]'::jsonb,
+    p_expected_updated_at := v_updated_at,
+    p_actor_email := 'test@example.invalid',
+    p_actor_role := 'editor'
+  );
+
+  select id into v_cleanup_id
+    from public.storage_cleanup_queue
+    where object_path = 'products/s2.jpg'
+    order by created_at desc limit 1;
+
+  if v_cleanup_id is null then
+    raise exception 'S.2: no cleanup queue entry found for products/s2.jpg'
+      using errcode = 'P0001';
+  end if;
+
+  perform public.complete_storage_cleanup(
+    p_id := v_cleanup_id,
+    p_final_status := 'error',
+    p_operator := 'test',
+    p_message := 'S.2 simulated failure'
+  );
+
+  select count(*) into v_ref_count_pending
+    from public.storage_object_refs
+    where owner_type = 'product_image' and role = 'image'
+      and object_path = 'products/s2.jpg'
+      and status = 'pending_delete';
+  if v_ref_count_pending <> 1 then
+    raise exception 'S.2: expected 1 pending_delete ref after failed cleanup, got %', v_ref_count_pending
       using errcode = 'P0001';
   end if;
 end $$;
