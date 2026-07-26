@@ -2174,11 +2174,17 @@ begin
       using errcode = 'P0001';
   end if;
 
+  -- enqueue_managed_storage_cleanup signature is (p_url, p_reason,
+  -- p_source_type, p_source_id). Round-4 strict variant returns NULL
+  -- for external hosts (no row created). Use the canonical argument
+  -- names; do NOT use the legacy (p_owner_type, p_owner_id, p_role,
+  -- p_url) names — those do not exist on this function and would
+  -- raise 'function does not exist' at runtime.
   v_cleanup_id := public.enqueue_managed_storage_cleanup(
-    p_owner_type := 'company_logo',
-    p_owner_id := v_owner_id,
-    p_role := 'logo',
-    p_url := v_impersonation_url
+    p_url := v_impersonation_url,
+    p_reason := 'replaced',
+    p_source_type := 'company_logo',
+    p_source_id := v_owner_id
   );
   if v_cleanup_id is not null then
     raise exception 'IMPERSONATION: enqueue must return null for external host, got %', v_cleanup_id
