@@ -312,7 +312,7 @@ describe("Phase 13: Storage upload route — server-side Magic Bytes enforcement
     expect(res.status).toBe(415);
   });
 
-  it("rejects image exceeding 5MB (server-side size limit)", async () => {
+  it("rejects image exceeding 4MB (server-side size limit)", async () => {
     getVerifiedAdmin.mockResolvedValue(makeAdminContext());
     uploadByPurpose.mockResolvedValue({
       ok: false,
@@ -320,9 +320,13 @@ describe("Phase 13: Storage upload route — server-side Magic Bytes enforcement
     });
     const { POST } = await import("@/app/api/admin/storage/upload/route");
 
-    // 6MB PNG — exceeds the 5MB image limit enforced in storage-upload.ts.
+    // 4.5MB PNG — exceeds the 4MB image limit enforced in storage-upload.ts,
+    // but under MAX_FILE_BYTES (4.5MB) so the route forwards to
+    // uploadByPurpose which enforces the per-MIME limit.
+    // (Review #2 WP7: limit lowered from 5MB to 4MB to fit EdgeOne 6MB
+    // platform request body cap with multipart overhead.)
     const pngMagic = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-    const oversized = new Uint8Array(6 * 1024 * 1024);
+    const oversized = new Uint8Array(Math.floor(4.5 * 1024 * 1024) - 1);
     oversized.set(pngMagic, 0);
     const res = await POST(
       multipartRequest("https://kzq.test/api/admin/storage/upload", "POST", {
@@ -335,7 +339,7 @@ describe("Phase 13: Storage upload route — server-side Magic Bytes enforcement
     expect(uploadByPurpose).toHaveBeenCalledTimes(1);
   });
 
-  it("rejects PDF exceeding 20MB (server-side size limit)", async () => {
+  it("rejects PDF exceeding 4MB (server-side size limit)", async () => {
     getVerifiedAdmin.mockResolvedValue(makeAdminContext());
     uploadByPurpose.mockResolvedValue({
       ok: false,
@@ -343,9 +347,12 @@ describe("Phase 13: Storage upload route — server-side Magic Bytes enforcement
     });
     const { POST } = await import("@/app/api/admin/storage/upload/route");
 
-    // 21MB PDF — exceeds the 20MB PDF limit.
+    // 4.5MB PDF — exceeds the 4MB PDF limit, under MAX_FILE_BYTES.
+    // (Review #2 WP7: limit lowered from 20MB to 4MB to fit EdgeOne 6MB
+    // platform request body cap with multipart overhead. Two-stage upload
+    // is the long-term solution for larger PDFs.)
     const pdfMagic = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x34]);
-    const oversized = new Uint8Array(21 * 1024 * 1024);
+    const oversized = new Uint8Array(Math.floor(4.5 * 1024 * 1024) - 1);
     oversized.set(pdfMagic, 0);
     const res = await POST(
       multipartRequest("https://kzq.test/api/admin/storage/upload", "POST", {
@@ -707,7 +714,8 @@ describe("Work Package D: Storage upload route — anti-abuse hardening", () => 
     const { POST } = await import("@/app/api/admin/storage/upload/route");
 
     const pngBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-    // Declare 100MB (exceeds 21MB MAX_REQUEST_BYTES)
+    // Declare 100MB (exceeds 5MB MAX_REQUEST_BYTES — Review #2 WP7 lowered
+    // from 21MB to 5MB to fit EdgeOne Cloud Functions 6MB platform cap.)
     const res = await POST(
       multipartRequest(
         "https://kzq.test/api/admin/storage/upload",
@@ -726,11 +734,12 @@ describe("Work Package D: Storage upload route — anti-abuse hardening", () => 
     getVerifiedAdmin.mockResolvedValue(makeAdminContext());
     const { POST } = await import("@/app/api/admin/storage/upload/route");
 
-    // 21MB PNG with valid Magic Bytes — exceeds MAX_FILE_BYTES (20MB).
-    // requireAdminWrite passes (CL = actual size, both <= 21MB MAX_REQUEST_BYTES).
+    // 4.7MB PNG with valid Magic Bytes — exceeds MAX_FILE_BYTES (4.5MB).
+    // requireAdminWrite passes (CL = actual size, both <= 5MB MAX_REQUEST_BYTES).
     // Route's post-arrayBuffer check rejects with 413 BEFORE calling uploadByPurpose.
+    // (Review #2 WP7: MAX_FILE_BYTES lowered from 20MB to 4.5MB.)
     const pngMagic = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-    const oversized = new Uint8Array(21 * 1024 * 1024);
+    const oversized = new Uint8Array(Math.floor(4.7 * 1024 * 1024));
     oversized.set(pngMagic, 0);
 
     const res = await POST(

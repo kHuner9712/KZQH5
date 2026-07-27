@@ -44,12 +44,26 @@ import { resolvePurposeConfig } from "@/lib/services/storage-purpose";
 // Edge runtime 不支持这些 API（且 storage-upload 使用 node:crypto 计算 SHA-256）。
 export const runtime = "nodejs";
 
-// 20MB 文件（PDF 上限）+ multipart 框架开销。按类型的实际限制在 storage-upload 内执行。
-const MAX_REQUEST_BYTES = 21 * 1024 * 1024;
+// Review #2 Work Package 7: EdgeOne Cloud Functions 平台请求体上限为 6MB
+// (https://pages.edgeone.ai/document/cloud-functions)。此前的 21MB 上限
+// 假定可以通过 EdgeOne WAF 提升，但 EdgeOne Cloud Functions 文档明确
+// 6MB 是平台硬限制，WAF 配置无法突破。继续保留 20MB PDF 上限会导致
+// 超过 6MB 的请求在到达 Node.js 进程前被 EdgeOne 平台层直接拒绝，
+// 而客户端会收到不可预测的错误。
+//
+// 将 MAX_REQUEST_BYTES 降到 5MB（留 1MB headroom 给 EdgeOne 平台层），
+// MAX_FILE_BYTES 降到 4.5MB（留 500KB 给 multipart 框架开销）。
+// per-MIME 限制在 storage-upload 内执行（图片和 PDF 均 4MB）。
+//
+// 这意味着此前可上传的 4-20MB PDF 在单阶段上传路径下不再可用。
+// 两阶段上传（authorize -> 直传 Supabase -> finalize）作为正式发布阻断项
+// 列在 docs/LAUNCH_CHECKLIST.md 和 docs/TWO_PHASE_UPLOAD_DESIGN.md。
+const MAX_REQUEST_BYTES = 5 * 1024 * 1024;
 
 // 实际文件字节二次校验上限：multipart 解码后 FILE 字段的最大字节数。
-// 与 MAX_REQUEST_BYTES 一致以容许 multipart 框架开销；per-MIME 限制在 storage-upload 内执行。
-const MAX_FILE_BYTES = 20 * 1024 * 1024;
+// 比 MAX_REQUEST_BYTES 小 500KB 以容许 multipart 框架开销；per-MIME 限制
+// 在 storage-upload 内执行（4MB）。
+const MAX_FILE_BYTES = Math.floor(4.5 * 1024 * 1024);
 
 function statusForCode(code: AdminWriteErrorCode): number {
   switch (code) {

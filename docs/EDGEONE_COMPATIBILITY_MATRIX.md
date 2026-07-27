@@ -104,6 +104,55 @@ was changed during this execution.
 This result concerns a Staging technical acceptance target only. It is not
 Production evidence and does not establish mainland carrier or WeChat quality.
 
+# 2026-07-28 EdgeOne upload body limit correction (Review #2 WP7)
+
+The previous project documentation (LAUNCH_CHECKLIST, TWO_PHASE_UPLOAD_DESIGN)
+claimed that setting the EdgeOne WAF request body limit to 21 MB would allow
+20 MB PDF uploads through `POST /api/admin/storage/upload`. This is incorrect.
+
+EdgeOne Cloud Functions documentation
+(https://pages.edgeone.ai/document/cloud-functions) explicitly states the
+request/response body limit is **6 MB**. This is a platform-level hard cap
+that **cannot** be raised by WAF configuration. The WAF rule cited in the
+old Launch Checklist only controls what the WAF itself inspects; it does not
+override the Cloud Functions runtime body limit.
+
+Consequence: any single-stage multipart upload exceeding ~6 MB would be
+rejected by the EdgeOne platform layer before reaching the Node.js process,
+producing an opaque error to the client. The previous 21 MB / 20 MB
+contract was therefore unachievable in production.
+
+## Corrected application-layer limits
+
+| Layer | Before | After | Rationale |
+| --- | --- | --- | --- |
+| Route `MAX_REQUEST_BYTES` | 21 MB | 5 MB | Below 6 MB platform cap with 1 MB headroom |
+| Route `MAX_FILE_BYTES` | 20 MB | 4.5 MB | 500 KB multipart overhead below `MAX_REQUEST_BYTES` |
+| per-MIME (image/PDF) | 5 MB / 20 MB | 4 MB / 4 MB | Unified below `MAX_FILE_BYTES` |
+| Supabase bucket `file_size_limit` | 20 MB | 20 MB (unchanged) | Allows future two-stage upload (browser → Supabase direct, bypasses EdgeOne) and the catalog import script (direct to Supabase) |
+
+The Supabase bucket limit is intentionally kept at 20 MB because:
+1. Two-stage upload (when implemented) uploads directly browser → Supabase,
+   bypassing EdgeOne Cloud Functions entirely. The bucket must accept larger
+   files for this path to be useful.
+2. The `scripts/import-catalog-assets.mjs` bulk import tool uploads directly
+   to Supabase via the service_role key, not through the EdgeOne-routed API.
+   Its 20 MB filter matches the bucket limit.
+
+The route-layer 4 MB limit is the **single-stage API contract** that
+clients see. The bucket's higher limit is an internal backend allowance
+for direct-to-Supabase paths that do not traverse EdgeOne.
+
+## Release blocker
+
+Two-stage upload (`/api/admin/storage/upload/authorize` → browser direct to
+Supabase → `/api/admin/storage/upload/finalize`) remains the documented
+release blocker for restoring large-PDF upload support. Design:
+`docs/TWO_PHASE_UPLOAD_DESIGN.md`. Launch Checklist entry:
+`docs/LAUNCH_CHECKLIST.md` (section 6, "发布阻断项 — 两阶段上传未实现").
+
+
+
 # 2026-07-28 Node engine alignment (Review #2 Work Package 6)
 
 EdgeOne Cloud Functions runtime is documented as Node.js v20.x

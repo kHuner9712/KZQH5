@@ -122,10 +122,11 @@
 - [ ] 询盘接口限流生效（频繁提交返回 429）
 - [ ] 未配置通知变量时正常提交；通知接口失败时询盘仍成功
 - [ ] Demo 模式不写数据库、不发送真实通知
-- [ ] **EdgeOne WAF 请求体上限**: `/api/admin/storage/upload` 路径设为 21MB（与 `MAX_REQUEST_BYTES` 一致）
+- [ ] **EdgeOne WAF 请求体上限**: `/api/admin/storage/upload` 路径上限不得高于 6MB（EdgeOne Cloud Functions 平台硬限制）。应用层 `MAX_REQUEST_BYTES=5MB` / `MAX_FILE_BYTES=4.5MB` / per-MIME 4MB。**此前 21MB WAF 配置已废弃**（Review #2 WP7 修正：EdgeOne Cloud Functions 平台请求体 6MB 是硬限制，WAF 配置无法突破）
 - [ ] **EdgeOne WAF 限流**: `/api/admin/storage/upload` 设为 20 次/5 分钟/IP（叠加进程内限流）
 - [ ] **EdgeOne WAF 并发限制**: 上传路径并发连接数 ≤ 5/IP（防止单 IP 同时打开多个上传消耗内存）
-- [ ] **Node.js `--max-old-space-size`**: 至少 512MB（容许 5 并发 × 21MB 峰值 + 基础进程内存）
+- [ ] **Node.js `--max-old-space-size`**: 至少 256MB（容许 5 并发 × 5MB 峰值 + 基础进程内存；此前 512MB 基于 21MB 上限已不再需要）
+- [ ] **发布阻断项 — 两阶段上传未实现**: 当前单阶段上传受 EdgeOne 6MB 平台限制约束，PDF 上限 4MB。超过 4MB 的 PDF 在单阶段路径下不可用。两阶段上传（`/api/admin/storage/upload/authorize` → 浏览器直传 Supabase → `/api/admin/storage/upload/finalize`）设计见 `docs/TWO_PHASE_UPLOAD_DESIGN.md`，是支持大 PDF 上传的正式发布阻断项。
 - [ ] **匿名分析接口限流生效**（频繁提交返回 429）
 - [ ] **未知 IP 时使用稳定 fallback bucket**（生产 `RATE_LIMIT_FALLBACK_SECRET` ≥ 32 字符已配置；缺失时使用 `fallback:global` 单桶，不产生随机 key）
 - [ ] **`TRUSTED_PROXY_HEADER` 已正确配置**（EdgeOne 设为 `eo-connecting-ip`；未配置或非法值时所有代理 Header 不可信）

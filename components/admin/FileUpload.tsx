@@ -14,7 +14,7 @@ export function FileUpload({
   onUploadedRef,
   label = "上传展示文件",
   accept = "application/pdf,image/jpeg,image/png,image/webp",
-  hint = "PDF/JPG/PNG/WebP，最大 20MB；仅限展示版或水印版。",
+  hint = "PDF/JPG/PNG/WebP，最大 4MB；仅限展示版或水印版。",
 }: {
   /**
    * Storage 用途（必需）。客户端只提交 purpose，服务端决定 bucket /

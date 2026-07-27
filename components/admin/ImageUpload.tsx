@@ -153,8 +153,8 @@ export function ImageUpload({
       setError("请选择图片文件");
       return;
     }
-    if (file.size > 5 * 1024 * 1024) {
-      setError("图片大小不能超过 5MB");
+    if (file.size > 4 * 1024 * 1024) {
+      setError("图片大小不能超过 4MB");
       return;
     }
 

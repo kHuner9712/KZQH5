@@ -1,19 +1,25 @@
 # Two-Phase Upload Design (Working Document)
 
-> **Status**: Working design document. Not yet implemented. The immediate
-> WP-D hardening (strict Content-Length, per-actor rate limiting, post-
-> arrayBuffer byte check, strict field allow-list) is already in
-> `app/api/admin/storage/upload/route.ts` and provides defense-in-depth
-> until this design is realized.
+> **Status**: Working design document. **Not yet implemented.
+> RELEASE BLOCKER** (Review #2 WP7).
+>
+> The single-phase upload route (`POST /api/admin/storage/upload`)
+> is constrained by the EdgeOne Cloud Functions 6 MB request body
+> platform limit. Review #2 WP7 lowered the application-layer
+> limits to `MAX_REQUEST_BYTES=5MB` / `MAX_FILE_BYTES=4.5MB` /
+> per-MIME 4 MB so the route no longer claims support for 20 MB PDFs.
+> PDFs larger than 4 MB **cannot be uploaded** through the current
+> single-phase path. Implementing this two-phase protocol is the
+> documented release blocker for restoring large-PDF upload support.
 >
 > **Hardening level achieved by WP-D**: Resource consumption at the
 > route boundary is bounded, but the **in-memory exhaustion risk is not
 > fully eliminated** — the route still buffers the entire file via
 > `request.formData()` + `file.arrayBuffer()` before validating bytes.
-> True end-to-end protection requires either (a) EdgeOne request body
-> size limits at the platform WAF, or (b) the two-phase protocol below
-> which streams into Storage and validates headers before the body is
-> ever materialized in memory.
+> With the Review #2 WP7 size cap (5 MB), peak memory per upload is
+> bounded at ~5 MB; the two-phase protocol below would eliminate the
+> in-memory buffering entirely by streaming into Storage and validating
+> headers before the body is ever materialized in memory.
 
 ## 1. Motivation
 
