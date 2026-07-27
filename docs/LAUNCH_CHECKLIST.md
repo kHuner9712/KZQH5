@@ -122,6 +122,12 @@
 - [ ] 询盘接口限流生效（频繁提交返回 429）
 - [ ] 未配置通知变量时正常提交；通知接口失败时询盘仍成功
 - [ ] Demo 模式不写数据库、不发送真实通知
+- [ ] **EdgeOne WAF 请求体上限**: `/api/admin/storage/upload` 路径设为 21MB（与 `MAX_REQUEST_BYTES` 一致）
+- [ ] **EdgeOne WAF 限流**: `/api/admin/storage/upload` 设为 20 次/5 分钟/IP（叠加进程内限流）
+- [ ] **EdgeOne WAF 并发限制**: 上传路径并发连接数 ≤ 5/IP（防止单 IP 同时打开多个上传消耗内存）
+- [ ] **Node.js `--max-old-space-size`**: 至少 512MB（容许 5 并发 × 21MB 峰值 + 基础进程内存）
+- [ ] **匿名分析接口限流生效**（频繁提交返回 429）
+- [ ] **未知 IP 时使用稳定 fallback bucket**（生产 `RATE_LIMIT_FALLBACK_SECRET` ≥ 16 字符已配置；缺失时使用 `fallback:global` 单桶，不产生随机 key）
 
 ---
 

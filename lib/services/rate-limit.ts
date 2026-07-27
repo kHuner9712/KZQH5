@@ -177,6 +177,7 @@ export class MemoryRateLimiter implements RateLimiter {
 //   列为生产验收项，不在代码层强制实现。
 let inquiryLimiter: RateLimiter | null = null;
 let analyticsLimiter: RateLimiter | null = null;
+let storageUploadLimiter: RateLimiter | null = null;
 
 export function getInquiryRateLimiter(): RateLimiter {
   if (!inquiryLimiter)
@@ -188,4 +189,20 @@ export function getAnalyticsRateLimiter(): RateLimiter {
   if (!analyticsLimiter)
     analyticsLimiter = new MemoryRateLimiter(60, 60 * 1000);
   return analyticsLimiter;
+}
+
+/**
+ * Storage upload rate limiter (per admin actor).
+ *
+ * Limit: 20 uploads / 5 minutes / actor. This is intentionally conservative
+ * — admin uploads are infrequent operations (image/PDF management) and a
+ * burst usually indicates either a script loop or an abuse attempt.
+ *
+ * Multi-instance caveat applies (see MemoryRateLimiter header). Production
+ * deployments MUST additionally enforce EdgeOne WAF rate-limiting rules.
+ */
+export function getStorageUploadRateLimiter(): RateLimiter {
+  if (!storageUploadLimiter)
+    storageUploadLimiter = new MemoryRateLimiter(20, 5 * 60 * 1000);
+  return storageUploadLimiter;
 }

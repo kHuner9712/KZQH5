@@ -188,12 +188,39 @@ export async function requireAdminWrite<T = unknown>(
   }
 
   if (options.body === "skip") {
-    // Multipart/binary uploads (e.g. Storage file uploads): enforce a coarse
-    // whole-request size cap but leave Content-Type validation and body
-    // parsing to the route. The route still benefits from session + RBAC +
-    // same-origin checks and must apply per-field size limits itself.
-    const contentLength = Number(request.headers.get("content-length") || 0);
-    if (Number.isFinite(contentLength) && contentLength > options.maxBytes) {
+    // Multipart/binary uploads (e.g. Storage file uploads): enforce a strict
+    // whole-request Content-Length cap BEFORE calling request.formData(),
+    // so an attacker cannot force the server to buffer an oversized body.
+    //
+    // Strict validation (fail-closed):
+    //   - Missing Content-Length → rejected. Multipart uploads must declare
+    //     the body size up-front; chunked transfer encoding is not trusted
+    //     for state-changing admin writes.
+    //   - Non-numeric / NaN / non-finite → rejected.
+    //   - Negative or zero → rejected.
+    //   - Greater than maxBytes → rejected (413).
+    //
+    // The route still owns Content-Type validation, per-field size limits,
+    // and a defense-in-depth post-arrayBuffer byte check (the actual byte
+    // count after multipart decoding may legitimately differ slightly from
+    // the declared Content-Length due to multipart framing overhead; routes
+    // must verify the FILE byte count, not the wire byte count, against the
+    // per-MIME-type limit).
+    const rawContentLength = request.headers.get("content-length");
+    if (rawContentLength === null) {
+      return {
+        ok: false,
+        response: adminWriteError("ADMIN_WRITE_PAYLOAD_TOO_LARGE", 411),
+      };
+    }
+    const contentLength = Number(rawContentLength);
+    if (
+      !Number.isFinite(contentLength) ||
+      contentLength <= 0 ||
+      contentLength > options.maxBytes
+    ) {
+      // Negative, zero, NaN, non-numeric, or over the limit → 413.
+      // (411 Length Required is reserved for the missing-header case above.)
       return {
         ok: false,
         response: adminWriteError("ADMIN_WRITE_PAYLOAD_TOO_LARGE", 413),
