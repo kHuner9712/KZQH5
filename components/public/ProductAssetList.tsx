@@ -52,7 +52,11 @@ export function ProductAssetList({
   return (
     <section>
       {title && <h2 className="text-lg font-semibold text-ink">{title}</h2>}
-      <div className={title ? "mt-4 grid gap-3 md:grid-cols-2" : "grid gap-3 md:grid-cols-2"}>
+      <div
+        className={
+          title ? "mt-4 grid gap-3 md:grid-cols-2" : "grid gap-3 md:grid-cols-2"
+        }
+      >
         {assets.map((asset) => {
           const content = localizeProductAsset(asset, locale);
           return (
@@ -60,7 +64,7 @@ export function ProductAssetList({
               key={asset.id}
               type="button"
               onClick={() => setSelected(asset)}
-              className="card-base flex min-h-20 items-center gap-3 p-4 text-left transition hover:border-gold/50"
+              className="flex min-h-20 items-center gap-3 rounded-md border border-black/[0.06] bg-canvas-warm p-4 text-left transition-colors hover:border-gold/30 md:rounded-lg"
             >
               <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-brass/10 text-brass">
                 <FileText className="h-5 w-5" />
@@ -69,9 +73,13 @@ export function ProductAssetList({
                 <span className="block text-[10px] uppercase tracking-wider text-gold-dark">
                   {productAssetTypeLabels[locale][asset.asset_type]}
                 </span>
-                <span className="mt-1 block truncate text-sm font-medium text-ink">{content.title}</span>
+                <span className="mt-1 block truncate text-sm font-medium text-ink">
+                  {content.title}
+                </span>
                 <span className="mt-1 block text-[11px] text-ink-mute">
-                  {[asset.mime_type, formatProductAssetSize(asset.file_size)].filter(Boolean).join(" · ")}
+                  {[asset.mime_type, formatProductAssetSize(asset.file_size)]
+                    .filter(Boolean)
+                    .join(" · ")}
                 </span>
               </span>
               <ExternalLink className="h-4 w-4 shrink-0 text-ink-mute" />
@@ -79,7 +87,13 @@ export function ProductAssetList({
           );
         })}
       </div>
-      {selected && <ProductAssetViewer asset={selected} locale={locale} onClose={() => setSelected(null)} />}
+      {selected && (
+        <ProductAssetViewer
+          asset={selected}
+          locale={locale}
+          onClose={() => setSelected(null)}
+        />
+      )}
     </section>
   );
 }

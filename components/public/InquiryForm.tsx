@@ -164,49 +164,245 @@ export function InquiryForm({
   }
 
   return (
-    <><InquiryListEditor locale={locale} /><form onSubmit={handleSubmit} onFocus={() => { if (!inquiryStarted.current) { inquiryStarted.current = true; trackAnalyticsEvent({ event_name: "inquiry_start", locale, product_id: productContext?.id || null }); } }} className="space-y-4" noValidate aria-busy={status === "loading"}>
-      <input type="text" name="company_website" value={form.honeypot || ""} onChange={(event) => update("honeypot", event.target.value)} className="hidden" tabIndex={-1} autoComplete="off" aria-hidden="true" />
-      <div className="grid grid-cols-1 gap-4">
-        <Input label={copy.name} name="name" required placeholder={copy.namePlaceholder} value={form.name} onChange={(event) => update("name", event.target.value)} error={errors.name} />
-        <Input label={copy.company} name="company" placeholder={copy.companyPlaceholder} value={form.company} onChange={(event) => update("company", event.target.value)} />
+    <>
+      <InquiryListEditor locale={locale} />
+      <form
+        onSubmit={handleSubmit}
+        onFocus={() => {
+          if (!inquiryStarted.current) {
+            inquiryStarted.current = true;
+            trackAnalyticsEvent({
+              event_name: "inquiry_start",
+              locale,
+              product_id: productContext?.id || null,
+            });
+          }
+        }}
+        className="space-y-6"
+        noValidate
+        aria-busy={status === "loading"}
+      >
+        <input
+          type="text"
+          name="company_website"
+          value={form.honeypot || ""}
+          onChange={(event) => update("honeypot", event.target.value)}
+          className="hidden"
+          tabIndex={-1}
+          autoComplete="off"
+          aria-hidden="true"
+        />
 
-        {locale === "zh" ? (
-          <>
-            <Input label={copy.phone} name="phone" type="tel" placeholder={copy.phonePlaceholder} value={form.phone} onChange={(event) => update("phone", event.target.value)} error={errors.contact} />
-            <Input label={copy.wechat} name="wechat" placeholder={copy.wechatPlaceholder} value={form.wechat} onChange={(event) => update("wechat", event.target.value)} />
-            <Input label={copy.email} name="email" type="email" placeholder="you@example.com" value={form.email} onChange={(event) => update("email", event.target.value)} error={errors.email} />
-            <Input label={copy.country} name="country" placeholder={copy.countryPlaceholder} value={form.country} onChange={(event) => update("country", event.target.value)} />
-          </>
-        ) : (
-          <>
-            <Input label={copy.country} name="country" placeholder={copy.countryPlaceholder} value={form.country} onChange={(event) => update("country", event.target.value)} />
-            <Input label={copy.phone} name="phone" type="tel" placeholder={copy.phonePlaceholder} value={form.phone} onChange={(event) => update("phone", event.target.value)} />
-            <Input label={copy.email} name="email" type="email" placeholder="you@example.com" value={form.email} onChange={(event) => update("email", event.target.value)} error={errors.email || errors.contact} />
-            <Input label="WhatsApp" name="whatsapp" type="tel" placeholder="+1 555 123 4567" value={form.whatsapp} onChange={(event) => update("whatsapp", event.target.value)} />
-          </>
+        <fieldset>
+          <legend className="mb-4 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.12em] text-gold-dark">
+            <span className="h-px w-5 bg-gold" />
+            {locale === "zh" ? "联系信息" : "Contact details"}
+          </legend>
+          <div className="grid gap-4 md:grid-cols-2">
+            <Input
+              label={copy.name}
+              name="name"
+              required
+              placeholder={copy.namePlaceholder}
+              value={form.name}
+              onChange={(event) => update("name", event.target.value)}
+              error={errors.name}
+            />
+            <Input
+              label={copy.company}
+              name="company"
+              placeholder={copy.companyPlaceholder}
+              value={form.company}
+              onChange={(event) => update("company", event.target.value)}
+            />
+
+            {locale === "zh" ? (
+              <>
+                <Input
+                  label={copy.phone}
+                  name="phone"
+                  type="tel"
+                  placeholder={copy.phonePlaceholder}
+                  value={form.phone}
+                  onChange={(event) => update("phone", event.target.value)}
+                  error={errors.contact}
+                />
+                <Input
+                  label={copy.wechat}
+                  name="wechat"
+                  placeholder={copy.wechatPlaceholder}
+                  value={form.wechat}
+                  onChange={(event) => update("wechat", event.target.value)}
+                />
+                <Input
+                  label={copy.email}
+                  name="email"
+                  type="email"
+                  placeholder="you@example.com"
+                  value={form.email}
+                  onChange={(event) => update("email", event.target.value)}
+                  error={errors.email}
+                />
+                <Input
+                  label={copy.country}
+                  name="country"
+                  placeholder={copy.countryPlaceholder}
+                  value={form.country}
+                  onChange={(event) => update("country", event.target.value)}
+                />
+              </>
+            ) : (
+              <>
+                <Input
+                  label={copy.country}
+                  name="country"
+                  placeholder={copy.countryPlaceholder}
+                  value={form.country}
+                  onChange={(event) => update("country", event.target.value)}
+                />
+                <Input
+                  label={copy.phone}
+                  name="phone"
+                  type="tel"
+                  placeholder={copy.phonePlaceholder}
+                  value={form.phone}
+                  onChange={(event) => update("phone", event.target.value)}
+                />
+                <Input
+                  label={copy.email}
+                  name="email"
+                  type="email"
+                  placeholder="you@example.com"
+                  value={form.email}
+                  onChange={(event) => update("email", event.target.value)}
+                  error={errors.email || errors.contact}
+                />
+                <Input
+                  label="WhatsApp"
+                  name="whatsapp"
+                  type="tel"
+                  placeholder="+1 555 123 4567"
+                  value={form.whatsapp}
+                  onChange={(event) => update("whatsapp", event.target.value)}
+                />
+              </>
+            )}
+          </div>
+        </fieldset>
+
+        <fieldset className="border-t border-ink-line pt-6">
+          <legend className="mb-4 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.12em] text-gold-dark">
+            <span className="h-px w-5 bg-gold" />
+            {locale === "zh" ? "产品需求" : "Project requirements"}
+          </legend>
+          <div className="grid gap-4 md:grid-cols-2">
+            <Input
+              label={copy.product}
+              name="interested_product"
+              required
+              placeholder={copy.productPlaceholder}
+              value={selectedProductNames || form.interested_product}
+              onChange={(event) =>
+                update("interested_product", event.target.value)
+              }
+              disabled={items.length > 0}
+              error={errors.interested_product}
+              containerClassName="md:col-span-2"
+            />
+            <Input
+              label={copy.quantity}
+              name="quantity"
+              placeholder={copy.quantityPlaceholder}
+              value={form.quantity}
+              onChange={(event) => update("quantity", event.target.value)}
+            />
+            {locale === "en" && (
+              <>
+                <Input
+                  label={copy.destinationPort}
+                  name="destination_port"
+                  placeholder="Ningbo / Rotterdam"
+                  value={form.destination_port}
+                  onChange={(event) =>
+                    update("destination_port", event.target.value)
+                  }
+                />
+                <Input
+                  label={copy.tradeTerm}
+                  name="trade_term"
+                  placeholder="FOB / CIF"
+                  value={form.trade_term}
+                  onChange={(event) =>
+                    update("trade_term", event.target.value)
+                  }
+                />
+              </>
+            )}
+            <Textarea
+              label={copy.message}
+              name="message"
+              rows={4}
+              placeholder={copy.messagePlaceholder}
+              value={form.message}
+              onChange={(event) => update("message", event.target.value)}
+              containerClassName="md:col-span-2"
+            />
+          </div>
+        </fieldset>
+
+        <label className="flex min-h-11 cursor-pointer items-start gap-3 text-xs leading-5 text-ink-soft">
+          <input
+            id="privacy-accepted"
+            type="checkbox"
+            checked={form.privacy_accepted}
+            onChange={(event) =>
+              update("privacy_accepted", event.target.checked)
+            }
+            aria-invalid={errors.privacy_accepted ? true : undefined}
+            aria-describedby={
+              errors.privacy_accepted ? "privacy-accepted-error" : undefined
+            }
+            className="mt-1 h-4 w-4 shrink-0 accent-gold"
+          />
+          <span>
+            {copy.privacyAgree}{" "}
+            <Link
+              href={localePath(locale, "/privacy")}
+              className="underline hover:text-gold-dark"
+            >
+              {getDictionary(locale).footer.privacy}
+            </Link>
+          </span>
+        </label>
+        {errors.privacy_accepted && (
+          <p
+            id="privacy-accepted-error"
+            className="text-xs text-red-600"
+            role="alert"
+          >
+            {errors.privacy_accepted}
+          </p>
         )}
-
-        <Input label={copy.product} name="interested_product" required placeholder={copy.productPlaceholder} value={selectedProductNames || form.interested_product} onChange={(event) => update("interested_product", event.target.value)} disabled={items.length > 0} error={errors.interested_product} />
-        <Input label={copy.quantity} name="quantity" placeholder={copy.quantityPlaceholder} value={form.quantity} onChange={(event) => update("quantity", event.target.value)} />
-
-        {locale === "en" && (
-          <>
-            <Input label={copy.destinationPort} name="destination_port" placeholder="Ningbo / Rotterdam" value={form.destination_port} onChange={(event) => update("destination_port", event.target.value)} />
-            <Input label={copy.tradeTerm} name="trade_term" placeholder="FOB / CIF" value={form.trade_term} onChange={(event) => update("trade_term", event.target.value)} />
-          </>
-        )}
-
-        <Textarea label={copy.message} name="message" rows={4} placeholder={copy.messagePlaceholder} value={form.message} onChange={(event) => update("message", event.target.value)} />
-      </div>
-
-      <label className="flex min-h-11 cursor-pointer items-start gap-3 text-xs leading-5 text-ink-soft">
-        <input id="privacy-accepted" type="checkbox" checked={form.privacy_accepted} onChange={(event) => update("privacy_accepted", event.target.checked)} aria-invalid={errors.privacy_accepted ? true : undefined} aria-describedby={errors.privacy_accepted ? "privacy-accepted-error" : undefined} className="mt-1 h-4 w-4 shrink-0 accent-industrial" />
-        <span>{copy.privacyAgree} <Link href={localePath(locale, "/privacy")} className="underline hover:text-industrial">{getDictionary(locale).footer.privacy}</Link></span>
-      </label>
-      {errors.privacy_accepted && <p id="privacy-accepted-error" className="text-xs text-red-600" role="alert">{errors.privacy_accepted}</p>}
-      <div aria-live="assertive">{status === "error" && <div className="flex items-start gap-2 rounded-lg bg-red-50 p-3 text-sm text-red-700" role="alert"><AlertCircle className="mt-0.5 h-4 w-4 shrink-0" /><span>{errorMessage}</span></div>}</div>
-      <button type="submit" disabled={status === "loading"} className="btn-primary h-12 w-full text-sm disabled:opacity-60">{status === "loading" ? copy.submitting : copy.submit}</button>
-      <p className="text-center text-[11px] text-ink-mute">{copy.privacy}</p>
-    </form></>
+        <div aria-live="assertive">
+          {status === "error" && (
+            <div
+              className="flex items-start gap-2 rounded-md bg-red-50 p-3 text-sm text-red-700"
+              role="alert"
+            >
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+              <span>{errorMessage}</span>
+            </div>
+          )}
+        </div>
+        <button
+          type="submit"
+          disabled={status === "loading"}
+          className="btn-primary h-12 w-full text-sm disabled:opacity-60"
+        >
+          {status === "loading" ? copy.submitting : copy.submit}
+        </button>
+        <p className="text-center text-xs text-ink-mute">{copy.privacy}</p>
+      </form>
+    </>
   );
 }
