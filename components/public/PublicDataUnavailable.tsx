@@ -15,8 +15,8 @@ export function PublicDataUnavailable({ locale, retryPath }: { locale: Locale; r
         </p>
         <div className="mt-6 flex flex-wrap justify-center gap-3">
           <a href={retryPath} className="btn-primary h-11 px-6">{zh ? "重试" : "Try again"}</a>
-          <Link href={localePath(locale)} className="btn-outline h-11 px-5">{zh ? "返回首页" : "Home"}</Link>
-          <Link href={localePath(locale, "/products")} className="btn-outline h-11 px-5">{zh ? "产品中心" : "Products"}</Link>
+          <Link href={localePath(locale)} prefetch={false} className="btn-outline h-11 px-5">{zh ? "返回首页" : "Home"}</Link>
+          <Link href={localePath(locale, "/products")} prefetch={false} className="btn-outline h-11 px-5">{zh ? "产品中心" : "Products"}</Link>
         </div>
       </div>
     </section>

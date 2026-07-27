@@ -22,6 +22,11 @@ export function MobileHeader({ company, locale }: MobileHeaderProps) {
       <div className="flex h-full items-center justify-between px-4">
         <Link
           href={localePath(locale)}
+          // prefetch={false}: same rationale as DesktopHeader — header
+          // nav links prefetch in parallel and the cancellation storm
+          // when a user clicks an in-page Link can abort the
+          // click-triggered RSC request.
+          prefetch={false}
           className="flex min-w-0 items-center gap-1.5"
           aria-label={copy.header.homeAria}
         >
@@ -38,6 +43,7 @@ export function MobileHeader({ company, locale }: MobileHeaderProps) {
         <div className="flex items-center gap-1">
           <Link
             href={localePath(locale, "/more")}
+            prefetch={false}
             className="inline-flex h-11 w-11 items-center justify-center text-white"
             aria-label={copy.nav.more}
           >

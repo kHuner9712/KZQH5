@@ -7,12 +7,94 @@ async function expectNoHorizontalOverflow(page: import("@playwright/test").Page)
 
 // Next.js 15 / React 19 Suspense streaming can briefly duplicate catalog
 // topic cards while the loading.tsx fallback is replaced by the resolved
-// Server Component content. Wait for the element to be unique before
-// clicking to avoid Playwright strict-mode violations.
+// Server Component content. Wait for the element to be unique AND stable
+// across multiple samples before clicking, to avoid Playwright strict-mode
+// violations from a transient 2→1 count race.
+//
+// The "stable unique" wait:
+//   1. loading.tsx fallback must be gone (no [role="status"][aria-label*="加载"])
+//   2. target count sampled 3 times with 50ms gap must be 1 every time
+//   3. the single element must be visible with a non-empty bounding box
+//
+// If the count is persistently >1, the click is NOT forced — the helper
+// throws with a diagnostic dump so the production duplicate-render can be
+// fixed instead of masking it with locator.first() / force:true.
 async function clickCatalogTopic(page: import("@playwright/test").Page, topicId: string) {
-  const locator = page.getByTestId(`catalog-topic-${topicId}`);
-  await expect(locator).toHaveCount(1);
-  await locator.click();
+  const testId = `catalog-topic-${topicId}`;
+  const locator = page.getByTestId(testId);
+
+  // Step 1: ensure the loading fallback has been replaced by real content.
+  // The PublicLoading component renders role="status" with an aria-label
+  // containing "加载" / "Loading". If it is still in the DOM, the resolved
+  // tree has not committed yet.
+  const loadingFallback = page.locator(
+    '[role="status"][aria-label*="加载"], [role="status"][aria-label*="Loading"]',
+  );
+  await expect(loadingFallback).toHaveCount(0, { timeout: 30_000 });
+
+  // Step 2: sample the count 3 times with a 50ms gap. A single
+  // `toHaveCount(1)` can pass during a 2→1→2 transient; requiring 3
+  // consecutive stable-1 samples eliminates that race without adding a
+  // blind timeout.
+  for (let sample = 0; sample < 3; sample++) {
+    await expect(locator).toHaveCount(1, { timeout: 30_000 });
+    if (sample < 2) await page.waitForTimeout(50);
+  }
+
+  // Step 3: ensure the single element is visible and clickable before
+  // issuing the real click. Playwright's auto-wait already does this, but
+  // an explicit visibility check produces a clearer error message if the
+  // element is present but hidden (e.g., display:none during transition).
+  await expect(locator).toBeVisible();
+
+  try {
+    await locator.click();
+  } catch (clickError) {
+    // If the click still fails (DOM mutated between the stable-1 sample
+    // and the click), capture a diagnostic snapshot BEFORE re-throwing so
+    // the failure message contains actionable context instead of just
+    // "strict mode violation: resolved to N elements".
+    const diagnostics = await page.evaluate(
+      (id) => {
+        const els = document.querySelectorAll(`[data-testid="${id}"]`);
+        const samples: string[] = [];
+        els.forEach((el, index) => {
+          const rect = el.getBoundingClientRect();
+          const visible =
+            rect.width > 0 &&
+            rect.height > 0 &&
+            window.getComputedStyle(el).visibility !== "hidden" &&
+            window.getComputedStyle(el).display !== "none";
+          const tag = el.tagName.toLowerCase();
+          const cls = el.className?.toString().slice(0, 80) || "";
+          const ancestor = el.parentElement?.tagName.toLowerCase() || "";
+          const grandAncestor =
+            el.parentElement?.parentElement?.tagName.toLowerCase() || "";
+          samples.push(
+            `[${index}] <${tag} class="${cls}"> visible=${visible} box={x:${Math.round(rect.x)},y:${Math.round(rect.y)},w:${Math.round(rect.width)},h:${Math.round(rect.height)}} ancestors=${ancestor}>${grandAncestor}`,
+          );
+        });
+        const fallback = document.querySelector(
+          '[role="status"][aria-label*="加载"], [role="status"][aria-label*="Loading"]',
+        );
+        return {
+          count: els.length,
+          url: location.href,
+          loadingFallbackPresent: !!fallback,
+          samples,
+        };
+      },
+      testId,
+    );
+    process.stderr.write(
+      `[clickCatalogTopic:${testId}] click failed; diagnostics:\n` +
+        `  count=${diagnostics.count} url=${diagnostics.url}\n` +
+        `  loadingFallbackPresent=${diagnostics.loadingFallbackPresent}\n` +
+        diagnostics.samples.map((s) => `  ${s}`).join("\n") +
+        "\n",
+    );
+    throw clickError;
+  }
 }
 
 test.describe("Demo catalog center", () => {

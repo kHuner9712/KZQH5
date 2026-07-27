@@ -149,6 +149,7 @@ export async function AboutPageContent(locale: Locale) {
       <ResponsiveContainer className="pb-8 md:pb-20">
         <Link
           href={localePath(locale, "/contact")}
+          prefetch={false}
           className="relative block overflow-hidden rounded-lg border border-white/10 bg-page p-6 text-white transition-colors hover:border-gold/30 md:rounded-xl md:p-12"
         >
           <div className="relative flex items-center justify-between">

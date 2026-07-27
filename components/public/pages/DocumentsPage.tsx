@@ -265,6 +265,7 @@ export async function DocumentsPageContent(locale: Locale) {
               <p className="text-sm text-ink-soft">{copy.noPublished}</p>
               <Link
                 href={localePath(locale, "/contact")}
+                prefetch={false}
                 className="btn-primary mt-5 h-11 px-5 text-xs"
               >
                 <MessageCircle className="h-4 w-4" />

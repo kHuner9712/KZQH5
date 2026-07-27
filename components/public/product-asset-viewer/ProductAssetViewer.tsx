@@ -10,18 +10,19 @@ import { trackAnalyticsEvent } from "@/lib/client/analytics";
 import { useDialogFocusTrap } from "@/lib/client/use-dialog-focus-trap";
 import {
   canPreviewAsset, deriveExtension, formatProductAssetSize, isImageAsset, isPdfAsset,
-  isWeChatBrowser, validateAssetUrl,
+  isWeChatBrowser, productAssetTypeLabels, validateAssetUrl,
 } from "@/lib/client/viewer-utils";
 import { PdfViewer } from "./PdfViewer";
 import { ImageViewer } from "./ImageViewer";
 import { ViewerError } from "./ViewerError";
 import { useViewerDownload } from "./hooks/useViewerDownload";
 
-export const productAssetTypeLabels = {
-  zh: { catalog: "产品目录", datasheet: "技术资料", installation: "安装说明", certificate: "证书资料", packaging: "包装资料", other: "其他资料" },
-  en: { catalog: "Catalog", datasheet: "Datasheet", installation: "Installation", certificate: "Certificate", packaging: "Packaging", other: "Other" },
-} as const;
-
+// Re-exported for backward-compatible import paths (the wrapper file
+// components/public/ProductAssetViewer.tsx re-exports these). The canonical
+// definition now lives in lib/client/viewer-utils.ts so SSR-only consumers
+// (ProductAssetList on /documents) can use the labels without pulling in
+// PdfViewer → pdfjs-dist.
+export { productAssetTypeLabels };
 export { canPreviewAsset as canPreviewProductAsset, formatProductAssetSize };
 
 const toolbarCopy = {

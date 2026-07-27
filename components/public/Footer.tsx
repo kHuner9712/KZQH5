@@ -107,12 +107,23 @@ export function Footer({ company, siteSettings, locale }: FooterProps) {
             <div className="mt-4 flex flex-wrap gap-x-4 gap-y-3 md:flex-col">
               <Link
                 href={localePath(locale, "/contact")}
+                // prefetch={false}: Footer is present on every public
+                // page. App Router prefetches footer links on viewport
+                // entry; when the user clicks an in-page Link (e.g. a
+                // product card), the Router cancels these in-flight
+                // prefetches (net::ERR_ABORTED) and in rare cases the
+                // cancellation cascade also aborts the click-triggered
+                // RSC request. Disabling prefetch on footer links
+                // eliminates this race without affecting click
+                // navigation.
+                prefetch={false}
                 className="text-[11px] text-white/60 transition-colors hover:text-gold md:text-[13px]"
               >
                 {copy.nav.inquiry}
               </Link>
               <Link
                 href={localePath(locale, "/privacy")}
+                prefetch={false}
                 className="text-[11px] text-white/60 transition-colors hover:text-gold md:text-[13px]"
               >
                 {copy.footer.privacy}
@@ -148,6 +159,7 @@ function FooterColumn({
           <Link
             key={item.href}
             href={localePath(locale, item.href)}
+            prefetch={false}
             className="text-[13px] text-white/60 transition-colors hover:text-gold"
           >
             {localizeNavItem(item, locale)}

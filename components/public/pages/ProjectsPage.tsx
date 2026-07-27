@@ -41,7 +41,10 @@ export async function ProjectsPageContent(locale: Locale) {
                   key={project.id}
                   className="kzq-interactive-card group overflow-hidden rounded-md border border-black/[0.06] bg-canvas-warm transition-colors hover:border-gold/30 md:rounded-lg"
                 >
-                  <Link href={localePath(locale, `/projects/${project.slug}`)}>
+                  <Link
+                    href={localePath(locale, `/projects/${project.slug}`)}
+                    prefetch={false}
+                  >
                     <div className="relative aspect-[16/10] overflow-hidden">
                       <ProductImage
                         src={project.cover_image_url}
@@ -88,6 +91,7 @@ export async function ProjectsPageContent(locale: Locale) {
             action={
               <Link
                 href={localePath(locale, "/products")}
+                prefetch={false}
                 className="btn-primary h-11 px-5 text-xs"
               >
                 {locale === "zh" ? "浏览产品" : "Browse products"}

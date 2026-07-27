@@ -368,6 +368,11 @@ export function InquiryForm({
             {copy.privacyAgree}{" "}
             <Link
               href={localePath(locale, "/privacy")}
+              // prefetch={false}: the inquiry form is on /contact.
+              // Prefetching /privacy from here adds nothing to the
+              // user's flow and contributes to the prefetch storm that
+              // can abort click-triggered RSC requests elsewhere.
+              prefetch={false}
               className="underline hover:text-gold-dark"
             >
               {getDictionary(locale).footer.privacy}

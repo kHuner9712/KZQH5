@@ -147,6 +147,20 @@ export async function ProductsPageContent(
                 subcategory: undefined,
                 page: undefined,
               })}
+              // Disable automatic prefetch on category filter links.
+              //
+              // Same rationale as product card links: the products list
+              // renders many category/subcategory Links simultaneously,
+              // and App Router prefetches each one on viewport entry.
+              // When a user clicks a product card while category-link
+              // prefetches are still in flight, the Router cancels the
+              // in-flight RSC requests (net::ERR_ABORTED). In rare cases
+              // the click-triggered product-detail RSC request is also
+              // cancelled, so the URL never commits and the user is
+              // stuck on /products. prefetch={false} keeps the
+              // click-driven navigation but stops the parallel prefetch
+              // storm (see demo-e2e run 30219163338).
+              prefetch={false}
               className={cn(
                 "inline-flex min-h-11 shrink-0 items-center rounded-md border px-3.5 py-2 text-xs font-medium",
                 !searchParams.category
@@ -164,6 +178,7 @@ export async function ProductsPageContent(
                   subcategory: undefined,
                   page: undefined,
                 })}
+                prefetch={false}
                 className={cn(
                   "inline-flex min-h-11 shrink-0 items-center rounded-md border px-3.5 py-2 text-xs font-medium",
                   searchParams.category === category.slug
@@ -179,6 +194,7 @@ export async function ProductsPageContent(
             <div className="mt-2 flex gap-2 overflow-x-auto pb-1 no-scrollbar">
               <Link
                 href={buildUrl({ subcategory: undefined, page: undefined })}
+                prefetch={false}
                 className={cn(
                   "inline-flex min-h-11 shrink-0 items-center rounded-md border px-3 text-[11px]",
                   !searchParams.subcategory
@@ -195,6 +211,7 @@ export async function ProductsPageContent(
                     subcategory: subcategory.slug,
                     page: undefined,
                   })}
+                  prefetch={false}
                   className={cn(
                     "inline-flex min-h-11 shrink-0 items-center rounded-md border px-3 text-[11px]",
                     searchParams.subcategory === subcategory.slug
@@ -212,7 +229,7 @@ export async function ProductsPageContent(
       <ResponsiveContainer className="pt-4">
         <div className="hidden items-center justify-between text-[11px] text-ink-mute sm:flex">
           <div>
-            <Link href={localePath(locale)}>{copy.common.home}</Link>
+            <Link href={localePath(locale)} prefetch={false}>{copy.common.home}</Link>
             <ChevronRight className="mx-1 inline h-3 w-3" />
             {copy.products.title}
             {activeCategory && (
@@ -259,6 +276,7 @@ export async function ProductsPageContent(
               href={buildUrl({ page: String(Math.max(1, requestedPage - 1)) })}
               aria-disabled={requestedPage <= 1}
               tabIndex={requestedPage <= 1 ? -1 : undefined}
+              prefetch={false}
               className={cn(
                 "btn-outline h-10 px-4",
                 requestedPage <= 1 && "pointer-events-none opacity-40",
@@ -276,6 +294,7 @@ export async function ProductsPageContent(
               })}
               aria-disabled={requestedPage >= totalPages}
               tabIndex={requestedPage >= totalPages ? -1 : undefined}
+              prefetch={false}
               className={cn(
                 "btn-outline h-10 px-4",
                 requestedPage >= totalPages && "pointer-events-none opacity-40",
