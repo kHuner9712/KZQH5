@@ -46,6 +46,16 @@ jobs:
           npm --version
           which node
       - run: npm ci
+      - name: Verify dependency engines match Node 20
+        # Work Package 6 (Review #2): EdgeOne Cloud Functions run on
+        # Node.js v20.x. @supabase/supabase-js 2.110+ and pdfjs-dist
+        # 6.x both require Node >=22, which would silently break
+        # production at runtime even though `npm ci` succeeds locally
+        # on a Node 22 dev machine. `npm ls --engine-strict` runs
+        # against the CI Node 20 install and fails the build if any
+        # installed dependency declares an engines.node constraint
+        # that Node 20 does not satisfy.
+        run: npm ls --engine-strict --omit=dev --depth=Infinity
       - name: Verify frozen migration hashes
         # CI_DISALLOW_INITIALIZE prevents the --initialize bootstrap
         # mode from running in CI. --initialize rewrites the entire

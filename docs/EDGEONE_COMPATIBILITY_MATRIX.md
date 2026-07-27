@@ -104,3 +104,66 @@ was changed during this execution.
 This result concerns a Staging technical acceptance target only. It is not
 Production evidence and does not establish mainland carrier or WeChat quality.
 
+# 2026-07-28 Node engine alignment (Review #2 Work Package 6)
+
+EdgeOne Cloud Functions runtime is documented as Node.js v20.x
+(https://pages.edgeone.ai/document/cloud-functions). The build host
+default is Node 20.18.0 (https://pages.edgeone.ai/document/build-guide)
+with `.nvmrc` switching supported. There is no EdgeOne Makers
+documentation stating that Cloud Functions can run Node 22.x, so
+Plan A (lock to Node 20-compatible dependency versions) was selected.
+
+## Evidence — installed versions before / after
+
+| Dependency | Before | engines.node | After | engines.node |
+| --- | --- | --- | --- | --- |
+| `@supabase/supabase-js` | 2.110.8 | `>=22.0.0` | 2.109.0 | `>=20.0.0` |
+| `@supabase/ssr` | 0.12.3 | (none, peer `supabase-js ^2.110.5`) | 0.12.0 | (none, peer `supabase-js ^2.108.0`) |
+| `pdfjs-dist` | 6.1.200 | `>=22.13.0 \|\| >=24` | 5.4.624 | `>=20.16.0 \|\| >=22.3.0` |
+
+Version boundaries were verified directly via `npm view <pkg>@<ver> engines`:
+
+- `@supabase/supabase-js@2.109.0` → `>=20.0.0` (last Node 20 release)
+- `@supabase/supabase-js@2.110.0` → `>=22.0.0` (first Node 22-only release)
+- `pdfjs-dist@5.4.624` → `>=20.16.0 || >=22.3.0` (last Node 20 release in 5.x)
+- `pdfjs-dist@5.5.207` → `>=20.19.0 || >=22.13.0 || >=24` (requires Node 20.19+, above EdgeOne 20.18.0 default)
+- `pdfjs-dist@5.7.284` → `>=22.13.0 || >=24` (drops Node 20)
+- `pdfjs-dist@6.1.200` → `>=22.13.0 || >=24` (current 6.x, requires Node 22.13+)
+
+`pdfjs-dist` was pinned to 5.4.624 (not 5.5+ which would require Node
+20.19+) because the EdgeOne build host default is Node 20.18.0 and we
+do not rely on `.nvmrc` switching behavior being documented for
+Cloud Functions.
+
+## API compatibility
+
+- `@supabase/ssr@0.12.0` → `@supabase/supabase-js@2.109.0` peer is
+  satisfied; no breaking API changes between ssr 0.12.0 and 0.12.3
+  affect this project (only `createServerClient` + cookie adapter
+  are used, both stable across 0.12.x).
+- `pdfjs-dist@5.4.624` exposes the same API surface used by this
+  project (`getDocument`, `GlobalWorkerOptions`, `PDFDocumentProxy`,
+  `PDFPageProxy.getPage`, `Viewport`, `TextLayer`). The `legacy/build`
+  path used by `scripts/sync-pdfjs-worker.mjs` exists in both v5 and
+  v6. Type-check, 1261 unit tests, and demo build all pass with the
+  downgrade.
+
+## Enforcement
+
+- `package.json` `engines.node` remains `"20.x"`, declaring the
+  EdgeOne Cloud Functions runtime target.
+- `package.json` pins `@supabase/ssr`, `@supabase/supabase-js`, and
+  `pdfjs-dist` to exact versions (no caret) to prevent npm from
+  auto-bumping into a Node 22-only release.
+- CI gains an explicit "Verify dependency engines" step
+  (`.github/workflows/ci.yml`) that runs `npm ls --engine-strict`
+  under Node 20 and fails the build if any installed dependency
+  declares an `engines.node` constraint incompatible with Node 20.
+
+## Decision
+
+Plan A selected. Plan B (upgrade to Node 22.13+) is **not** adopted
+because no EdgeOne Makers documentation confirms Node 22.x support for
+Cloud Functions, and the user's instruction requires EdgeOne runtime
+verification evidence before changing the runtime target.
+
