@@ -1,7 +1,8 @@
 // ============================================================
-// KZQ Security Response Headers Middleware
+// KZQ Security + Auth Session Middleware
 //
 // Phase 10: Adds security headers to all responses.
+// Phase WP-C: Refreshes Supabase Auth sessions on auth-aware paths.
 //
 // Headers applied:
 //   - X-Content-Type-Options: nosniff
@@ -17,17 +18,29 @@
 //     blocked — this is intentional to avoid breaking ISR, PDF viewer,
 //     or WeChat integration before we have production confirmation.
 //
+// Session refresh:
+//   - On /admin/**, /api/admin/**, /api/internal/** paths, the middleware
+//     calls supabase.auth.getUser() to trigger @supabase/ssr's auto-refresh
+//     logic. Refreshed cookies are written to BOTH the request and response.
+//   - The middleware does NOT use the session for authorization — that is
+//     the exclusive job of getVerifiedAdmin() server-side. This module only
+//     refreshes cookies.
+//   - Failures during refresh do NOT block the request.
+//
 // ISR safety:
-//   - This middleware does NOT read request.cookies, request.headers
-//     (except the protocol via request.nextUrl which is needed for HSTS),
-//     or any other request property that would force dynamic rendering.
-//   - It only adds response headers via NextResponse.next().
-//   - Statically generated and ISR pages continue to be served from cache.
+//   - Session refresh is ONLY triggered on auth-aware paths. Public ISR
+//     pages never have their auth cookies read, so they remain statically
+//     cached.
+//   - Security headers are added to ALL responses (cheap, no cookie access).
 //   - The middleware matcher excludes static assets (_next/static, images,
 //     favicon) so they are served without overhead.
 // ============================================================
 
 import { NextResponse, type NextRequest } from "next/server";
+import {
+  refreshSupabaseSession,
+  shouldRefreshSession,
+} from "@/lib/supabase/middleware-session";
 
 /**
  * CSP Report-Only policy.
@@ -62,7 +75,7 @@ const CSP_REPORT_ONLY = [
   "base-uri 'self'",
 ].join("; ");
 
-export function middleware(request: NextRequest) {
+export async function middleware(request: NextRequest) {
   // Get the response (either the cached/ISR page or a fresh render).
   const response = NextResponse.next();
 
@@ -86,6 +99,17 @@ export function middleware(request: NextRequest) {
       "Strict-Transport-Security",
       "max-age=31536000; includeSubDomains",
     );
+  }
+
+  // --- Supabase Auth Session Refresh ---
+  // Only run on auth-aware paths so public ISR pages remain statically
+  // cached. This refreshes the access token cookie when it is near
+  // expiry, writing the rotated cookie to BOTH the request (forwarded
+  // to downstream handlers) and the response (persisted by the browser).
+  // Authorization is NOT done here — getVerifiedAdmin() handles that
+  // server-side with a fresh auth.getUser() call.
+  if (shouldRefreshSession(request.nextUrl.pathname)) {
+    await refreshSupabaseSession(request, response);
   }
 
   return response;
