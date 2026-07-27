@@ -66,11 +66,131 @@ jobs:
       - run: npm run typecheck
       - run: npm run lint
       - run: npm run test:unit
+      # Demo build (NEXT_PUBLIC_DEMO_MODE=true) — verifies that the
+      # mock-data preview build still compiles. The non-demo
+      # production-contract build is exercised by the production-build
+      # job below to avoid coupling the basic check job to production
+      # env validation.
       - run: npm run build
         env:
           NEXT_PUBLIC_DEMO_MODE: "true"
       - name: Audit production deps (high+ critical, blocking)
         run: npm audit --omit=dev --audit-level=high
+      - name: Check for whitespace / conflict markers
+        run: git diff --check
+
+  # ============================================================
+  # Work Package H: production-contract build.
+  # Validates the NON-demo build path — the one real production
+  # deployments use. Catches regressions that only manifest when
+  # NEXT_PUBLIC_DEMO_MODE=false, such as:
+  #   - Supabase client initialization requiring real env vars
+  #   - next.config.mjs production fail-closed image host validation
+  #   - Auth middleware session refresh path being tree-shaken
+  #   - service-role modules being bundled into server routes
+  #   - Readiness / Outbox routes being included in the build
+  #
+  # Uses CI-only, NON-secret test values. The Supabase project ref
+  # `abcdefghijklmnopqrst` is a 20-char placeholder that satisfies
+  # the canonical host pattern `/^[a-z0-9]{20}\.supabase\.co$/` but
+  # does not correspond to a real project. The anon/service keys are
+  # inert test strings — they are never sent anywhere at build time.
+  # ============================================================
+  production-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      NODE_ENV: production
+      NEXT_PUBLIC_DEMO_MODE: "false"
+      NEXT_PUBLIC_SUPABASE_URL: "https://abcdefghijklmnopqrst.supabase.co"
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: "ci-test-anon-key-not-real"
+      SUPABASE_SERVICE_ROLE_KEY: "ci-test-service-role-key-not-real"
+      NEXT_PUBLIC_SITE_URL: "https://kzq.test"
+      NEXT_PUBLIC_SITE_INDEXING_ENABLED: "false"
+      OUTBOX_DISPATCH_SECRET: "ci-test-outbox-dispatch-secret-not-real"
+    steps:
+      # actions/checkout@v4.2.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      # actions/setup-node@v4.4.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 20
+          cache: npm
+      - name: Show tool versions (after setup-node)
+        run: |
+          node --version
+          npm --version
+          which node
+      - run: npm ci
+      - name: Production-contract build (NEXT_PUBLIC_DEMO_MODE=false)
+        # The production-contract build verifies that the non-demo
+        # code path COMPILES and that env validation, image host
+        # validation, route generation, and module bundling all
+        # succeed. Static prerender is expected to fail without a
+        # real Supabase instance, so we capture output and verify
+        # the compile phase succeeded rather than asserting exit 0.
+        run: |
+          set +e
+          npm run build:production > build.log 2>&1
+          BUILD_EXIT=$?
+          set -e
+          # The compile phase must succeed. This message is emitted
+          # by Next.js after TypeScript, ESLint, and webpack pass.
+          if ! grep -q "Compiled successfully" build.log; then
+            echo "ERROR: production build did not compile successfully"
+            cat build.log
+            exit 1
+          fi
+          # Prerender failures are expected without real Supabase
+          # (production pages fetch real CMS data at build time).
+          # Surface them in CI logs but don't fail the contract.
+          if [ "$BUILD_EXIT" -ne 0 ]; then
+            echo "NOTE: build exited non-zero (expected: prerender needs real Supabase)"
+            if grep -q "prerender-error\|Export encountered" build.log; then
+              echo "Prerender errors detected (acceptable for CI production-contract build)."
+            else
+              echo "ERROR: non-prerender build failure — investigate:"
+              cat build.log
+              exit 1
+            fi
+          fi
+      - name: Verify production build artifacts exist
+        run: |
+          # The build must have produced server output. Even with
+          # prerender failures, .next/server contains the compiled
+          # server bundles for production-only routes.
+          if [ ! -d ".next/server" ]; then
+            echo "ERROR: .next/server directory missing — build did not compile"
+            exit 1
+          fi
+          # Verify the production-only API routes were bundled.
+          # Demo builds would still bundle these (they're statically
+          # imported), so this is a sanity check that the compile
+          # phase completed, not a demo-vs-production differentiator.
+          # The real production-contract verification is the compile
+          # success message checked above plus env validation in
+          # next.config.mjs (which throws in production if Supabase
+          # host shape is wrong).
+          for route in \
+            "app/api/readiness/route.js" \
+            "app/api/csp-report/route.js" \
+            "app/api/internal/outbox/dispatch/route.js" \
+            "app/api/internal/outbox/status/route.js"; do
+            if [ ! -f ".next/server/${route}" ]; then
+              echo "ERROR: production build missing route: ${route}"
+              exit 1
+            fi
+          done
+          echo "All production-only routes were bundled successfully."
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: production-build-log
+          path: build.log
+          retention-days: 7
       - name: Check for whitespace / conflict markers
         run: git diff --check
 

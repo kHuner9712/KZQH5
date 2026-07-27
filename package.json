@@ -9,6 +9,7 @@
     "dev": "next dev",
     "build": "next build",
     "build:demo": "cross-env NEXT_PUBLIC_DEMO_MODE=true next build",
+    "build:production": "cross-env NEXT_PUBLIC_DEMO_MODE=false next build",
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
