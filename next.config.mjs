@@ -29,9 +29,19 @@
 //
 // In development (NODE_ENV != production), the wildcard fallback
 // remains so local dev against a personal Supabase project still works.
+//
+// Review #2 WP8 build-mock bypass:
+//   When BUILD_MOCK_BACKEND=true is set, the canonical host shape
+//   check is relaxed so the CI production-contract build can point
+//   NEXT_PUBLIC_SUPABASE_URL at a localhost mock server
+//   (scripts/mock-supabase-for-build.mjs). This bypass is ONLY
+//   available at build time and never affects runtime behavior. The
+//   flag must never be set in real deployments — release-readiness
+//   still requires a canonical Supabase URL.
 // ============================================================
 
 const SUPABASE_PROJECT_HOST_PATTERN = /^[a-z0-9]{20}\.supabase\.co$/;
+const BUILD_MOCK_BACKEND = process.env.BUILD_MOCK_BACKEND === "true";
 
 /**
  * Validate a single MEDIA_CDN_DOMAINS entry. Returns the normalized
@@ -60,11 +70,19 @@ function buildImageRemotePatterns() {
   const supabaseUrl = (process.env.NEXT_PUBLIC_SUPABASE_URL || "").trim();
   const cdnRaw = (process.env.MEDIA_CDN_DOMAINS || "").trim();
   const isProduction = process.env.NODE_ENV === "production";
+  // Review #2 WP8: when BUILD_MOCK_BACKEND=true the CI
+  // production-contract build points NEXT_PUBLIC_SUPABASE_URL at a
+  // localhost mock server. The host shape check is bypassed so the
+  // build can complete; the release-readiness script still blocks
+  // real deployments that try to use a non-canonical host.
+  const allowMockHost = BUILD_MOCK_BACKEND;
 
   // 1. Exact Supabase project host (e.g. abcdefgh.supabase.co)
   if (supabaseUrl) {
     try {
-      const host = new URL(supabaseUrl).hostname.toLowerCase();
+      const parsed = new URL(supabaseUrl);
+      const host = parsed.hostname.toLowerCase();
+      const protocol = parsed.protocol.replace(":", "");
       if (
         host &&
         !host.startsWith("example.") &&
@@ -72,11 +90,17 @@ function buildImageRemotePatterns() {
         SUPABASE_PROJECT_HOST_PATTERN.test(host)
       ) {
         patterns.push({ protocol: "https", hostname: host });
+      } else if (allowMockHost && (host === "localhost" || host === "127.0.0.1")) {
+        // CI build-mock: accept localhost URLs without the canonical
+        // host shape check. The mock server never serves images, so
+        // this entry is harmless; it satisfies the no-empty-patterns
+        // fail-closed guard below.
+        patterns.push({ protocol, hostname: host, port: parsed.port || undefined });
       } else if (host && !SUPABASE_PROJECT_HOST_PATTERN.test(host)) {
         // Work Package G: refuse non-project-shaped Supabase hosts at
         // build time. Previously any *.supabase.co host was accepted,
         // which allowed cross-tenant image proxying.
-        if (isProduction) {
+        if (isProduction && !allowMockHost) {
           throw new Error(
             `next.config: NEXT_PUBLIC_SUPABASE_URL host "${host}" is not a canonical Supabase project host (expected <project-ref>.supabase.co). ` +
               `Set NEXT_PUBLIC_SUPABASE_URL to your project URL or add an explicit MEDIA_CDN_DOMAINS override.`,
