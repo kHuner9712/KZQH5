@@ -149,6 +149,19 @@ export async function ProductsPageContent(
                 subcategory: undefined,
                 page: undefined,
               })}
+              // Disable automatic prefetch on category filter links.
+              //
+              // Same rationale as product card links: the products list
+              // renders many category/subcategory Links simultaneously,
+              // and App Router prefetches each one on viewport entry.
+              // When a user clicks a product card while category-link
+              // prefetches are still in flight, the Router cancels the
+              // in-flight RSC requests (net::ERR_ABORTED). In rare cases
+              // the click-triggered product-detail RSC request is also
+              // cancelled, so the URL never commits and the user is
+              // stuck on /products. prefetch={false} keeps the
+              // click-driven navigation but stops the parallel prefetch
+              // storm (see demo-e2e run 30219163338).
               prefetch={false}
               className={cn(
                 "inline-flex min-h-11 shrink-0 items-center rounded-md border px-3.5 py-2 text-xs font-medium",
