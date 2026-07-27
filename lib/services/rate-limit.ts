@@ -206,3 +206,18 @@ export function getStorageUploadRateLimiter(): RateLimiter {
     storageUploadLimiter = new MemoryRateLimiter(20, 5 * 60 * 1000);
   return storageUploadLimiter;
 }
+
+// Work Package G: readiness probe rate limiter.
+// Limit: 12 probes / 60s / IP. /api/readiness hits Supabase REST +
+// Storage + an RPC via service_role — without rate limiting, an
+// attacker could DOS Supabase by repeatedly hitting the endpoint,
+// or use it as an oracle to probe service_role behavior. The limit
+// is intentionally generous enough to support legitimate monitoring
+// (typical: 1 probe / 10s = 6/min) while still bounding abuse.
+let readinessLimiter: RateLimiter | null = null;
+
+export function getReadinessRateLimiter(): RateLimiter {
+  if (!readinessLimiter)
+    readinessLimiter = new MemoryRateLimiter(12, 60 * 1000);
+  return readinessLimiter;
+}

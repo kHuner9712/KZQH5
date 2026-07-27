@@ -68,8 +68,13 @@ describe("/api/readiness route", () => {
     vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "http://127.0.0.1:1");
     vi.stubEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY", "anon-key");
     vi.stubEnv("SUPABASE_SERVICE_ROLE_KEY", "fake-service-role-key");
+    // Work Package G: per-check array is gated behind READINESS_TOKEN.
+    vi.stubEnv("READINESS_TOKEN", "secret-readiness-token");
     const { GET } = await import("@/app/api/readiness/route");
-    const response = await GET(makeRequest());
+    const request = new NextRequest("https://kzq.test/api/readiness", {
+      headers: { Authorization: "Bearer secret-readiness-token" },
+    });
+    const response = await GET(request);
     const body = await response.json();
     expect(response.status).toBe(503);
     expect(body.ready).toBe(false);
@@ -93,9 +98,10 @@ describe("/api/readiness route", () => {
         res.end(JSON.stringify({ ok: true, checks: [] }));
         return;
       }
-      if (req.url?.includes("/storage/v1/bucket")) {
-        // 403 is fine — storage is alive, just not listable with anon key
-        res.writeHead(403, headers);
+      // Work Package G: storage check now fetches the public canary object
+      // (not HEAD on bucket root). Only HTTP 200 indicates readiness.
+      if (req.url?.includes("/storage/v1/object/public/")) {
+        res.writeHead(200, headers);
         res.end("");
         return;
       }
@@ -106,9 +112,14 @@ describe("/api/readiness route", () => {
     vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", `http://127.0.0.1:${port}`);
     vi.stubEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY", "anon-key");
     vi.stubEnv("SUPABASE_SERVICE_ROLE_KEY", "fake-service-role-key");
+    // Work Package G: per-check array is gated behind READINESS_TOKEN.
+    vi.stubEnv("READINESS_TOKEN", "secret-readiness-token");
     try {
       const { GET } = await import("@/app/api/readiness/route");
-      const response = await GET(makeRequest());
+      const request = new NextRequest("https://kzq.test/api/readiness", {
+        headers: { Authorization: "Bearer secret-readiness-token" },
+      });
+      const response = await GET(request);
       const body = await response.json();
       expect(response.status).toBe(200);
       expect(body.ready).toBe(true);
@@ -153,9 +164,14 @@ describe("/api/readiness route", () => {
     vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", `http://127.0.0.1:${port}`);
     vi.stubEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY", "anon-key");
     vi.stubEnv("SUPABASE_SERVICE_ROLE_KEY", "fake-service-role-key");
+    // Work Package G: per-check array is gated behind READINESS_TOKEN.
+    vi.stubEnv("READINESS_TOKEN", "secret-readiness-token");
     try {
       const { GET } = await import("@/app/api/readiness/route");
-      const response = await GET(makeRequest());
+      const request = new NextRequest("https://kzq.test/api/readiness", {
+        headers: { Authorization: "Bearer secret-readiness-token" },
+      });
+      const response = await GET(request);
       const body = await response.json();
       expect(response.status).toBe(503);
       expect(body.ready).toBe(false);
@@ -229,17 +245,21 @@ describe("/api/readiness route", () => {
       });
       const response = await GET(request);
       const body = await response.json();
-      // Detail should NOT be included with wrong token
-      const productsCheck = body.checks.find(
-        (c: { name: string }) => c.name === "public_products",
-      );
-      expect(productsCheck.detail).toBeUndefined();
+      // Work Package G: with a wrong token, the entire per-check array
+      // is hidden — an attacker cannot enumerate which subsystem is
+      // failing. Only the top-level { ready, timestamp } is returned.
+      expect(body.checks).toBeUndefined();
+      // Token must never appear in the output
+      expect(JSON.stringify(body)).not.toContain("wrong-token");
+      expect(JSON.stringify(body)).not.toContain("secret-readiness-token");
     } finally {
       await stopServer(server);
     }
   });
 
-  it("treats storage 401/403 as ready (storage is alive)", async () => {
+  it("hides per-check array entirely when READINESS_TOKEN is not configured", async () => {
+    // Work Package G: even if all checks pass, an unauthenticated caller
+    // must not see the per-check array — only { ready, timestamp }.
     const server = await startMockServer((req, res) => {
       const headers = { "Content-Type": "application/json", Connection: "close" };
       if (req.url?.includes("/rest/v1/products")) {
@@ -252,8 +272,107 @@ describe("/api/readiness route", () => {
         res.end(JSON.stringify({ ok: true, checks: [] }));
         return;
       }
-      if (req.url?.includes("/storage/v1/bucket")) {
-        res.writeHead(401, headers);
+      if (req.url?.includes("/storage/v1/object/public/")) {
+        res.writeHead(200, headers);
+        res.end("");
+        return;
+      }
+      res.writeHead(404, headers);
+      res.end("{}");
+    });
+    const port = getPort(server);
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", `http://127.0.0.1:${port}`);
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY", "anon-key");
+    vi.stubEnv("SUPABASE_SERVICE_ROLE_KEY", "fake-service-role-key");
+    // READINESS_TOKEN intentionally NOT set — detail mode disabled.
+    try {
+      const { GET } = await import("@/app/api/readiness/route");
+      const response = await GET(makeRequest());
+      const body = await response.json();
+      expect(response.status).toBe(200);
+      expect(body.ready).toBe(true);
+      expect(body.checks).toBeUndefined();
+      expect(body.timestamp).toBeTruthy();
+    } finally {
+      await stopServer(server);
+    }
+  });
+
+  it("treats storage 401/403/404 as NOT ready (canary object must be retrievable)", async () => {
+    // Work Package G: previously the storage check HEAD-ed the bucket root
+    // and accepted 401/403 as "ready" (fail-open). This was a bug: a 401/403
+    // only proves the HTTP service is alive, not that any object can be
+    // retrieved. The new behavior fetches a public canary object and
+    // requires HTTP 200; any other status is a failure.
+    const server = await startMockServer((req, res) => {
+      const headers = { "Content-Type": "application/json", Connection: "close" };
+      if (req.url?.includes("/rest/v1/products")) {
+        res.writeHead(200, headers);
+        res.end(JSON.stringify([{ id: "test-id" }]));
+        return;
+      }
+      if (req.url?.includes("/rest/v1/rpc/verify_schema_readiness")) {
+        res.writeHead(200, headers);
+        res.end(JSON.stringify({ ok: true, checks: [] }));
+        return;
+      }
+      // Canary object endpoint returns 403 — storage HTTP service is alive
+      // but the public canary cannot be retrieved (broken bucket policy,
+      // missing canary, or unauthorized). This must be treated as NOT ready.
+      if (req.url?.includes("/storage/v1/object/public/")) {
+        res.writeHead(403, headers);
+        res.end("");
+        return;
+      }
+      res.writeHead(404, headers);
+      res.end("{}");
+    });
+    const port = getPort(server);
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", `http://127.0.0.1:${port}`);
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY", "anon-key");
+    vi.stubEnv("SUPABASE_SERVICE_ROLE_KEY", "fake-service-role-key");
+    vi.stubEnv("READINESS_TOKEN", "secret-readiness-token");
+    try {
+      const { GET } = await import("@/app/api/readiness/route");
+      const request = new NextRequest("https://kzq.test/api/readiness", {
+        headers: { Authorization: "Bearer secret-readiness-token" },
+      });
+      const response = await GET(request);
+      const body = await response.json();
+      expect(response.status).toBe(503);
+      expect(body.ready).toBe(false);
+      const storageCheck = body.checks.find(
+        (c: { name: string }) => c.name === "storage",
+      );
+      expect(storageCheck.ready).toBe(false);
+      // The detail field should be present with the sanitized HTTP status
+      // (no raw error text, no Supabase error messages).
+      expect(storageCheck.detail).toContain("HTTP 403");
+    } finally {
+      await stopServer(server);
+    }
+  });
+
+  it("rate-limits readiness probes after 12 requests / 60s", async () => {
+    // Work Package G: without rate limiting, an attacker could DOS Supabase
+    // by repeatedly hitting /api/readiness (which calls Supabase REST +
+    // Storage + a service_role RPC). The limiter is per-IP via trusted
+    // proxy headers; in this test we simulate a single client by sending
+    // the same x-real-ip header.
+    const server = await startMockServer((req, res) => {
+      const headers = { "Content-Type": "application/json", Connection: "close" };
+      if (req.url?.includes("/rest/v1/products")) {
+        res.writeHead(200, headers);
+        res.end(JSON.stringify([{ id: "test-id" }]));
+        return;
+      }
+      if (req.url?.includes("/rest/v1/rpc/verify_schema_readiness")) {
+        res.writeHead(200, headers);
+        res.end(JSON.stringify({ ok: true, checks: [] }));
+        return;
+      }
+      if (req.url?.includes("/storage/v1/object/public/")) {
+        res.writeHead(200, headers);
         res.end("");
         return;
       }
@@ -266,13 +385,23 @@ describe("/api/readiness route", () => {
     vi.stubEnv("SUPABASE_SERVICE_ROLE_KEY", "fake-service-role-key");
     try {
       const { GET } = await import("@/app/api/readiness/route");
-      const response = await GET(makeRequest());
+      const makeRequestWithIp = () =>
+        new NextRequest("https://kzq.test/api/readiness", {
+          headers: { "x-real-ip": "203.0.113.42" },
+        });
+      // Send 12 requests — all should be allowed (limit is 12/60s).
+      for (let i = 0; i < 12; i++) {
+        const response = await GET(makeRequestWithIp());
+        expect(response.status).toBe(200);
+      }
+      // 13th request should be rate-limited.
+      const response = await GET(makeRequestWithIp());
+      expect(response.status).toBe(429);
       const body = await response.json();
-      expect(response.status).toBe(200);
-      const storageCheck = body.checks.find(
-        (c: { name: string }) => c.name === "storage",
-      );
-      expect(storageCheck.ready).toBe(true);
+      expect(body.ready).toBe(false);
+      expect(body.error).toBe("RATE_LIMITED");
+      expect(response.headers.get("retry-after")).toBeTruthy();
+      expect(response.headers.get("cache-control")).toBe("no-store");
     } finally {
       await stopServer(server);
     }
