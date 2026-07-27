@@ -5,8 +5,11 @@
  *   - HTTPS absolute URLs whose host is the configured Supabase Storage
  *     origin or an explicitly approved enterprise CDN domain.
  *   - Same-origin relative paths starting with a single "/" (not "//")
- *     AND NOT falling under a denied internal path prefix
- *     (/api/**, /admin/**, /_next/**, /auth/**, /storage/**, /.**).
+ *     whose first path segment is in the positive public-media whitelist
+ *     (assets, uploads, demo, images, img, documents, covers, certs,
+ *     kzq-home) AND whose normalized pathname does not contain path
+ *     traversal, encoded dots/separators, backslashes, or dot-file
+ *     segments.
  *
  * Rejects:
  *   - protocol-relative URLs (//host/...)
@@ -18,9 +21,22 @@
  *   - Supabase URLs that are not project-shaped (<ref>.supabase.co) or
  *     explicitly-overridden enterprise hosts — prevents accidental
  *     wildcarding to arbitrary supabase.co projects.
- *   - relative paths that point at internal endpoints (/api/**, /admin/**,
- *     /_next/**, /auth/**, /storage/**, /.**) — prevents SSRF via the
- *     Next.js image optimizer serving internal endpoints as images.
+ *   - relative paths that are NOT under a whitelisted public media root,
+ *     or that contain path traversal (..), encoded dots/separators
+ *     (%2e, %2f, %5c, %00), backslashes, double slashes, dot-file
+ *     segments, or query/fragment that could change resource semantics
+ *     — prevents SSRF via the Next.js image optimizer serving internal
+ *     endpoints as images.
+ *
+ * Review #2 Work Package F: the previous implementation used
+ * `value.startsWith(prefix)` on the raw input string, which was
+ * vulnerable to bypass via URL-encoded characters (e.g. `/%61pi/...`),
+ * path traversal (e.g. `/assets/../api/...`), backslash separators
+ * (e.g. `/assets\..\api\...`), and missing trailing slashes (e.g.
+ * `/api` without `/`). The new implementation parses the relative URL
+ * against a fixed same-origin base, decodes the pathname, normalizes
+ * path segments, and applies a positive whitelist of public media root
+ * directories before any deny-list check.
  *
  * The allowlist is derived from the same configuration that feeds
  * next.config.remotePatterns, so CMS validation and the Next.js image
@@ -46,26 +62,45 @@ const BLOCKED_SCHEMES = new Set([
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "::1"]);
 
-// Work Package G: relative media paths are denied when they fall under
-// these internal endpoint prefixes. Anything else (e.g. /api/admin/storage/
-// preview/<secret>) would let a CMS-saved "media URL" render internal
-// endpoints as <img>/<Image> via the Next.js image optimizer, acting as
-// an SSRF oracle.
+// ============================================================
+// Review #2 Work Package F: positive whitelist of public media root
+// directories. A relative media path is accepted ONLY when its first
+// path segment (after normalization) is in this set.
 //
-// We use a deny-list (not an allowlist) because the codebase legitimately
-// serves media from several public/ subdirectories (demo/, kzq-home/,
-// etc.) and CMS-saved URLs may point at any of them. The deny-list is
-// comprehensive for known-internal Next.js / Supabase paths.
-const DENIED_RELATIVE_PREFIXES = [
-  "/api/",
-  "/admin/",
-  "/_next/",
-  "/auth/",
-  "/storage/",
-] as const;
-// Any path whose first segment starts with "." (e.g. "/.env", "/.git",
-// "/.well-known/") is also denied — these are never media paths.
-const DENIED_DOT_PATH_PATTERN = /^\/\./;
+// This replaces the previous deny-list approach which was vulnerable to
+// prefix-based bypasses. The whitelist includes all directories actually
+// used by the project (public/demo, public/kzq-home) plus the media root
+// directories referenced by CMS-saved URLs and tests (assets, uploads,
+// images, img, documents, covers, certs).
+// ============================================================
+const PUBLIC_MEDIA_ROOTS: ReadonlySet<string> = new Set([
+  "assets",
+  "uploads",
+  "demo",
+  "images",
+  "img",
+  "documents",
+  "covers",
+  "certs",
+  "kzq-home",
+]);
+
+// Defense-in-depth: even after the positive whitelist, we still reject
+// any normalized path that falls under these internal endpoint prefixes.
+// This catches future regressions where a new public directory might
+// accidentally collide with an internal route.
+const DENIED_INTERNAL_ROOTS: ReadonlySet<string> = new Set([
+  "api",
+  "admin",
+  "_next",
+  "auth",
+  "storage",
+]);
+
+// Fixed same-origin base used to parse relative URLs. The hostname is
+// a placeholder that never resolves to a real server — it exists only
+// to give `new URL(rel, base)` a stable origin for pathname extraction.
+const SAME_ORIGIN_BASE = "https://kzq.local";
 
 // Supabase project host shape: <project-ref>.supabase.co where
 // project-ref is 20 lowercase alphanumeric characters. Anything else
@@ -140,6 +175,169 @@ export interface MediaUrlValidation {
 }
 
 /**
+ * Validate a relative same-origin media path.
+ *
+ * Review #2 Work Package F: the previous implementation used
+ * `value.startsWith(prefix)` on the raw input string, which was
+ * vulnerable to bypass via:
+ *   - URL-encoded characters: `/%61pi/readiness` (a → %61)
+ *   - Path traversal: `/assets/../api/readiness`
+ *   - Backslash separators: `/assets\..\api\readiness`
+ *   - Double slashes: `//api/readiness`
+ *   - Missing trailing slash: `/api` (not caught by `/api/` check)
+ *   - Encoded path traversal: `/%2e%2e/api/readiness`
+ *
+ * The new implementation:
+ *   1. Rejects backslashes, null bytes, and encoded path separators
+ *      (%2e, %2f, %5c, %00) in the raw input BEFORE parsing.
+ *   2. Parses the relative URL against a fixed same-origin base.
+ *   3. Extracts and decodes the pathname.
+ *   4. Splits into segments and rejects any ".." or "." segment
+ *      (path traversal).
+ *   5. Rejects any segment starting with "." (dot-file paths).
+ *   6. Applies a positive whitelist of public media root directories.
+ *   7. Defense-in-depth: rejects paths under internal endpoint roots
+ *      (api, admin, _next, auth, storage) even if somehow allowlisted.
+ *   8. Rejects query/fragment that contain path-like patterns.
+ */
+function validateRelativeMediaPath(
+  value: string,
+): MediaUrlValidation {
+  // Step 1: Reject protocol-relative URLs (//host/...).
+  if (value.startsWith("//")) {
+    return { ok: false, reason: "protocol-relative" };
+  }
+
+  // Step 2: Reject backslashes outright. Backslashes are never valid in
+  // URL pathnames and are a common path-traversal vector on Windows-
+  // tolerant servers. We check the RAW input (before URL parsing)
+  // because `new URL()` does not preserve backslashes.
+  if (value.includes("\\")) {
+    return { ok: false, reason: "unapproved-relative-path" };
+  }
+
+  // Step 3: Reject null bytes and encoded path separators/dots in the
+  // raw input. `new URL()` may silently decode some of these, so we
+  // check the raw string before parsing.
+  //   %2e / %2E → "." (encoded dot for path traversal)
+  //   %2f / %2F → "/" (encoded path separator)
+  //   %5c / %5C → "\" (encoded backslash)
+  //   %00       → null byte
+  const lower = value.toLowerCase();
+  if (
+    lower.includes("%2e") ||
+    lower.includes("%2f") ||
+    lower.includes("%5c") ||
+    lower.includes("%00") ||
+    value.includes("\0")
+  ) {
+    return { ok: false, reason: "unapproved-relative-path" };
+  }
+
+  // Step 4: Parse the relative URL against a fixed same-origin base.
+  // This gives us a stable URL object for pathname extraction. The
+  // base hostname is a placeholder that never resolves.
+  let url: URL;
+  try {
+    url = new URL(value, SAME_ORIGIN_BASE);
+  } catch {
+    return { ok: false, reason: "malformed" };
+  }
+
+  // Step 5: Reject if the URL introduced a different host. This catches
+  // edge cases where the input somehow parsed as an absolute URL.
+  if (url.hostname.toLowerCase() !== "kzq.local") {
+    return { ok: false, reason: "unapproved-host" };
+  }
+
+  // Step 6: Extract the pathname and split into segments. The URL
+  // constructor normalizes `//` to `/` in the pathname, so we check
+  // for double-slash segments here.
+  const pathname = url.pathname;
+
+  // Reject empty pathname (just "/").
+  if (pathname === "/" || pathname === "") {
+    return { ok: false, reason: "unapproved-relative-path" };
+  }
+
+  // Step 7: Split into segments, filtering empty segments (from
+  // trailing/double slashes). We then validate each segment.
+  const segments = pathname.split("/").filter((s) => s.length > 0);
+
+  // Must have at least one non-empty segment.
+  if (segments.length === 0) {
+    return { ok: false, reason: "unapproved-relative-path" };
+  }
+
+  // Step 8: Reject any ".." or "." segment (path traversal).
+  // The URL constructor should resolve these, but we check defensively.
+  for (const seg of segments) {
+    if (seg === ".." || seg === ".") {
+      return { ok: false, reason: "unapproved-relative-path" };
+    }
+    // Reject any segment starting with "." (dot-file paths like
+    // /.env, /.git, /.htaccess). Also catches segments like ".hidden".
+    if (seg.startsWith(".")) {
+      return { ok: false, reason: "unapproved-relative-path" };
+    }
+  }
+
+  // Step 9: Apply the positive whitelist of public media root
+  // directories. The first segment MUST be in the whitelist.
+  const root = segments[0];
+  if (!PUBLIC_MEDIA_ROOTS.has(root)) {
+    return { ok: false, reason: "unapproved-relative-path" };
+  }
+
+  // Step 10: Defense-in-depth — reject if the root falls under any
+  // internal endpoint prefix. This should never trigger because the
+  // whitelist already excludes them, but it protects against future
+  // regressions.
+  if (DENIED_INTERNAL_ROOTS.has(root)) {
+    return { ok: false, reason: "unapproved-relative-path" };
+  }
+
+  // Step 11: Reject query/fragment that could change resource semantics.
+  // We allow simple cache-busting query strings (e.g. ?v=123) but reject
+  // any query or fragment that contains path-like patterns (.., /, \).
+  if (url.search) {
+    let decodedSearch: string;
+    try {
+      decodedSearch = decodeURIComponent(url.search);
+    } catch {
+      // Malformed percent-encoding in query — reject defensively.
+      return { ok: false, reason: "unapproved-relative-path" };
+    }
+    if (
+      decodedSearch.includes("..") ||
+      decodedSearch.includes("/") ||
+      decodedSearch.includes("\\")
+    ) {
+      return { ok: false, reason: "unapproved-relative-path" };
+    }
+  }
+  if (url.hash) {
+    let decodedHash: string;
+    try {
+      decodedHash = decodeURIComponent(url.hash);
+    } catch {
+      return { ok: false, reason: "unapproved-relative-path" };
+    }
+    if (
+      decodedHash.includes("..") ||
+      decodedHash.includes("/") ||
+      decodedHash.includes("\\")
+    ) {
+      return { ok: false, reason: "unapproved-relative-path" };
+    }
+  }
+
+  // Preserve the original input as the stored value (not the
+  // normalized form) so existing CMS-saved URLs are unaffected.
+  return { ok: true, value };
+}
+
+/**
  * Validate a single media URL string. Empty/whitespace values are rejected
  * with reason "empty" so callers can distinguish "not provided" from
  * "invalid" if they treat the field as optional.
@@ -152,27 +350,9 @@ export function validateMediaUrl(
   const value = input.trim();
   if (value.length === 0) return { ok: false, reason: "empty" };
 
-  // Relative same-origin path: must start with a single "/", never "//",
-  // AND must NOT fall under a denied internal path prefix.
+  // Relative same-origin path: must start with a single "/".
   if (value.startsWith("/")) {
-    if (value.startsWith("//")) {
-      return { ok: false, reason: "protocol-relative" };
-    }
-    // Work Package G: deny internal endpoint prefixes to prevent SSRF via
-    // the Next.js image optimizer. /api/**, /admin/**, /_next/**, /auth/**,
-    // /storage/**, and any dot-file path would otherwise be accepted as
-    // media URLs and rendered as <Image> — an SSRF vector that could leak
-    // internal responses via the optimizer's fetch behavior.
-    if (DENIED_DOT_PATH_PATTERN.test(value)) {
-      return { ok: false, reason: "unapproved-relative-path" };
-    }
-    const isDeniedInternalPath = DENIED_RELATIVE_PREFIXES.some((prefix) =>
-      value.startsWith(prefix),
-    );
-    if (isDeniedInternalPath) {
-      return { ok: false, reason: "unapproved-relative-path" };
-    }
-    return { ok: true, value };
+    return validateRelativeMediaPath(value);
   }
 
   // Reject any blocked scheme by its prefix (case-insensitive).

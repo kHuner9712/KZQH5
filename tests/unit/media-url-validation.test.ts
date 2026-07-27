@@ -93,6 +93,86 @@ describe("validateMediaUrl: relative path deny-list (SSRF prevention)", () => {
       expect(result.value).toBe(path);
     });
   }
+
+  // ============================================================
+  // Review #2 — Work Package F: bypass attempts.
+  //
+  // The previous implementation used `value.startsWith(prefix)` on
+  // the raw input string, which was vulnerable to bypass via URL
+  // encoding, path traversal, backslash separators, double slashes,
+  // and missing trailing slashes. The new implementation parses
+  // the relative URL against a fixed same-origin base, decodes the
+  // pathname, normalizes path segments, and applies a positive
+  // whitelist of public media root directories.
+  // ============================================================
+  const bypassAttempts = [
+    // Bare internal roots without trailing slash — the old check
+    // was `startsWith("/api/")` which missed `/api`.
+    "/api",
+    "/admin",
+    // Path traversal from a whitelisted root.
+    "/assets/../api/readiness",
+    // URL-encoded characters that decode to internal paths.
+    "/%61pi/readiness", // %61 = 'a' → /api/readiness
+    // URL-encoded path traversal.
+    "/%2e%2e/api/readiness", // %2e%2e = '..' → /../api/readiness
+    "/assets/%2e%2e/api/readiness", // encoded .. inside whitelisted root
+    // Backslash separators (Windows path traversal).
+    "/assets\\..\\api\\readiness",
+    // Double slash — old check caught `//` (protocol-relative) but
+    // `//api/readiness` would still be caught here too.
+    "//api/readiness",
+  ];
+
+  for (const path of bypassAttempts) {
+    it(`Review #2 denies bypass attempt: ${path}`, () => {
+      const result = validateMediaUrl(path, allowlist);
+      expect(result.ok).toBe(false);
+      // `//api/readiness` is caught as protocol-relative; all others
+      // are caught as unapproved-relative-path.
+      expect(result.reason).toMatch(
+        /^(protocol-relative|unapproved-relative-path)$/,
+      );
+    });
+  }
+
+  // --- Additional bypass: query/fragment that changes resource semantics ---
+  it("Review #2 denies query string with path traversal", () => {
+    const result = validateMediaUrl(
+      "/assets/img.jpg?path=../../api/readiness",
+      allowlist,
+    );
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("unapproved-relative-path");
+  });
+
+  it("Review #2 denies fragment with path traversal", () => {
+    const result = validateMediaUrl(
+      "/assets/img.jpg#/../../api/readiness",
+      allowlist,
+    );
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("unapproved-relative-path");
+  });
+
+  it("Review #2 allows simple cache-busting query string", () => {
+    const result = validateMediaUrl("/assets/img.jpg?v=123", allowlist);
+    expect(result.ok).toBe(true);
+    expect(result.value).toBe("/assets/img.jpg?v=123");
+  });
+
+  // --- Additional bypass: non-whitelisted root directory ---
+  it("Review #2 denies non-whitelisted root directory", () => {
+    const result = validateMediaUrl("/internal/img.jpg", allowlist);
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("unapproved-relative-path");
+  });
+
+  it("Review #2 denies root-level path (just /)", () => {
+    const result = validateMediaUrl("/", allowlist);
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("unapproved-relative-path");
+  });
 });
 
 describe("validateMediaUrl: Supabase host shape validation", () => {
