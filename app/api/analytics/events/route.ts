@@ -2,7 +2,25 @@ import { NextRequest, NextResponse } from "next/server";
 import { recordAnalyticsEvent } from "@/lib/repositories/analytics";
 import { validateAnalyticsEvent } from "@/lib/services/analytics/validation";
 import { getAnalyticsRateLimiter } from "@/lib/services/rate-limit";
-import { ephemeralRateKey, isSameSiteRequest } from "@/lib/services/http-security";
+import {
+  ephemeralRateKey,
+  isSameSiteRequest,
+  readJsonBody,
+} from "@/lib/services/http-security";
+
+// ============================================================
+// /api/analytics/events
+// ------------------------------------------------------------
+// Public POST endpoint that records a single client-side analytics event.
+// Hardened:
+//   - CSRF (isSameSiteRequest)
+//   - Strict Content-Type: application/json
+//   - 8 KB body cap (declared Content-Length AND actual byte count)
+//   - Per-IP rate limiting (60 events / 60s)
+//   - Strict allowlist of event_name values (validated downstream)
+//   - Fixed coarse log codes only — never raw Supabase error.message
+//   - Cache-Control: no-store
+// ============================================================
 
 const MAX_BODY_BYTES = 8 * 1024;
 
@@ -18,13 +36,8 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const contentLength = Number(request.headers.get("content-length") || 0);
-  if (contentLength > MAX_BODY_BYTES) {
-    return NextResponse.json(
-      { success: false, error: "Payload too large" },
-      { status: 413 },
-    );
-  }
+  // Rate limit BEFORE reading the body so an attacker cannot exhaust
+  // request-body parsing budget while bypassing the limiter.
   const rate = await getAnalyticsRateLimiter().check(ephemeralRateKey(request));
   if (!rate.allowed) {
     return NextResponse.json(
@@ -36,32 +49,21 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  let raw = "";
-  try {
-    raw = await request.text();
-    if (new TextEncoder().encode(raw).byteLength > MAX_BODY_BYTES) {
-      return NextResponse.json(
-        { success: false, error: "Payload too large" },
-        { status: 413 },
-      );
-    }
-  } catch {
+  const parsed = await readJsonBody<unknown>(request, MAX_BODY_BYTES);
+  if (!parsed.ok) {
+    const error =
+      parsed.status === 413
+        ? "Payload too large"
+        : parsed.status === 415
+          ? "Content-Type must be application/json"
+          : "Invalid request body";
     return NextResponse.json(
-      { success: false, error: "Invalid request body" },
-      { status: 400 },
+      { success: false, error },
+      { status: parsed.status },
     );
   }
 
-  let body: unknown;
-  try {
-    body = JSON.parse(raw);
-  } catch {
-    return NextResponse.json(
-      { success: false, error: "Invalid JSON" },
-      { status: 400 },
-    );
-  }
-  const validation = validateAnalyticsEvent(body);
+  const validation = validateAnalyticsEvent(parsed.value);
   if (!validation.success) {
     return NextResponse.json(
       { success: false, error: validation.error },
@@ -76,10 +78,11 @@ export async function POST(request: NextRequest) {
       headers: { "Cache-Control": "no-store" },
     });
   } catch (error) {
-    console.error(
-      "Analytics event insert failed:",
-      error instanceof Error ? error.message : "unknown error",
-    );
+    // Fixed coarse cause code only — never the raw Supabase error which may
+    // contain SQL text / parameter values.
+    const causeName =
+      error instanceof Error ? error.name : typeof error === "string" ? error : "UnknownError";
+    console.error(`ANALYTICS_EVENT_FAILED code=${causeName}`);
     return NextResponse.json(
       { success: false, error: "Service unavailable" },
       { status: 503 },
