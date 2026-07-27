@@ -99,34 +99,20 @@ describe("ephemeralRateKey — no-IP fallback strategy", () => {
     vi.unstubAllEnvs();
   });
 
-  it("prefers a trusted proxy IP when present", () => {
+  it("prefers the configured TRUSTED_PROXY_HEADER IP when present", () => {
+    vi.stubEnv("TRUSTED_PROXY_HEADER", "eo-connecting-ip");
     const headers = new Headers();
     headers.set("eo-connecting-ip", "203.0.113.10");
     expect(ephemeralRateKey({ headers })).toBe("ip:203.0.113.10");
   });
 
-  it("does NOT trust client-forgeable x-forwarded-for by default", () => {
+  it("does NOT trust client-forgeable x-forwarded-for (ever, no opt-in)", () => {
+    vi.stubEnv("TRUSTED_PROXY_HEADER", "eo-connecting-ip");
     const headers = new Headers();
     headers.set("x-forwarded-for", "203.0.113.99");
-    // Without TRUST_X_FORWARDED_FOR=true, the header is ignored and the
-    // fallback path is taken (dev bucket since NODE_ENV is not production).
+    // x-forwarded-for is NEVER trusted, regardless of configuration.
     const key = ephemeralRateKey({ headers });
     expect(key).not.toContain("203.0.113.99");
-  });
-
-  it("honors TRUST_X_FORWARDED_FOR=true for the first hop only", () => {
-    vi.stubEnv("TRUST_X_FORWARDED_FOR", "true");
-    const headers = new Headers();
-    headers.set("x-forwarded-for", "203.0.113.50, 10.0.0.1");
-    expect(ephemeralRateKey({ headers })).toBe("ip:203.0.113.50");
-  });
-
-  it("rejects a malformed x-forwarded-for first hop", () => {
-    vi.stubEnv("TRUST_X_FORWARDED_FOR", "true");
-    const headers = new Headers();
-    headers.set("x-forwarded-for", "not-an-ip, 10.0.0.1");
-    // Falls back to non-IP path.
-    expect(ephemeralRateKey({ headers })).toMatch(/^fallback:/);
   });
 
   it("returns a stable fallback key (NOT a random per-request UUID) when no IP is available", () => {
@@ -140,8 +126,8 @@ describe("ephemeralRateKey — no-IP fallback strategy", () => {
     expect(first).not.toMatch(/^unknown:/);
   });
 
-  it("produces a stable HMAC fallback key when RATE_LIMIT_FALLBACK_SECRET is set", () => {
-    vi.stubEnv("RATE_LIMIT_FALLBACK_SECRET", "super-secret-key-1234");
+  it("produces a stable HMAC fallback key when RATE_LIMIT_FALLBACK_SECRET is set (>= 32 chars)", () => {
+    vi.stubEnv("RATE_LIMIT_FALLBACK_SECRET", "super-secret-key-that-is-at-least-32-chars-long");
     const baseHeaders = new Headers();
     baseHeaders.set("user-agent", "Mozilla/5.0 (Test Browser)");
     baseHeaders.set("accept-language", "en-US,en;q=0.9");
@@ -167,6 +153,14 @@ describe("ephemeralRateKey — no-IP fallback strategy", () => {
     expect(second).toBe("fallback:global");
   });
 
+  it("falls back to global when secret is shorter than 32 chars (even in non-production)", () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("RATE_LIMIT_FALLBACK_SECRET", "short-16-char-key");
+    const headers = new Headers();
+    // 16 chars is no longer sufficient; must be >= 32.
+    expect(ephemeralRateKey({ headers })).toBe("fallback:global");
+  });
+
   it("ignores the legacy randomId parameter (no per-request UUID bypass)", () => {
     const headers = new Headers();
     // Even if a caller passes a randomId, the function MUST NOT use it.
@@ -178,35 +172,111 @@ describe("ephemeralRateKey — no-IP fallback strategy", () => {
   });
 });
 
-describe("getClientIp — header trust boundary", () => {
-  it("trusts eo-connecting-ip first", () => {
+describe("getClientIp — single configured trusted header", () => {
+  beforeEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("returns IP from the configured eo-connecting-ip header and ignores others", () => {
+    vi.stubEnv("TRUSTED_PROXY_HEADER", "eo-connecting-ip");
     const headers = new Headers();
     headers.set("eo-connecting-ip", "203.0.113.10");
+    // An attacker sets cf-connecting-ip — must be ignored.
+    headers.set("cf-connecting-ip", "198.51.100.99");
     headers.set("x-forwarded-for", "203.0.113.99");
     expect(getClientIp({ headers })).toBe("203.0.113.10");
   });
 
-  it("rejects malformed trusted-header values", () => {
+  it("returns IP from the configured x-real-ip header and ignores others", () => {
+    vi.stubEnv("TRUSTED_PROXY_HEADER", "x-real-ip");
+    const headers = new Headers();
+    headers.set("x-real-ip", "203.0.113.20");
+    // Other trusted headers present — must be ignored.
+    headers.set("eo-connecting-ip", "198.51.100.99");
+    headers.set("cf-connecting-ip", "198.51.100.50");
+    expect(getClientIp({ headers })).toBe("203.0.113.20");
+  });
+
+  it("returns null when TRUSTED_PROXY_HEADER is not configured (all proxy headers untrusted)", () => {
+    const headers = new Headers();
+    headers.set("eo-connecting-ip", "203.0.113.10");
+    headers.set("cf-connecting-ip", "203.0.113.20");
+    headers.set("x-real-ip", "203.0.113.30");
+    headers.set("x-forwarded-for", "203.0.113.99");
+    expect(getClientIp({ headers })).toBeNull();
+  });
+
+  it("returns null for an invalid TRUSTED_PROXY_HEADER value (fail closed)", () => {
+    vi.stubEnv("TRUSTED_PROXY_HEADER", "x-attacker-controlled-ip");
+    const headers = new Headers();
+    headers.set("x-attacker-controlled-ip", "203.0.113.99");
+    expect(getClientIp({ headers })).toBeNull();
+  });
+
+  it("returns null when the configured header is absent (does not fall through to other headers)", () => {
+    vi.stubEnv("TRUSTED_PROXY_HEADER", "eo-connecting-ip");
+    const headers = new Headers();
+    // Only cf-connecting-ip is present, but we configured eo-connecting-ip.
+    headers.set("cf-connecting-ip", "203.0.113.99");
+    expect(getClientIp({ headers })).toBeNull();
+  });
+
+  it("returns null when the configured header value is not a valid IP", () => {
+    vi.stubEnv("TRUSTED_PROXY_HEADER", "eo-connecting-ip");
     const headers = new Headers();
     headers.set("eo-connecting-ip", "not-an-ip");
     expect(getClientIp({ headers })).toBeNull();
   });
 
-  it("returns null when no trusted header is present and TRUST_X_FORWARDED_FOR is unset", () => {
+  it("multiple conflicting headers do not affect configured header priority", () => {
+    vi.stubEnv("TRUSTED_PROXY_HEADER", "x-edgeone-client-ip");
     const headers = new Headers();
-    headers.set("x-forwarded-for", "203.0.113.99");
-    expect(getClientIp({ headers })).toBeNull();
+    headers.set("x-edgeone-client-ip", "203.0.113.42");
+    // Attacker sets every other known proxy header to different values.
+    headers.set("eo-connecting-ip", "10.0.0.1");
+    headers.set("cf-connecting-ip", "10.0.0.2");
+    headers.set("x-real-ip", "10.0.0.3");
+    headers.set("x-forwarded-for", "10.0.0.4");
+    expect(getClientIp({ headers })).toBe("203.0.113.42");
+  });
+
+  it("case-insensitive TRUSTED_PROXY_HEADER matching", () => {
+    vi.stubEnv("TRUSTED_PROXY_HEADER", "EO-Connecting-IP");
+    const headers = new Headers();
+    headers.set("eo-connecting-ip", "203.0.113.42");
+    expect(getClientIp({ headers })).toBe("203.0.113.42");
   });
 });
 
 // Sanity check: ensure the helpers integrate with a real NextRequest so
 // the test does not rely on a hand-rolled Headers object only.
 describe("integration with NextRequest", () => {
-  it("extracts a trusted IP from a real NextRequest", () => {
+  beforeEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("extracts a trusted IP from a real NextRequest using the configured header", () => {
+    vi.stubEnv("TRUSTED_PROXY_HEADER", "eo-connecting-ip");
     const request = new NextRequest("https://kzq.test/api/inquiries", {
       headers: { "eo-connecting-ip": "203.0.113.42" },
     });
     expect(getClientIp(request)).toBe("203.0.113.42");
     expect(ephemeralRateKey(request)).toBe("ip:203.0.113.42");
+  });
+
+  it("returns null from a real NextRequest when header is not configured", () => {
+    const request = new NextRequest("https://kzq.test/api/inquiries", {
+      headers: { "eo-connecting-ip": "203.0.113.42" },
+    });
+    expect(getClientIp(request)).toBeNull();
+    expect(ephemeralRateKey(request)).toMatch(/^fallback:/);
   });
 });

@@ -6,74 +6,88 @@ export const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 // ============================================================
-// Trusted reverse-proxy headers
+// Trusted proxy header selection
 // ------------------------------------------------------------
-// These headers are set by the CDN / reverse proxy in front of
-// the Next.js runtime and are NOT client-forgeable in a correctly
-// deployed production environment:
+// The operator MUST configure exactly ONE header name via the
+// TRUSTED_PROXY_HEADER env var. The allowed values are a fixed
+// enum matched case-insensitively:
 //
-//   cf-connecting-ip     — Cloudflare
 //   eo-connecting-ip     — EdgeOne (Tencent)
 //   x-edgeone-client-ip  — EdgeOne (legacy alias)
 //   x-real-ip            — Nginx / generic proxy
+//   cf-connecting-ip     — Cloudflare
 //
-// `x-forwarded-for` is intentionally NOT in this list: it is a
+// If TRUSTED_PROXY_HEADER is not set, is set to an unknown value,
+// or the configured header is absent on the request, getClientIp
+// returns null — never a fallback from a different header.
+//
+// x-forwarded-for is NEVER trusted automatically. It is a
 // comma-separated chain that grows as the request traverses
 // proxies, and any client can set the first hop to an arbitrary
-// value. We only honor it when TRUST_X_FORWARDED_FOR=true is set
-// explicitly by the operator (e.g. when running behind a known
-// single-hop Nginx that overwrites the header).
+// value.
 // ============================================================
-const TRUSTED_PROXY_HEADERS = [
-  "cf-connecting-ip",
+const ALLOWED_PROXY_HEADERS = [
   "eo-connecting-ip",
   "x-edgeone-client-ip",
   "x-real-ip",
+  "cf-connecting-ip",
 ] as const;
+
+const ALLOWED_PROXY_HEADER_SET: Set<string> = new Set(ALLOWED_PROXY_HEADERS);
+
+/**
+ * Minimum secret length for per-client fallback bucketing.
+ * Production deployments MUST set RATE_LIMIT_FALLBACK_SECRET to at
+ * least this many characters. Below this threshold the system falls
+ * back to a single strict global bucket and emits a config warning.
+ */
+export const RATE_LIMIT_FALLBACK_SECRET_MIN_LENGTH = 32;
 
 function validIp(value: string | null): string | null {
   const candidate = value?.trim();
   return candidate && isIP(candidate) ? candidate : null;
 }
 
+function resolveTrustedHeader(): string | null {
+  const configured = (process.env.TRUSTED_PROXY_HEADER || "")
+    .trim()
+    .toLowerCase();
+  if (!configured) return null;
+  if (!ALLOWED_PROXY_HEADER_SET.has(configured)) return null;
+  return configured;
+}
+
 /**
- * Return the trusted client IP, or null when no trusted header is present.
+ * Return the trusted client IP from the single configured proxy header,
+ * or null when the header is not configured, is invalid, or is absent.
  *
- * Honors TRUST_X_FORWARDED_FOR=true to opt-in to trusting the first hop of
- * `x-forwarded-for`. This is intentionally opt-in because client-forged
- * `x-forwarded-for` values are the most common rate-limit bypass on the web.
+ * Only TRUSTED_PROXY_HEADER is consulted. Other proxy headers
+ * (including x-forwarded-for) are NEVER checked. This prevents
+ * an attacker from injecting a different header to bypass the
+ * configured trust boundary.
  */
 export function getClientIp(
   request: Pick<NextRequest, "headers">,
 ): string | null {
-  for (const header of TRUSTED_PROXY_HEADERS) {
-    const candidate = validIp(request.headers.get(header));
-    if (candidate) return candidate;
-  }
-  if (process.env.TRUST_X_FORWARDED_FOR === "true") {
-    const firstHop = request.headers.get("x-forwarded-for")?.split(",")[0];
-    return validIp(firstHop ?? null);
-  }
-  return null;
+  const header = resolveTrustedHeader();
+  if (!header) return null;
+  return validIp(request.headers.get(header));
 }
 
 /**
  * Compute a stable, conservative rate-limit key for the request.
  *
  * Priority:
- *   1. Trusted proxy IP header (cf-connecting-ip / eo-connecting-ip /
- *      x-edgeone-client-ip / x-real-ip) — produces `ip:<addr>`.
- *   2. x-forwarded-for first hop — ONLY when TRUST_X_FORWARDED_FOR=true.
- *   3. Stable HMAC of User-Agent + Accept-Language using a server-side
- *      secret — produces `fallback:<hmac>`. This buckets different
- *      browsers/apparent clients separately while staying stable across
- *      retries from the same client.
- *   4. If no secret is configured:
- *      - In NODE_ENV=production: a single strict `fallback:global` bucket
- *        (all unknown-IP clients share it; this is intentionally strict
- *        and is the fail-closed default).
- *      - Outside production (dev/test): `fallback:dev` (single bucket,
- *        convenient for local development).
+ *   1. The single configured TRUSTED_PROXY_HEADER — produces `ip:<addr>`.
+ *   2. Stable HMAC of User-Agent + Accept-Language + Sec-Fetch-Mode
+ *      using RATE_LIMIT_FALLBACK_SECRET — produces `fallback:<hmac>`.
+ *      This buckets different browsers/apparent clients separately
+ *      while staying stable across retries from the same client.
+ *   3. If no secret is configured (or is shorter than the minimum):
+ *      - In NODE_ENV=production: a single strict `fallback:global`
+ *        bucket (all unknown-IP clients share it; intentionally
+ *        strict, fail-closed default).
+ *      - Outside production (dev/test): `fallback:dev`.
  *
  * The previous implementation called `crypto.randomUUID()` per request
  * when no IP was available, which produced a unique key every time and
@@ -98,25 +112,45 @@ export function ephemeralRateKey(
   // requests from navigations without leaking PII.
   const secFetchMode = request.headers.get("sec-fetch-mode") ?? "";
 
-  if (secret && secret.length >= 16) {
+  if (
+    secret &&
+    secret.length >= RATE_LIMIT_FALLBACK_SECRET_MIN_LENGTH
+  ) {
     const hmac = createHmac("sha256", secret)
       .update(`${userAgent}|${acceptLanguage}|${secFetchMode}`)
       .digest("hex");
     return `fallback:${hmac.slice(0, 16)}`;
   }
 
-  // No secret configured.
+  // No secret configured (or too short).
   if (process.env.NODE_ENV === "production") {
     // Fail-safe strict: all unknown-IP clients share one bucket. This
     // prevents a single attacker from bypassing the limiter, at the cost
     // of potentially blocking legitimate unknown-IP clients when the
     // shared bucket is exhausted. Operators MUST set
-    // RATE_LIMIT_FALLBACK_SECRET (>= 16 chars) in production to get
+    // RATE_LIMIT_FALLBACK_SECRET (>= 32 chars) in production to get
     // per-client bucketing.
+    if (
+      !secret ||
+      secret.length < RATE_LIMIT_FALLBACK_SECRET_MIN_LENGTH
+    ) {
+      // Emit a fixed config warning once per process to avoid log spam.
+      // This does not include the secret value or any PII.
+      if (!rateLimitConfigWarned) {
+        rateLimitConfigWarned = true;
+        console.warn(
+          "RATE_LIMIT_CONFIG_WARNING: RATE_LIMIT_FALLBACK_SECRET is missing or shorter than 32 chars; " +
+            "using strict single fallback:global bucket in production. " +
+            "Set RATE_LIMIT_FALLBACK_SECRET (>= 32 chars) for per-client bucketing.",
+        );
+      }
+    }
     return "fallback:global";
   }
   return "fallback:dev";
 }
+
+let rateLimitConfigWarned = false;
 
 export function isJsonRequest(request: Pick<NextRequest, "headers">): boolean {
   return (

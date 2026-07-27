@@ -127,7 +127,9 @@
 - [ ] **EdgeOne WAF 并发限制**: 上传路径并发连接数 ≤ 5/IP（防止单 IP 同时打开多个上传消耗内存）
 - [ ] **Node.js `--max-old-space-size`**: 至少 512MB（容许 5 并发 × 21MB 峰值 + 基础进程内存）
 - [ ] **匿名分析接口限流生效**（频繁提交返回 429）
-- [ ] **未知 IP 时使用稳定 fallback bucket**（生产 `RATE_LIMIT_FALLBACK_SECRET` ≥ 16 字符已配置；缺失时使用 `fallback:global` 单桶，不产生随机 key）
+- [ ] **未知 IP 时使用稳定 fallback bucket**（生产 `RATE_LIMIT_FALLBACK_SECRET` ≥ 32 字符已配置；缺失时使用 `fallback:global` 单桶，不产生随机 key）
+- [ ] **`TRUSTED_PROXY_HEADER` 已正确配置**（EdgeOne 设为 `eo-connecting-ip`；未配置或非法值时所有代理 Header 不可信）
+- [ ] **`x-forwarded-for` 永远不被信任**（不再有 `TRUST_X_FORWARDED_FOR` 开关）
 
 ---
 
