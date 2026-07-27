@@ -818,8 +818,22 @@ export type Database = {
           p_delivery_id: string;
           p_lock_token: string;
           p_error_code?: string | null;
+          p_force_dead_letter?: boolean;
         };
         Returns: string;
+      };
+      // Work Package E: orphaned delivery cancellation + health snapshot.
+      cancel_orphaned_delivery: {
+        Args: {
+          p_delivery_id: string;
+          p_lock_token: string;
+          p_reason?: string | null;
+        };
+        Returns: string;
+      };
+      get_outbox_health_snapshot: {
+        Args: Record<string, never>;
+        Returns: unknown;
       };
       // Phase 14: Storage operation audit RPCs.
       record_storage_operation_started: {

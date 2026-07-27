@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { processInquiryOutbox } from "@/lib/services/inquiries/outbox-processor";
+import {
+  OutboxRpcError,
+  processInquiryOutbox,
+} from "@/lib/services/inquiries/outbox-processor";
 import { safeSecretEqual } from "@/lib/services/timing-safe-equal";
 import { readJsonBody } from "@/lib/services/http-security";
 
@@ -177,10 +180,25 @@ async function runDispatchWithTimeout(
  * Classify a thrown error from the dispatch path.
  * Returns the fixed coarse code to surface to the caller + the HTTP
  * status. NEVER returns the raw error message — only fixed codes.
+ *
+ * Work Package E: OutboxRpcError now surfaces its specific stable code
+ * (e.g. OUTBOX_CLAIM_DELIVERIES_FAILED) so operators can distinguish
+ * "the queue query failed" from "an adapter call timed out". The raw
+ * Supabase error / SQL text / PII is NEVER serialized — only the
+ * fixed coarse code from `error.code`.
  */
 function classifyDispatchError(
   error: unknown,
 ): { code: string; status: number; logCode: string } {
+  if (error instanceof OutboxRpcError) {
+    // Stable RPC failure code from the processor. The route surfaces
+    // it directly so monitoring can distinguish per-stage failures.
+    return {
+      code: error.code,
+      status: 500,
+      logCode: error.code,
+    };
+  }
   if (error instanceof Error) {
     // AbortError / DOMException.ABORT_ERR fires from controller.abort()
     // OR from the underlying fetch when the AbortSignal fires.

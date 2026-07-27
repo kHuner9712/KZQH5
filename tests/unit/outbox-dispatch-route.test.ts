@@ -3,9 +3,18 @@ import { NextRequest } from "next/server";
 
 const processInquiryOutbox = vi.fn();
 
-vi.mock("@/lib/services/inquiries/outbox-processor", () => ({
-  processInquiryOutbox,
-}));
+// Work Package E: preserve the real OutboxRpcError class so the route's
+// `error instanceof OutboxRpcError` check works correctly when the
+// mocked processor throws it. Re-using the real class keeps the
+// prototype chain intact across module boundaries.
+vi.mock("@/lib/services/inquiries/outbox-processor", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/lib/services/inquiries/outbox-processor")>();
+  return {
+    ...actual,
+    processInquiryOutbox,
+  };
+});
 
 const VALID_SECRET = "test-dispatch-secret-0123456789-absolutely-long-enough";
 
@@ -371,6 +380,78 @@ describe("POST /api/internal/outbox/dispatch — fail-closed dispatcher entrypoi
     const { GET } = await import("@/app/api/internal/outbox/dispatch/route");
     const response = await GET();
     expect(response.status).toBe(405);
+  });
+
+  it("Work Package E: surfaces specific OutboxRpcError code instead of generic dispatch_failed", async () => {
+    // When the processor throws an OutboxRpcError (DB-stage failure),
+    // the route MUST surface the specific stable code so monitoring can
+    // distinguish "the queue query failed" from "an adapter call timed
+    // out". The raw Supabase error / SQL / PII must NEVER be echoed.
+    const { OutboxRpcError } = await import(
+      "@/lib/services/inquiries/outbox-processor"
+    );
+    const rpcErr = new OutboxRpcError(
+      "OUTBOX_CLAIM_DELIVERIES_FAILED",
+      // Pretend the underlying Supabase error contains PII / SQL — the
+      // route must NOT serialize any of this.
+      { message: "select * from inquiries where phone = '13800000000'" },
+    );
+    processInquiryOutbox.mockRejectedValue(rpcErr);
+    const { POST } = await import("@/app/api/internal/outbox/dispatch/route");
+    const response = await POST(
+      dispatchRequest(
+        { batchSize: 5 },
+        { Authorization: `Bearer ${VALID_SECRET}` },
+      ),
+    );
+    expect(response.status).toBe(500);
+    const json = await response.json();
+    // The response surfaces the specific stage code.
+    expect(json.error).toBe("OUTBOX_CLAIM_DELIVERIES_FAILED");
+    // Never leak the raw cause / SQL / PII.
+    const serialized = JSON.stringify(json);
+    expect(serialized).not.toContain("inquiries");
+    expect(serialized).not.toContain("select");
+    expect(serialized).not.toContain("13800000000");
+    expect(serialized).not.toContain("phone");
+  });
+
+  it("Work Package E: surfaces OUTBOX_FIND_UNINITIALIZED_FAILED code", async () => {
+    const { OutboxRpcError } = await import(
+      "@/lib/services/inquiries/outbox-processor"
+    );
+    processInquiryOutbox.mockRejectedValue(
+      new OutboxRpcError("OUTBOX_FIND_UNINITIALIZED_FAILED"),
+    );
+    const { POST } = await import("@/app/api/internal/outbox/dispatch/route");
+    const response = await POST(
+      dispatchRequest(
+        { batchSize: 5 },
+        { Authorization: `Bearer ${VALID_SECRET}` },
+      ),
+    );
+    expect(response.status).toBe(500);
+    const json = await response.json();
+    expect(json.error).toBe("OUTBOX_FIND_UNINITIALIZED_FAILED");
+  });
+
+  it("Work Package E: AbortError still maps to 504 (OutboxRpcError classification takes precedence only for non-abort)", async () => {
+    // Verify the ordering: OutboxRpcError check happens BEFORE the
+    // AbortError check, but an AbortError is NOT an OutboxRpcError,
+    // so it still falls through to 504.
+    const abortError = new Error("aborted");
+    abortError.name = "AbortError";
+    processInquiryOutbox.mockRejectedValue(abortError);
+    const { POST } = await import("@/app/api/internal/outbox/dispatch/route");
+    const response = await POST(
+      dispatchRequest(
+        { batchSize: 5 },
+        { Authorization: `Bearer ${VALID_SECRET}` },
+      ),
+    );
+    expect(response.status).toBe(504);
+    const json = await response.json();
+    expect(json.error).toBe("dispatch_timeout");
   });
 });
 

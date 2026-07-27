@@ -376,10 +376,61 @@ describe("Phase 15: Per-provider Outbox runtime — state machine contract", () 
     });
   });
 
-  it("at-least-once: mark-sent failure leaves delivery recoverable", async () => {
+  it("at-least-once: mark-sent lock_token mismatch returns false (soft failure, recoverable)", async () => {
     // Scenario: notification send succeeded, but mark_delivery_sent
-    // returned an error. Delivery stays in 'claimed' — stale recovery
-    // will re-claim and re-send (at-least-once).
+    // returned data=false because the lock_token no longer matches
+    // (delivery was re-claimed by a newer Worker). This is NOT an
+    // infrastructure error — it's a legitimate concurrent-execution
+    // signal. The processor treats it as a soft failure (delivery
+    // stays 'claimed') and the dispatcher returns 200 with failed=1.
+    const client = makeMockClient({
+      find_uninitialized_outbox_events: { data: [], error: null },
+      claim_inquiry_outbox_deliveries: {
+        data: [
+          {
+            id: "del-1",
+            outbox_event_id: "evt-1",
+            provider: "email",
+            lock_token: "token-a",
+            attempts: 0,
+            max_attempts: 5,
+          },
+        ],
+        error: null,
+      },
+      // data=false (no error): lock_token mismatch — soft failure.
+      mark_delivery_sent: { data: false, error: null },
+    });
+    createAdminSupabaseClient.mockReturnValue(client);
+    const sendFn = vi.fn().mockResolvedValue({});
+    createNotificationAdapters.mockReturnValue([
+      { name: "email", configured: true, send: sendFn },
+    ]);
+
+    const { processInquiryOutbox } = await import(
+      "@/lib/services/inquiries/outbox-processor"
+    );
+    const result = await processInquiryOutbox(10);
+
+    // Notification was sent, but mark-sent returned false.
+    expect(sendFn).toHaveBeenCalledTimes(1);
+    expect(result.sent).toBe(0);
+    expect(result.failed).toBe(1);
+  });
+
+  it("Work Package E: mark-sent RPC infrastructure error throws OutboxRpcError (no silent failure)", async () => {
+    // Scenario: notification send succeeded, but the mark_delivery_sent
+    // RPC failed with a database error (e.g. connection reset). The OLD
+    // behavior was to log a fixed code and return { sent: 0, failed: 1 },
+    // which made "DB query failed" indistinguishable from "lock_token
+    // mismatch" at the dispatcher level. The NEW behavior is to throw
+    // OutboxRpcError("OUTBOX_MARK_DELIVERY_SENT_FAILED") so the
+    // dispatcher route returns 5xx and the failure is visible to
+    // monitoring.
+    //
+    // At-least-once semantics are PRESERVED: the delivery row stays
+    // 'claimed' (the RPC never updated it), and stale recovery will
+    // re-claim it after the timeout.
     const client = makeMockClient({
       find_uninitialized_outbox_events: { data: [], error: null },
       claim_inquiry_outbox_deliveries: {
@@ -406,15 +457,20 @@ describe("Phase 15: Per-provider Outbox runtime — state machine contract", () 
       { name: "email", configured: true, send: sendFn },
     ]);
 
-    const { processInquiryOutbox } = await import(
+    const { processInquiryOutbox, OutboxRpcError } = await import(
       "@/lib/services/inquiries/outbox-processor"
     );
-    const result = await processInquiryOutbox(10);
 
-    // Notification was sent, but mark-sent failed.
+    await expect(processInquiryOutbox(10)).rejects.toMatchObject({
+      name: "OutboxRpcError",
+      code: "OUTBOX_MARK_DELIVERY_SENT_FAILED",
+    });
+    expect(OutboxRpcError).toBeDefined();
+
+    // The notification was sent (at-least-once), but the mark-sent RPC
+    // failed — the delivery row stays 'claimed' and stale recovery
+    // will re-claim it.
     expect(sendFn).toHaveBeenCalledTimes(1);
-    expect(result.sent).toBe(0);
-    expect(result.failed).toBe(1);
   });
 
   it("adapter matching is per-provider (email delivery invokes email adapter only)", async () => {
@@ -557,7 +613,16 @@ describe("Phase 15: Per-provider Outbox runtime — state machine contract", () 
     );
   });
 
-  it("claim RPC error returns zero claimed (no crash)", async () => {
+  it("Work Package E: claim RPC infrastructure error throws OutboxRpcError (no silent failure)", async () => {
+    // Scenario: claim_inquiry_outbox_deliveries RPC failed with a
+    // database error (e.g. db down). The OLD behavior was to log a
+    // fixed code and return { claimed: 0, sent: 0, failed: 0 }, which
+    // made "DB query failed" indistinguishable from "queue is empty"
+    // at the dispatcher level — the dispatcher returned 200 and hid
+    // the outage. The NEW behavior is to throw
+    // OutboxRpcError("OUTBOX_CLAIM_DELIVERIES_FAILED") so the
+    // dispatcher route returns 500 and the failure is visible to
+    // monitoring.
     const client = makeMockClient({
       find_uninitialized_outbox_events: { data: [], error: null },
       claim_inquiry_outbox_deliveries: {
@@ -573,11 +638,140 @@ describe("Phase 15: Per-provider Outbox runtime — state machine contract", () 
     const { processInquiryOutbox } = await import(
       "@/lib/services/inquiries/outbox-processor"
     );
+
+    await expect(processInquiryOutbox(10)).rejects.toMatchObject({
+      name: "OutboxRpcError",
+      code: "OUTBOX_CLAIM_DELIVERIES_FAILED",
+    });
+  });
+
+  it("Work Package E: find_uninitialized_outbox_events RPC error throws OutboxRpcError", async () => {
+    // Scenario: find_uninitialized_outbox_events RPC failed. The OLD
+    // behavior was to log a fixed code and return initialized=0,
+    // hiding the outage. The NEW behavior throws
+    // OutboxRpcError("OUTBOX_FIND_UNINITIALIZED_FAILED").
+    const client = makeMockClient({
+      find_uninitialized_outbox_events: {
+        data: null,
+        error: { message: "connection refused" },
+      },
+    });
+    createAdminSupabaseClient.mockReturnValue(client);
+    createNotificationAdapters.mockReturnValue([
+      { name: "email", configured: true, send: vi.fn() },
+    ]);
+
+    const { processInquiryOutbox } = await import(
+      "@/lib/services/inquiries/outbox-processor"
+    );
+
+    await expect(processInquiryOutbox(10)).rejects.toMatchObject({
+      name: "OutboxRpcError",
+      code: "OUTBOX_FIND_UNINITIALIZED_FAILED",
+    });
+  });
+
+  it("Work Package E: fail_delivery_event RPC error throws OutboxRpcError", async () => {
+    // Scenario: fail_delivery_event RPC failed. The OLD behavior was
+    // to log and return "retry", fabricating a state transition. The
+    // NEW behavior throws OutboxRpcError("OUTBOX_FAIL_DELIVERY_FAILED").
+    const client = makeMockClient({
+      find_uninitialized_outbox_events: { data: [], error: null },
+      claim_inquiry_outbox_deliveries: {
+        data: [
+          {
+            id: "del-1",
+            outbox_event_id: "evt-1",
+            provider: "email",
+            lock_token: "token-a",
+            attempts: 0,
+            max_attempts: 5,
+          },
+        ],
+        error: null,
+      },
+      fail_delivery_event: {
+        data: null,
+        error: { message: "db down" },
+      },
+    });
+    createAdminSupabaseClient.mockReturnValue(client);
+    // No adapter configured → failDelivery is invoked.
+    createNotificationAdapters.mockReturnValue([]);
+
+    const { processInquiryOutbox } = await import(
+      "@/lib/services/inquiries/outbox-processor"
+    );
+
+    await expect(processInquiryOutbox(10)).rejects.toMatchObject({
+      name: "OutboxRpcError",
+      code: "OUTBOX_FAIL_DELIVERY_FAILED",
+    });
+  });
+
+  it("Work Package E: orphaned parent event cancels delivery (not marks sent)", async () => {
+    // Scenario: parent inquiry_outbox row was deleted (FK cascade)
+    // after the delivery was claimed. The OLD behavior was to call
+    // mark_delivery_sent, which conflated "delivered" with "gave up
+    // because the target vanished" and inflated the sent counter.
+    // The NEW behavior calls cancel_orphaned_delivery, which records
+    // the granular 'cancelled' status with reason
+    // 'ORPHANED_PARENT_EVENT' for operator review.
+    const client = makeMockClient({
+      find_uninitialized_outbox_events: { data: [], error: null },
+      claim_inquiry_outbox_deliveries: {
+        data: [
+          {
+            id: "del-1",
+            outbox_event_id: "evt-1",
+            provider: "email",
+            lock_token: "token-a",
+            attempts: 0,
+            max_attempts: 5,
+          },
+        ],
+        error: null,
+      },
+      cancel_orphaned_delivery: { data: "cancelled", error: null },
+    });
+    // Override the .from('inquiry_outbox').select().single() chain
+    // to return null data (simulating a deleted parent event).
+    const selectEqSingle = vi.fn().mockResolvedValue({
+      data: null,
+      error: { code: "PGRST116", message: "JSON object requested, multiple (or no) rows returned" },
+    });
+    const selectEq = vi.fn(() => ({ single: selectEqSingle }));
+    const selectFn = vi.fn(() => ({ eq: selectEq }));
+    // Override the parent-event lookup to simulate a deleted parent.
+    // Cast through `unknown` because the mock shape is intentionally
+    // narrower than the full Supabase query builder type.
+    (client as { from: unknown }).from = vi.fn(() => ({ select: selectFn }));
+    createAdminSupabaseClient.mockReturnValue(client);
+    createNotificationAdapters.mockReturnValue([
+      { name: "email", configured: true, send: vi.fn() },
+    ]);
+
+    const { processInquiryOutbox } = await import(
+      "@/lib/services/inquiries/outbox-processor"
+    );
     const result = await processInquiryOutbox(10);
 
-    expect(result.claimed).toBe(0);
+    // Delivery was cancelled — NOT counted as sent.
     expect(result.sent).toBe(0);
     expect(result.failed).toBe(0);
+    // cancel_orphaned_delivery was called with the right reason.
+    const cancelCalls = rpcCallsFor(client.rpc, "cancel_orphaned_delivery");
+    expect(cancelCalls).toHaveLength(1);
+    expect(cancelCalls[0]).toEqual(
+      expect.objectContaining({
+        p_delivery_id: "del-1",
+        p_lock_token: "token-a",
+        p_reason: "ORPHANED_PARENT_EVENT",
+      }),
+    );
+    // mark_delivery_sent must NOT be called for the orphaned case.
+    const sentCalls = rpcCallsFor(client.rpc, "mark_delivery_sent");
+    expect(sentCalls).toHaveLength(0);
   });
 
   it("empty claim returns zero results immediately", async () => {
