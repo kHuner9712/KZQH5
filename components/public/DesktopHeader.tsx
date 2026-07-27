@@ -48,16 +48,6 @@ export function DesktopHeader({
       <div className="flex h-full items-center justify-between gap-6 px-8 lg:px-12">
         <Link
           href={localePath(locale)}
-          // prefetch={false}: the DesktopHeader is CSS-hidden on mobile
-          // (`hidden lg:block`) but its Links remain in the DOM and App
-          // Router still prefetches them. On the products list page this
-          // means up to 7 hidden DesktopHeader Links are prefetching in
-          // parallel with the visible BottomNav and MobileHeader Links.
-          // When the user clicks a product card, the Router cancels all
-          // in-flight prefetches (net::ERR_ABORTED); in rare cases the
-          // cancellation cascade also aborts the click-triggered product
-          // detail RSC request. Disabling prefetch on header nav links
-          // eliminates this race without affecting click navigation.
           prefetch={false}
           className="flex shrink-0 items-center gap-2"
           aria-label={copy.header.homeAria}

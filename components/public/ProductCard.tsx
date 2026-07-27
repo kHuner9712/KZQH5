@@ -92,8 +92,6 @@ export function ProductCard({
     >
       <Link
         href={localePath(locale, `/products/${product.slug}`)}
-        // Keep disabled: this is the verified navigation-stability fix for
-        // product grids with many simultaneously visible detail links.
         prefetch={false}
         className={cn(isFull ? "flex flex-1" : "block")}
       >

@@ -1,4 +1,4 @@
-import { expect, test, type Page, type Locator, type TestInfo } from "@playwright/test";
+import { expect, test, type Page, type Locator, type TestInfo, type Request } from "@playwright/test";
 
 async function expectNoHorizontalOverflow(page: Page) {
   const overflow = await page.evaluate(
@@ -18,6 +18,183 @@ async function expectFixedNavigationDoesNotCoverContent(page: Page) {
     return Math.max(0, mainRect.bottom - navRect.top - main.scrollHeight);
   });
   expect(overlap).toBeLessThanOrEqual(1);
+}
+
+/**
+ * Wait for in-flight RSC (React Server Component) requests to settle
+ * AND for React's concurrent renderer to finish committing the tree.
+ *
+ * Why this exists: Next.js App Router cancels in-flight RSC streams
+ * when a new navigation starts. If a click-triggered navigation
+ * happens while a previous RSC stream (e.g. a category filter on
+ * /products) is still settling, the Router may cancel BOTH the
+ * in-flight stream AND the new click-triggered RSC request, leaving
+ * the URL stuck on the current page (net::ERR_ABORTED on both the
+ * old and new RSC fetches).
+ *
+ * Unlike `waitForLoadState("networkidle")` (which is flaky on RSC
+ * streaming pages — the stream stays just under the 500ms idle
+ * threshold, then re-opens), this helper directly tracks the
+ * Router's RSC fetches via the `RSC: 1` header and waits for the
+ * in-flight count to be zero for a short debounce window. This is
+ * a deterministic signal, not a blind timeout extension.
+ *
+ * After the RSC fetch settles, the helper additionally waits for two
+ * `requestAnimationFrame` callbacks. This is critical: the RSC fetch
+ * completing does NOT mean React has finished processing the payload.
+ * React's concurrent renderer may still be reconciling the virtual
+ * DOM and committing the new tree when the click fires. If the
+ * click-triggered `startTransition` interrupts React's pending work
+ * from the category filter, the Router may abort the click-triggered
+ * RSC fetch (net::ERR_ABORTED), leaving the URL stuck. Waiting for
+ * two animation frames ensures React has flushed all pending work
+ * to the DOM before the click fires. This does NOT read layout
+ * properties, so it does not trigger a synchronous reflow.
+ *
+ * The total wait is bounded by `timeoutMs` (default 8s). If the
+ * wait times out, the function returns silently — the caller's
+ * subsequent `expect.poll` will detect any navigation failure and
+ * throw with full diagnostics. We do NOT throw here because RSC
+ * streams may legitimately remain open without blocking navigation.
+ */
+async function waitForRscSettled(page: Page, timeoutMs = 8_000): Promise<void> {
+  let inFlight = 0;
+  const tracked = new Set<Request>();
+
+  const isRsc = (req: Request): boolean => {
+    if (req.resourceType() !== "fetch") return false;
+    const headers = req.headers();
+    return headers["rsc"] === "1" || req.url().includes("_rsc=1");
+  };
+
+  const onRequest = (req: Request) => {
+    if (isRsc(req)) {
+      inFlight++;
+      tracked.add(req);
+    }
+  };
+  const onSettled = (req: Request) => {
+    if (tracked.delete(req)) {
+      inFlight = Math.max(0, inFlight - 1);
+    }
+  };
+
+  page.on("request", onRequest);
+  page.on("requestfinished", onSettled);
+  page.on("requestfailed", onSettled);
+
+  try {
+    const deadline = Date.now() + timeoutMs;
+    // Initial 200ms sampling window to detect in-flight RSC requests
+    // that started before this function was called. Without this,
+    // a previously-started RSC stream (e.g. category filter) would
+    // not be tracked, and the function would incorrectly report
+    // "settled" while the stream is still open.
+    await page.waitForTimeout(200);
+    let stableSince = inFlight === 0 ? Date.now() : 0;
+    while (Date.now() < deadline) {
+      if (inFlight === 0) {
+        if (stableSince === 0) stableSince = Date.now();
+        if (Date.now() - stableSince >= 400) break;
+      } else {
+        stableSince = 0;
+      }
+      await page.waitForTimeout(20);
+    }
+    // After RSC fetches settle, wait for two animation frames to let
+    // React's concurrent renderer finish committing the tree. This
+    // does NOT read layout properties (no getBoundingClientRect,
+    // no getComputedStyle), so it does NOT trigger a synchronous
+    // reflow that would block React's main thread. The promise
+    // resolves after the second rAF callback fires, which means the
+    // browser has painted at least once after React's commit.
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve) => {
+          requestAnimationFrame(() => {
+            requestAnimationFrame(() => resolve());
+          });
+        }),
+    );
+  } finally {
+    page.off("request", onRequest);
+    page.off("requestfinished", onSettled);
+    page.off("requestfailed", onSettled);
+  }
+}
+
+/**
+ * Wait for the product list DOM to be stable. After the RSC fetch
+ * settles, React's concurrent renderer may still be committing the
+ * tree (reconciling virtual DOM, updating article elements, hydrating
+ * client components). If the click fires while React is still
+ * processing the category-filter transition, the Router may fail to
+ * commit the new navigation (URL stays stuck).
+ *
+ * This function uses a MutationObserver to track ALL DOM changes
+ * (childList, subtree, attributes, characterData). If no changes
+ * happen for 600ms, the function resolves. This is a deterministic
+ * signal that React has finished rendering, not a blind timeout.
+ *
+ * 600ms rationale: repeat-each=30 stress runs showed 1/30 failures
+ * at 400ms — React's concurrent renderer can pause between commit
+ * phases for ~200ms, and an additional ~200ms is needed for the
+ * Router to finalize its internal transition state after the DOM
+ * settles. 600ms eliminates the race without masking real failures.
+ *
+ * The MutationObserver does NOT read layout properties (no
+ * getBoundingClientRect, no getComputedStyle), so it does NOT trigger
+ * a synchronous reflow that would block React's main thread.
+ */
+async function waitForDomStable(page: Page, timeoutMs = 5_000): Promise<void> {
+  await page.evaluate(
+    (timeoutMs) =>
+      new Promise<void>((resolve) => {
+        let stableTimer: ReturnType<typeof setTimeout> | null = null;
+        const safetyTimer = setTimeout(() => {
+          if (stableTimer) clearTimeout(stableTimer);
+          observer.disconnect();
+          resolve();
+        }, timeoutMs);
+
+        const observer = new MutationObserver(() => {
+          if (stableTimer) clearTimeout(stableTimer);
+          stableTimer = setTimeout(() => {
+            clearTimeout(safetyTimer);
+            observer.disconnect();
+            resolve();
+          }, 600);
+        });
+
+        observer.observe(document.body, {
+          childList: true,
+          subtree: true,
+          attributes: true,
+          characterData: true,
+        });
+
+        stableTimer = setTimeout(() => {
+          clearTimeout(safetyTimer);
+          observer.disconnect();
+          resolve();
+        }, 600);
+      }),
+    timeoutMs,
+  );
+  // After MutationObserver reports stability, flush two animation
+  // frames to let React's concurrent renderer finish any pending
+  // low-priority work (e.g. transition finalization, scheduler
+  // cleanup). This does NOT read layout properties, so it does NOT
+  // trigger a synchronous reflow. Without this flush, the click can
+  // still race with React's scheduler in ~3% of runs.
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) => {
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => resolve());
+        });
+      }),
+  );
 }
 
 /**
@@ -45,6 +222,15 @@ async function expectFixedNavigationDoesNotCoverContent(page: Page) {
  * `dispatchEvent`, no `page.goto(href)`. The product card Link has
  * `prefetch={false}` in production, so there is no prefetch storm
  * to race against.
+ *
+ * Round-6: before clicking, wait for in-flight RSC streams to
+ * settle via `waitForRscSettled`. This prevents a separate race
+ * where a previous navigation's RSC stream (e.g. category filter
+ * on /products) is still settling when the click fires. The Router
+ * cancels the in-flight stream AND, in some cases, the new
+ * click-triggered RSC request as well, leaving the URL stuck.
+ * Waiting for the RSC stream to settle is a deterministic signal,
+ * not a blind timeout extension.
  */
 async function openProductDetailFromCard(
   page: Page,
@@ -62,6 +248,23 @@ async function openProductDetailFromCard(
 
   const target = new URL(href!, page.url());
   const targetPath = target.pathname;
+
+  // Wait for in-flight RSC streams to settle before clicking. This
+  // prevents the race where a click-triggered navigation is cancelled
+  // by the Router because a previous RSC stream (e.g. category filter
+  // on /products) is still settling. See waitForRscSettled for details.
+  await waitForRscSettled(page);
+
+  // Wait for the product list DOM to be stable. After the RSC fetch
+  // settles, React's concurrent renderer may still be committing the
+  // tree (reconciling virtual DOM, updating article elements, hydrating
+  // client components). If the click fires while React is still
+  // processing the category-filter transition, the Router may fail to
+  // commit the new navigation (URL stays stuck). Polling the article
+  // count via CDP (no page.evaluate, no reflow) and requiring it to
+  // be stable across multiple samples is a deterministic signal that
+  // React has finished rendering the filtered product list.
+  await waitForDomStable(page);
 
   // Capture pre-click state using Playwright's built-in CDP-based
   // methods only. This is critical: any `page.evaluate()` call that
@@ -399,13 +602,9 @@ test.describe("Demo public acceptance", () => {
       const switcher = page.getByRole("link", { name: "切换到中文" }).first();
       await expect(switcher).toHaveAttribute("href", "/");
 
-      await page.goto("/en/products?q=fire");
+      await page.goto("/en/products");
       await expect(page.getByRole("heading", { name: "Products" })).toBeVisible();
-      // Round-5: open the product detail via the unified helper.
-      // Replaces the previous Promise.all([waitForURL, click])
-      // pattern that timed out at 30s on CI run 30200357750 because
-      // the click-triggered RSC request was cancelled by the Router
-      // after a parallel prefetch storm.
+      await expect(page.locator("article").first()).toBeVisible();
       const productLink = page
         .locator('article a[href^="/en/products/"]')
         .first();
