@@ -248,6 +248,7 @@ export async function ProductDetailPageContent(locale: Locale, slug: string) {
         <ResponsiveContainer className="flex items-center gap-3 py-3">
           <Link
             href={localePath(locale, "/products")}
+            prefetch={false}
             className="flex h-11 w-11 items-center justify-center rounded-md border border-white/10 bg-white/[0.06] text-gold-light"
             aria-label={copy.common.back}
           >
@@ -298,6 +299,7 @@ export async function ProductDetailPageContent(locale: Locale, slug: string) {
               />
               <Link
                 href={inquiryUrl}
+                prefetch={false}
                 className="btn-primary h-12 w-full sm:w-auto sm:px-8"
               >
                 {copy.common.getQuote}
@@ -397,6 +399,7 @@ export async function ProductDetailPageContent(locale: Locale, slug: string) {
         ) : (
           <Link
             href={localePath(locale, "/contact")}
+            prefetch={false}
             className="flex h-12 w-12 items-center justify-center rounded-md border border-white/20 text-white"
             aria-label={locale === "zh" ? "联系我们" : "Contact us"}
           >
@@ -410,6 +413,7 @@ export async function ProductDetailPageContent(locale: Locale, slug: string) {
         />
         <Link
           href={inquiryUrl}
+          prefetch={false}
           className="btn-primary h-12 min-w-0 px-2 text-xs"
         >
           {locale === "zh" ? "立即询盘" : "Inquire now"}

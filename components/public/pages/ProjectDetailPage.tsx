@@ -77,6 +77,7 @@ export async function ProjectDetailPageContent(locale: Locale, slug: string) {
         <ResponsiveContainer className="py-3">
           <Link
             href={localePath(locale, "/projects")}
+            prefetch={false}
             className="inline-flex items-center gap-2 text-xs text-white/55 hover:text-gold-light"
           >
             <ArrowLeft className="h-4 w-4" />

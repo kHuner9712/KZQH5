@@ -249,6 +249,7 @@ export async function HomePageContent(locale: Locale) {
             <div className="mt-4 flex gap-2.5 md:mt-9 md:gap-4">
               <Link
                 href={localePath(locale, "/products")}
+                prefetch={false}
                 className="btn-primary h-10 rounded-md px-4 text-xs md:h-12 md:rounded-lg md:px-6 md:text-sm"
               >
                 {home.primaryCta || copy.browse}
@@ -256,6 +257,7 @@ export async function HomePageContent(locale: Locale) {
               </Link>
               <Link
                 href={localePath(locale, "/contact")}
+                prefetch={false}
                 className="btn-secondary-dark h-10 px-4 text-xs md:h-12 md:px-6 md:text-sm"
               >
                 {home.secondaryCta || copy.inquiry}
@@ -303,6 +305,7 @@ export async function HomePageContent(locale: Locale) {
             action={
               <Link
                 href={localePath(locale, "/products")}
+                prefetch={false}
                 className="text-[11px] font-medium text-gold-dark hover:text-gold md:text-[13px]"
               >
                 {dictionary.common.viewAll} →
@@ -337,6 +340,7 @@ export async function HomePageContent(locale: Locale) {
             action={
               <Link
                 href={localePath(locale, "/products")}
+                prefetch={false}
                 className="text-[11px] font-medium text-gold-dark hover:text-gold md:text-[13px]"
               >
                 {dictionary.common.viewAll} →
@@ -404,6 +408,7 @@ export async function HomePageContent(locale: Locale) {
               </h2>
               <Link
                 href={localePath(locale, "/certificates")}
+                prefetch={false}
                 className="text-[11px] font-medium text-gold hover:text-gold-light md:text-xs"
               >
                 {dictionary.common.viewAll} →
@@ -445,6 +450,7 @@ export async function HomePageContent(locale: Locale) {
             action={
               <Link
                 href={localePath(locale, "/projects")}
+                prefetch={false}
                 className="text-[11px] font-medium text-gold-dark hover:text-gold md:text-[13px]"
               >
                 {dictionary.common.viewAll} →
@@ -460,6 +466,7 @@ export async function HomePageContent(locale: Locale) {
                   <Link
                     key={project.id}
                     href={localePath(locale, `/projects/${project.slug}`)}
+                    prefetch={false}
                     className="group w-[260px] shrink-0 overflow-hidden rounded-md border border-ink-line bg-canvas-warm transition-colors hover:border-gold/30 md:w-auto md:rounded-lg"
                   >
                     <div className="aspect-[16/10] overflow-hidden">
@@ -526,6 +533,7 @@ export async function HomePageContent(locale: Locale) {
             </div>
             <Link
               href={localePath(locale, "/contact")}
+              prefetch={false}
               className="btn-primary h-11 w-full rounded-md px-5 text-[13px] md:h-12 md:w-auto md:rounded-lg md:px-7 md:text-sm"
             >
               {copy.inquiry}

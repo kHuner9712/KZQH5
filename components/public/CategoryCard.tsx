@@ -24,6 +24,16 @@ export function CategoryCard({
   return (
     <Link
       href={`${localePath(locale, "/products")}?category=${category.slug}`}
+      // prefetch={false}: category cards appear on the home page in a
+      // grid. App Router prefetches each card's /products?category=...
+      // route on viewport entry. When multiple cards prefetch in
+      // parallel and the user clicks a different navigation target,
+      // the Router cancels the in-flight prefetches
+      // (net::ERR_ABORTED). In rare cases the cancellation cascade
+      // also aborts the click-triggered RSC request. Disabling
+      // prefetch eliminates this race without affecting click
+      // navigation.
+      prefetch={false}
       className={cn(
         "group flex min-w-0 flex-col overflow-hidden rounded-md border border-black/[0.06] bg-canvas-warm transition-colors duration-200 hover:border-gold/30 md:rounded-lg md:border-black/[0.08]",
         className,

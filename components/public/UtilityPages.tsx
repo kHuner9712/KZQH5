@@ -68,6 +68,7 @@ export function MorePageContent({ locale }: { locale: Locale }) {
               <Link
                 key={item.href}
                 href={localePath(locale, item.href)}
+                prefetch={false}
                 className="flex min-h-16 items-center gap-3 rounded-md border border-black/[0.06] bg-canvas-warm p-4 text-sm font-medium text-ink transition-colors hover:border-gold/30 md:rounded-lg md:p-5"
               >
                 <Icon className="h-5 w-5 text-gold-dark" />
@@ -139,6 +140,7 @@ export async function PrivacyPageContent({ locale }: { locale: Locale }) {
                     )}
                     <Link
                       href={localePath(locale, "/contact")}
+                      prefetch={false}
                       className="text-gold-dark underline"
                     >
                       {getDictionary(locale).more.contact}
@@ -162,11 +164,12 @@ export function NotFoundContent({ locale }: { locale: Locale }) {
       <h1 className="mt-4 text-xl font-semibold text-ink">{copy.notFound}</h1>
       <p className="mt-2 text-sm text-ink-mute">{copy.notFoundDescription}</p>
       <div className="mt-8 flex flex-wrap justify-center gap-3">
-        <Link href={localePath(locale)} className="btn-primary h-11 px-6">
+        <Link href={localePath(locale)} prefetch={false} className="btn-primary h-11 px-6">
           {copy.backHome}
         </Link>
         <Link
           href={localePath(locale, "/products")}
+          prefetch={false}
           className="btn-outline h-11 px-6"
         >
           {locale === "zh" ? "产品中心" : "Products"}

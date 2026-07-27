@@ -83,6 +83,19 @@ export function BottomNav({ locale }: { locale: Locale }) {
             <Link
               key={tab.key}
               href={tab.href}
+              // prefetch={false}: bottom nav tabs are present on every
+              // public page. App Router prefetches each tab's route on
+              // viewport entry, creating up to 5 parallel RSC prefetches.
+              // When the user clicks a product card (or any in-page
+              // navigation), the Router cancels these in-flight prefetches
+              // (net::ERR_ABORTED). In rare cases the cancellation
+              // cascade also aborts the click-triggered RSC request,
+              // leaving the user stuck on the current page. Disabling
+              // prefetch on bottom-nav tabs eliminates this race without
+              // affecting the tap-driven navigation behavior — the tab
+              // still navigates on click, just without a pre-fetched
+              // RSC payload.
+              prefetch={false}
               className={cn(
                 "relative flex min-h-11 min-w-0 flex-1 flex-col items-center justify-center gap-0.5 px-1 transition-colors duration-200",
                 active ? "text-gold" : "text-white/50",

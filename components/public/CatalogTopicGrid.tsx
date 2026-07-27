@@ -195,6 +195,7 @@ export function CatalogTopicGrid({
               ) : (
                 <Link
                   href={item.contactHref}
+                  prefetch={false}
                   className="block"
                   data-testid={`catalog-topic-${item.topic.id}`}
                 >

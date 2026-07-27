@@ -63,6 +63,24 @@ async function openProductDetailFromCard(
   const target = new URL(href!, page.url());
   const targetPath = target.pathname;
 
+  // Capture pre-click state using Playwright's built-in CDP-based
+  // methods only. This is critical: any `page.evaluate()` call that
+  // touches layout (getBoundingClientRect, getComputedStyle,
+  // elementsFromPoint, offsetWidth, etc.) forces a synchronous
+  // reflow in the page's main thread. On the products page, which
+  // has hundreds of DOM nodes after the category-filter RSC commits,
+  // this reflow blocks React's concurrent renderer from finishing
+  // pending Router state updates. When `link.click()` then fires
+  // immediately after the evaluate, the Router is still settling,
+  // and the click-triggered RSC request is cancelled
+  // (net::ERR_ABORTED). Using `link.boundingBox()` (which resolves
+  // via CDP `DOM.getBoxModel` without executing JS in the page)
+  // avoids the reflow entirely. Full DOM diagnostics (element stack,
+  // fixed-overlap check) are captured ONLY on failure in the catch
+  // block, where reflow cost is irrelevant.
+  const preClickBox = await link.boundingBox();
+  const preClickUrl = page.url();
+
   await link.click();
 
   // Poll the URL pathname. `expect.poll` retries the assertion on a
@@ -70,15 +88,35 @@ async function openProductDetailFromCard(
   // the recommended Playwright pattern for state (rather than event)
   // assertions and does not depend on the navigation lifecycle
   // event that waitForURL subscribes to.
-  await expect
-    .poll(
-      () => new URL(page.url()).pathname,
-      {
-        timeout: 30_000,
-        message: `Expected product navigation to commit ${targetPath}, but URL stayed at ${page.url()}`,
-      },
-    )
-    .toBe(targetPath);
+  try {
+    await expect
+      .poll(
+        () => new URL(page.url()).pathname,
+        {
+          timeout: 30_000,
+          message: `Expected product navigation to commit ${targetPath}, but URL stayed at ${page.url()}`,
+        },
+      )
+      .toBe(targetPath);
+  } catch (navError) {
+    // Capture full diagnostics ONLY on failure. This is safe to do
+    // here because the navigation already failed — reflow cost is
+    // irrelevant when we're already in the error path.
+    const postClick = await page.evaluate(() => ({
+      pathname: location.pathname,
+      url: location.href,
+      detailTitlePresent: !!document.querySelector(
+        '[data-testid="product-detail-title"]',
+      ),
+    }));
+    process.stderr.write(
+      `[openProductDetailFromCard] navigation did not commit\n` +
+        `  target=${targetPath}\n` +
+        `  pre-click: box=${JSON.stringify(preClickBox)} url=${preClickUrl}\n` +
+        `  post-click: ${JSON.stringify(postClick)}\n`,
+    );
+    throw navError;
+  }
 
   // Detail-route-only assertion: the product list page also has an
   // H1 ("Products" / "产品中心"), so checking only `heading level=1`
@@ -114,6 +152,7 @@ function attachDiagnostics(page: Page, testInfo: TestInfo) {
   const consoleErrors: string[] = [];
   const pageErrors: string[] = [];
   const requestFailures: string[] = [];
+  const badResponses: string[] = [];
 
   page.on("console", (msg) => {
     if (msg.type() === "error") {
@@ -132,16 +171,35 @@ function attachDiagnostics(page: Page, testInfo: TestInfo) {
     // Redact any query string to avoid leaking tokens that might
     // appear in a URL (e.g. Supabase access tokens in edge cases).
     const safeUrl = url.replace(/\?[^#]*/, "?<redacted>");
+    // Include the current page URL at the time of failure so we can
+    // tell which step of the test triggered the abort. This is
+    // critical for diagnosing prefetch-storm races: a /contact or
+    // /products prefetch aborted during page.goto("/products") is
+    // benign, but the same prefetch aborted during a product-card
+    // click is the root cause of navigation failure.
+    const pageUrl = page.url().replace(/\?[^#]*/, "?<redacted>");
     requestFailures.push(
-      `[requestfailed] ${req.method()} ${safeUrl} (${failure})`,
+      `[requestfailed] ${req.method()} ${safeUrl} (${failure}) [pageUrl=${pageUrl}]`,
     );
+  });
+  page.on("response", (res) => {
+    const status = res.status();
+    if (status >= 400) {
+      const url = res.url();
+      const safeUrl = url.replace(/\?[^#]*/, "?<redacted>");
+      const pageUrl = page.url().replace(/\?[^#]*/, "?<redacted>");
+      badResponses.push(
+        `[response ${status}] ${res.request().method()} ${safeUrl} [pageUrl=${pageUrl}]`,
+      );
+    }
   });
 
   return async function dumpDiagnostics() {
     if (
       consoleErrors.length === 0 &&
       pageErrors.length === 0 &&
-      requestFailures.length === 0
+      requestFailures.length === 0 &&
+      badResponses.length === 0
     ) {
       return;
     }
@@ -157,6 +215,10 @@ function attachDiagnostics(page: Page, testInfo: TestInfo) {
     if (requestFailures.length > 0) {
       lines.push(`--- ${requestFailures.length} request failure(s) ---`);
       lines.push(...requestFailures);
+    }
+    if (badResponses.length > 0) {
+      lines.push(`--- ${badResponses.length} bad response(s) ---`);
+      lines.push(...badResponses);
     }
     const body = lines.join("\n");
     // Always log to stderr so it shows up in the CI log next to the
@@ -232,6 +294,37 @@ test.describe("Demo public acceptance", () => {
         page.waitForURL(/category=/, { timeout: 30_000 }),
         category.click(),
       ]);
+
+      // Wait for the category-filter RSC stream to FULLY complete
+      // before interacting with product cards. `waitForURL` only
+      // confirms the URL committed — the RSC stream that fetches the
+      // filtered product list is still in-flight at that point. If
+      // the user clicks a product card while the RSC stream is still
+      // open, the Router may cancel the click-triggered product-detail
+      // RSC request (net::ERR_ABORTED), leaving the URL stuck on
+      // /products.
+      //
+      // The most reliable signal that the RSC stream has completed is
+      // the subcategory filter rendering. The subcategory links
+      // (e.g. "玻镁防火板", "阻燃基材板") are rendered server-side
+      // based on the selected category and only appear in the RSC
+      // response. If they are present, the RSC stream has committed.
+      // If the category has no subcategories, fall back to waiting
+      // for the article count to be stable for 150ms.
+      const subcategoryLink = page.locator('a[href*="subcategory="]').first();
+      try {
+        await subcategoryLink.waitFor({ state: "visible", timeout: 5_000 });
+      } catch {
+        // Category may have no subcategories. Wait for the article
+        // count to stabilize instead.
+        let lastCount = -1;
+        for (let i = 0; i < 10; i++) {
+          const count = await page.locator("article").count();
+          if (count > 0 && count === lastCount) break;
+          lastCount = count;
+          await page.waitForTimeout(50);
+        }
+      }
 
       // Round-5: open the product detail via the unified helper.
       // The helper uses web-first URL polling + a detail-page-only
