@@ -24,7 +24,12 @@
 // Session refresh:
 //   - On /admin/**, /api/admin/**, /api/internal/** paths, the middleware
 //     calls supabase.auth.getUser() to trigger @supabase/ssr's auto-refresh
-//     logic. Refreshed cookies are written to BOTH the request and response.
+//     logic. Refreshed cookies are written to BOTH the request and the
+//     response returned by refreshSupabaseSession().
+//   - When any auth cookie is rotated, the returned response carries
+//     `Cache-Control: private, no-store` so shared caches cannot serve
+//     a session-bound response to a different user. All security headers
+//     set on this response are preserved on the returned response.
 //   - The middleware does NOT use the session for authorization — that is
 //     the exclusive job of getVerifiedAdmin() server-side. This module only
 //     refreshes cookies.
@@ -214,12 +219,14 @@ export async function middleware(request: NextRequest) {
   // --- Supabase Auth Session Refresh ---
   // Only run on auth-aware paths so public ISR pages remain statically
   // cached. This refreshes the access token cookie when it is near
-  // expiry, writing the rotated cookie to BOTH the request (forwarded
-  // to downstream handlers) and the response (persisted by the browser).
+  // expiry. The helper returns the FINAL NextResponse to return from
+  // middleware — either this `response` (no refresh happened) or a NEW
+  // response that carries the rotated Set-Cookie headers, the original
+  // security headers, and `Cache-Control: private, no-store`.
   // Authorization is NOT done here — getVerifiedAdmin() handles that
   // server-side with a fresh auth.getUser() call.
   if (shouldRefreshSession(request.nextUrl.pathname)) {
-    await refreshSupabaseSession(request, response);
+    return refreshSupabaseSession(request, response);
   }
 
   return response;
