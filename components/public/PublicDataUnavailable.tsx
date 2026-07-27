@@ -2,6 +2,7 @@ import Link from "next/link";
 import { RefreshCw } from "lucide-react";
 import type { Locale } from "@/lib/i18n/config";
 import { localePath } from "@/lib/i18n/config";
+import { PublicDataUnavailableError } from "@/lib/repositories/public-types";
 
 export function PublicDataUnavailable({ locale, retryPath }: { locale: Locale; retryPath: string }) {
   const zh = locale === "zh";
@@ -23,6 +24,17 @@ export function PublicDataUnavailable({ locale, retryPath }: { locale: Locale; r
   );
 }
 
+/**
+ * Render a public page, surfacing the friendly "data temporarily
+ * unavailable" fallback ONLY for known infrastructure failures.
+ *
+ * Catching every error here is too broad — it would mask React render
+ * errors, programming bugs, and thrown primitives behind the friendly
+ * UI, hiding real defects from error tracking. Only
+ * PublicDataUnavailableError (thrown by lib/repositories/* on Supabase
+ * failures) triggers the fallback. All other errors bubble up to the
+ * route error boundary (`app/(public)/error.tsx` / `global-error.tsx`).
+ */
 export async function renderPublicPage(
   locale: Locale,
   retryPath: string,
@@ -31,7 +43,15 @@ export async function renderPublicPage(
   try {
     return await render();
   } catch (error) {
-    console.error("Public page data query failed", error instanceof Error ? error.message : "unknown error");
-    return <PublicDataUnavailable locale={locale} retryPath={retryPath} />;
+    if (PublicDataUnavailableError.is(error)) {
+      // Fixed coarse code only — never log raw Supabase error / PII.
+      // eslint-disable-next-line no-console
+      console.warn(error.code);
+      return <PublicDataUnavailable locale={locale} retryPath={retryPath} />;
+    }
+    // Programming bugs, React render errors, thrown primitives: do NOT
+    // swallow. Bubble to the route error boundary so error tracking
+    // sees the real cause.
+    throw error;
   }
 }
