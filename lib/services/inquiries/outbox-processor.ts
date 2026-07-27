@@ -207,14 +207,53 @@ function getConfiguredProviderNames(
     );
 }
 
+/**
+ * Load an inquiry by id, returning null only when the inquiry was
+ * explicitly deleted (FK cascade). Distinguishes "record missing"
+ * from "database query failed" so that an infrastructure outage
+ * during the inquiry lookup is NOT misclassified as an orphaned
+ * inquiry.
+ *
+ * Behavior:
+ *   - `error.code === "PGRST116"` (PostgREST's "0 rows returned"
+ *     signal for `.single()`): the inquiry was explicitly deleted.
+ *     Returns null so the caller can call `cancelOrphanedDelivery`.
+ *   - Any other error code (connection failure, permission denied,
+ *     malformed query, PostgREST 5xx, etc.): throws
+ *     `OutboxRpcError("OUTBOX_INQUIRY_LOAD_FAILED")` so the
+ *     dispatcher route returns 500 and the outage is visible to
+ *     monitoring. The raw Supabase error is captured as `cause` for
+ *     debugging but is NEVER serialized into the HTTP response or
+ *     logged verbatim.
+ *   - `error == null && data == null` (defensive — should not happen
+ *     with postgrest-js but be safe): treated as "explicitly missing".
+ */
 async function loadInquiry(inquiryId: string): Promise<Inquiry | null> {
   const client = createAdminSupabaseClient();
-  const { data, error } = await client
+  const { data, error } = (await client
     .from("inquiries")
     .select("*, inquiry_items(*)")
     .eq("id", inquiryId)
-    .single();
-  if (error || !data) return null;
+    .single()) as {
+    data: Inquiry | null;
+    error: { code?: string; message?: string } | null;
+  };
+  if (error) {
+    if (error.code === "PGRST116") {
+      // PostgREST's "0 rows returned" signal — the inquiry was
+      // explicitly deleted (FK cascade). Soft-signal to the caller so
+      // it can cancel the orphaned delivery.
+      return null;
+    }
+    // Any other error code = infrastructure failure. Propagate so the
+    // dispatcher returns 5xx — never silently treat a DB outage as
+    // "inquiry deleted".
+    throw new OutboxRpcError("OUTBOX_INQUIRY_LOAD_FAILED", error);
+  }
+  if (!data) {
+    // Defensive — should not happen, but be safe.
+    return null;
+  }
   const inquiry = data as unknown as Inquiry;
   if (inquiry.inquiry_items) {
     inquiry.inquiry_items.sort((a, b) => a.sort_order - b.sort_order);
@@ -231,11 +270,13 @@ async function loadInquiry(inquiryId: string): Promise<Inquiry | null> {
  * Returning 0 here would conflate "no work to do" with "DB query
  * failed" and silently hide the outage.
  *
- * `initialize_inquiry_outbox_deliveries` failure for ONE event does
- * NOT abort the whole batch — we log the fixed code and continue with
- * the next event. (Each call is independent; one bad event row should
- * not poison the entire dispatch cycle.) The successfully-initialized
- * count is returned so the route can report partial progress.
+ * Review #2: per-event `initialize_inquiry_outbox_deliveries` failure
+ * MUST ALSO throw OutboxRpcError. Previously we logged and continued
+ * ("a single bad event row should not abort the whole batch"), but
+ * that hid infrastructure failures behind a partial success count and
+ * made every init RPC outage look like "some events initialized OK".
+ * Any init failure now aborts the batch and surfaces 5xx so the
+ * operator can fix the underlying issue and re-run the dispatch.
  */
 async function initializeUninitializedEvents(
   client: ReturnType<typeof createAdminSupabaseClient>,
@@ -270,10 +311,14 @@ async function initializeUninitializedEvents(
       },
     );
     if (initError) {
-      // Per-event failure: log and continue with the next event.
-      // (A single bad event row should not abort the whole batch.)
-      console.error("OUTBOX_INITIALIZE_DELIVERIES_FAILED");
-      continue;
+      // Review #2: any per-event init RPC failure MUST propagate as
+      // OutboxRpcError so the dispatcher returns 5xx. The previously
+      // logged-and-continue behavior hid infrastructure outages behind
+      // a partial initialized count.
+      throw new OutboxRpcError(
+        "OUTBOX_INITIALIZE_DELIVERIES_FAILED",
+        initError,
+      );
     }
     initialized += 1;
   }
@@ -500,29 +545,61 @@ export async function processInquiryOutbox(
 
       // Load the inquiry. The delivery row has outbox_event_id, not
       // inquiry_id — we need to look up the inquiry_id via the parent.
-      const { data: eventRow, error: eventError } = await client
+      //
+      // Review #2: distinguish "parent event explicitly deleted" from
+      // "database query failed". PGRST116 is PostgREST's "0 rows
+      // returned" signal for `.single()` — only that code is treated
+      // as "explicitly missing" (cancel the orphaned delivery). Any
+      // other error code is an infrastructure failure that MUST
+      // propagate as OutboxRpcError("OUTBOX_EVENT_LOAD_FAILED") so the
+      // dispatcher returns 5xx — never silently treat a DB outage as
+      // "parent deleted".
+      const { data: eventRow, error: eventError } = (await client
         .from("inquiry_outbox")
         .select("inquiry_id")
         .eq("id", delivery.outbox_event_id)
-        .single() as { data: { inquiry_id: string | null } | null; error: unknown };
-      if (eventError || !eventRow) {
-        // Parent event was deleted (FK cascade). Mark the delivery as
-        // `cancelled` (NOT `sent`) so the orphaned state is visible to
-        // operators via the health snapshot, and the sent counter is
-        // not inflated. The parent is already gone, so the parent-
-        // completion logic in cancel_orphaned_delivery is a no-op for
-        // this row, but the RPC still records the reason.
+        .single()) as {
+        data: { inquiry_id: string | null } | null;
+        error: { code?: string; message?: string } | null;
+      };
+      if (eventError) {
+        if (eventError.code === "PGRST116") {
+          // Parent event explicitly deleted (FK cascade). Cancel the
+          // orphaned delivery (NOT `sent` — that would inflate the
+          // sent counter and conflate "delivered" with "gave up
+          // because the target vanished"). The parent is already
+          // gone, so the parent-completion logic in
+          // cancel_orphaned_delivery is a no-op for this row, but the
+          // RPC still records the reason for operator review.
+          const cancelResult = await cancelOrphanedDelivery(
+            client,
+            delivery.id,
+            delivery.lock_token,
+            "ORPHANED_PARENT_EVENT",
+          );
+          // 'cancelled' = success. 'NOT_FOUND_OR_TOKEN_MISMATCH' = the
+          // delivery was re-claimed by another worker; treat as soft
+          // failure (stale recovery will re-claim it). Either way, the
+          // delivery is not counted as `sent` — operators can see the
+          // cancelled count in the health snapshot.
+          void cancelResult;
+          continue;
+        }
+        // Infrastructure failure (connection refused, permission
+        // denied, PostgREST 5xx, etc.). Propagate so the dispatcher
+        // returns 5xx — never misclassify a DB outage as "parent
+        // deleted" and silently cancel the delivery.
+        throw new OutboxRpcError("OUTBOX_EVENT_LOAD_FAILED", eventError);
+      }
+      if (!eventRow) {
+        // Defensive — PostgREST should set PGRST116 in this case but
+        // be safe. Treat as orphaned parent and cancel.
         const cancelResult = await cancelOrphanedDelivery(
           client,
           delivery.id,
           delivery.lock_token,
           "ORPHANED_PARENT_EVENT",
         );
-        // 'cancelled' = success. 'NOT_FOUND_OR_TOKEN_MISMATCH' = the
-        // delivery was re-claimed by another worker; treat as soft
-        // failure (stale recovery will re-claim it). Either way, the
-        // delivery is not counted as `sent` — operators can see the
-        // cancelled count in the health snapshot.
         void cancelResult;
         continue;
       }

@@ -875,4 +875,190 @@ describe("Phase 15: Per-provider Outbox runtime — state machine contract", () 
       }),
     );
   });
+
+  // ============================================================
+  // Review #2 — Work Package E: distinguish missing records from
+  // database failures. The previous code treated every Supabase
+  // error as "record deleted" and silently cancelled the delivery.
+  // The new code only treats PGRST116 (PostgREST's "0 rows
+  // returned" signal) as "explicitly missing"; any other error code
+  // is an infrastructure failure that MUST propagate as
+  // OutboxRpcError so the dispatcher returns 5xx.
+  // ============================================================
+
+  it("Review #2: loadInquiry throws OUTBOX_INQUIRY_LOAD_FAILED on non-PGRST116 error", async () => {
+    // Scenario: parent inquiry_outbox row exists (lookup succeeds),
+    // but the subsequent inquiries lookup fails with a non-PGRST116
+    // error (e.g. connection reset). The OLD behavior was to treat
+    // every error as "inquiry deleted" and silently cancel the
+    // delivery. The NEW behavior throws
+    // OutboxRpcError("OUTBOX_INQUIRY_LOAD_FAILED") so the dispatcher
+    // returns 500 and the outage is visible to monitoring.
+    const client = makeMockClient({
+      find_uninitialized_outbox_events: { data: [], error: null },
+      claim_inquiry_outbox_deliveries: {
+        data: [
+          {
+            id: "del-1",
+            outbox_event_id: "evt-1",
+            provider: "email",
+            lock_token: "token-a",
+            attempts: 0,
+            max_attempts: 5,
+          },
+        ],
+        error: null,
+      },
+      mark_delivery_sent: { data: true, error: null },
+    });
+    // Override `from` to be table-aware:
+    //   - inquiry_outbox lookup → success (inquiry_id present)
+    //   - inquiries lookup → non-PGRST116 error (infrastructure failure)
+    const inquiryOutboxSingle = vi.fn().mockResolvedValue({
+      data: { inquiry_id: "inq-1" },
+      error: null,
+    });
+    const inquiryOutboxEq = vi.fn(() => ({ single: inquiryOutboxSingle }));
+    const inquiryOutboxSelect = vi.fn(() => ({ eq: inquiryOutboxEq }));
+
+    const inquiriesSingle = vi.fn().mockResolvedValue({
+      data: null,
+      error: { code: "08000", message: "connection_failed" },
+    });
+    const inquiriesEq = vi.fn(() => ({ single: inquiriesSingle }));
+    const inquiriesSelect = vi.fn(() => ({ eq: inquiriesEq }));
+
+    (client as { from: unknown }).from = vi.fn((table: string) => {
+      if (table === "inquiries") {
+        return { select: inquiriesSelect };
+      }
+      return { select: inquiryOutboxSelect };
+    });
+    createAdminSupabaseClient.mockReturnValue(client);
+    const sendFn = vi.fn().mockResolvedValue({});
+    createNotificationAdapters.mockReturnValue([
+      { name: "email", configured: true, send: sendFn },
+    ]);
+
+    const { processInquiryOutbox } = await import(
+      "@/lib/services/inquiries/outbox-processor"
+    );
+
+    await expect(processInquiryOutbox(10)).rejects.toMatchObject({
+      name: "OutboxRpcError",
+      code: "OUTBOX_INQUIRY_LOAD_FAILED",
+    });
+    // Notification was NEVER sent — the DB outage surfaced before send.
+    expect(sendFn).not.toHaveBeenCalled();
+  });
+
+  it("Review #2: parent event lookup throws OUTBOX_EVENT_LOAD_FAILED on non-PGRST116 error", async () => {
+    // Scenario: claim succeeded, but the parent inquiry_outbox lookup
+    // fails with a non-PGRST116 error (e.g. permission denied). The
+    // OLD behavior treated every error as "parent deleted" and
+    // silently cancelled the delivery. The NEW behavior throws
+    // OutboxRpcError("OUTBOX_EVENT_LOAD_FAILED") so the dispatcher
+    // returns 500.
+    const client = makeMockClient({
+      find_uninitialized_outbox_events: { data: [], error: null },
+      claim_inquiry_outbox_deliveries: {
+        data: [
+          {
+            id: "del-1",
+            outbox_event_id: "evt-1",
+            provider: "email",
+            lock_token: "token-a",
+            attempts: 0,
+            max_attempts: 5,
+          },
+        ],
+        error: null,
+      },
+    });
+    // Override the parent-event lookup to return a non-PGRST116 error.
+    const selectEqSingle = vi.fn().mockResolvedValue({
+      data: null,
+      error: { code: "42501", message: "permission denied" },
+    });
+    const selectEq = vi.fn(() => ({ single: selectEqSingle }));
+    const selectFn = vi.fn(() => ({ eq: selectEq }));
+    (client as { from: unknown }).from = vi.fn(() => ({ select: selectFn }));
+    createAdminSupabaseClient.mockReturnValue(client);
+    const sendFn = vi.fn().mockResolvedValue({});
+    createNotificationAdapters.mockReturnValue([
+      { name: "email", configured: true, send: sendFn },
+    ]);
+
+    const { processInquiryOutbox } = await import(
+      "@/lib/services/inquiries/outbox-processor"
+    );
+
+    await expect(processInquiryOutbox(10)).rejects.toMatchObject({
+      name: "OutboxRpcError",
+      code: "OUTBOX_EVENT_LOAD_FAILED",
+    });
+    // Notification was NEVER sent — the DB outage surfaced before send.
+    expect(sendFn).not.toHaveBeenCalled();
+    // cancel_orphaned_delivery was NOT called (this is not an orphan).
+    const cancelCalls = rpcCallsFor(client.rpc, "cancel_orphaned_delivery");
+    expect(cancelCalls).toHaveLength(0);
+  });
+
+  it("Review #2: initializeUninitializedEvents throws OUTBOX_INITIALIZE_DELIVERIES_FAILED on per-event RPC error", async () => {
+    // Scenario: find_uninitialized_outbox_events returns two event ids,
+    // but initialize_inquiry_outbox_deliveries fails for the first one
+    // with a database error. The OLD behavior was to log the error and
+    // continue, returning initialized=1 — which made every init RPC
+    // outage look like "some events initialized OK" and hid the
+    // failure behind a partial success count. The NEW behavior throws
+    // OutboxRpcError("OUTBOX_INITIALIZE_DELIVERIES_FAILED") on the
+    // first per-event init failure so the dispatcher returns 500.
+    const client = makeMockClient({
+      find_uninitialized_outbox_events: {
+        data: ["evt-1", "evt-2"],
+        error: null,
+      },
+      // First init call fails with a non-PGRST116-style RPC error.
+      initialize_inquiry_outbox_deliveries: (() => {
+        let callCount = 0;
+        return () => {
+          callCount += 1;
+          if (callCount === 1) {
+            return {
+              data: null,
+              error: { code: "08000", message: "connection_failed" },
+            };
+          }
+          return { data: 1, error: null };
+        };
+      })(),
+      claim_inquiry_outbox_deliveries: { data: [], error: null },
+    });
+    createAdminSupabaseClient.mockReturnValue(client);
+    createNotificationAdapters.mockReturnValue([
+      { name: "email", configured: true, send: vi.fn() },
+    ]);
+
+    const { processInquiryOutbox } = await import(
+      "@/lib/services/inquiries/outbox-processor"
+    );
+
+    await expect(processInquiryOutbox(10)).rejects.toMatchObject({
+      name: "OutboxRpcError",
+      code: "OUTBOX_INITIALIZE_DELIVERIES_FAILED",
+    });
+    // The second event must NOT have been initialized after the first
+    // failed — the batch aborts on the first per-event init error.
+    const initCalls = rpcCallsFor(
+      client.rpc,
+      "initialize_inquiry_outbox_deliveries",
+    );
+    expect(initCalls).toHaveLength(1);
+    expect(initCalls[0]).toEqual(
+      expect.objectContaining({
+        p_outbox_event_id: "evt-1",
+        p_providers: ["email"],
+      }),
+    );
+  });
 });
