@@ -31,9 +31,13 @@ forces the server to:
 3. Buffer the entire file body via `arrayBuffer()`
 4. THEN validate Magic Bytes / MIME / size
 
-This means a single 21MB upload consumes ~21MB of resident memory, and
-a concurrent burst of 20 uploads (within the rate-limit window) can
-consume ~420MB. On EdgeOne Node.js runtime, this is a real DoS vector.
+Review #2 WP7 lowered the single-stage route to a 5 MB application
+cap (`MAX_REQUEST_BYTES = 5 MB`) to stay below the EdgeOne Cloud
+Functions 6 MB platform hard limit. Even at this reduced cap, a
+concurrent burst of 20 uploads (within the rate-limit window) can
+consume ~100 MB of resident memory, and a single 5 MB upload
+buffers the entire file in memory before Magic-Bytes validation. On
+EdgeOne Node.js runtime, this remains a real DoS vector.
 
 The two-phase protocol moves validation BEFORE the bytes are buffered:
 
@@ -76,7 +80,12 @@ The two-phase protocol moves validation BEFORE the bytes are buffered:
 **Validation**:
 - purpose must be a known purpose config
 - filename + mimeType + size validated against purpose whitelist
-- size <= per-purpose max (e.g. image 5MB / PDF 20MB)
+- size <= per-purpose max (e.g. image 5MB / PDF 20MB). NOTE: the
+  single-stage route currently caps all MIME types at 4 MB because
+  of the EdgeOne 6 MB platform body limit. The two-phase protocol
+  bypasses EdgeOne for the upload itself (browser → Supabase direct),
+  so per-purpose limits up to the Supabase bucket's 20 MB cap can be
+  restored once two-phase is implemented.
 - A `temp_uploads` row is inserted with status='authorized' and
   expires_at = NOW() + 5min
 - The signed URL points to `private-assets/temp/{token}/{filename}`
@@ -188,17 +197,28 @@ This two-phase protocol is **not yet implemented** because:
 
 Until the two-phase protocol is implemented, deployments MUST enforce:
 
-1. **EdgeOne WAF request body size limit**: Set to 21MB
-   (`MAX_REQUEST_BYTES`) at the platform layer. This prevents the
-   Node.js process from ever receiving oversized bodies.
-2. **EdgeOne WAF rate limit**: 20 POST requests / 5 min / IP for the
+1. **EdgeOne Cloud Functions request body limit**: 6 MB platform hard
+   cap (per EdgeOne Cloud Functions documentation,
+   https://pages.edgeone.ai/document/cloud-functions). This is a
+   platform-level runtime limit that **cannot** be raised by WAF
+   configuration. The WAF rule cited in older Launch Checklist
+   versions (21 MB) only controls what the WAF itself inspects and
+   does NOT override the Cloud Functions body limit.
+2. **Application-layer limits** (Review #2 WP7): Route
+   `MAX_REQUEST_BYTES = 5 MB`, `MAX_FILE_BYTES = 4.5 MB`,
+   per-MIME 4 MB. These are enforced in
+   `app/api/admin/storage/upload/route.ts` and must remain below the
+   6 MB platform cap with at least 1 MB headroom for multipart
+   envelope overhead.
+3. **EdgeOne WAF rate limit**: 20 POST requests / 5 min / IP for the
    `/api/admin/storage/upload` path. This is in addition to the
    in-process rate limiter, which is per-instance.
-3. **EdgeOne connection concurrency limit**: Cap concurrent admin
+4. **EdgeOne connection concurrency limit**: Cap concurrent admin
    uploads to ~5 per IP to bound memory pressure.
-4. **Node.js `--max-old-space-size`**: Set to at least 512MB to
-   handle 5 concurrent 21MB uploads (5 × 21 = 105MB peak) plus base
-   process memory.
+5. **Node.js `--max-old-space-size`**: At least 256 MB to handle
+   5 concurrent 5 MB uploads (5 × 5 = 25 MB peak) plus base process
+   memory. The previous 512 MB / 21 MB calculation was based on the
+   abandoned 21 MB contract and is no longer applicable.
 
 These are documented in `docs/LAUNCH_CHECKLIST.md` and tracked as
 production-readiness blockers.

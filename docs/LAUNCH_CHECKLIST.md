@@ -131,6 +131,12 @@
 - [ ] **未知 IP 时使用稳定 fallback bucket**（生产 `RATE_LIMIT_FALLBACK_SECRET` ≥ 32 字符已配置；缺失时使用 `fallback:global` 单桶，不产生随机 key）
 - [ ] **`TRUSTED_PROXY_HEADER` 已正确配置**（EdgeOne 设为 `eo-connecting-ip`；未配置或非法值时所有代理 Header 不可信）
 - [ ] **`x-forwarded-for` 永远不被信任**（不再有 `TRUST_X_FORWARDED_FOR` 开关）
+- [ ] **Readiness Canary Provision 已部署**：在 Supabase Storage `public-assets` bucket 上传 1×1 占位 PNG 到固定路径 `canary/canary-1x1.png`（路径硬编码在 `app/api/readiness/route.ts`，不可通过环境变量修改以防止误指向私有对象）。`/api/readiness` 的 storage 子检查会 GET 此对象；非 200 即视为 storage 不可用并返回 503。部署步骤：
+  1. 在 Supabase Dashboard → Storage → `public-assets` 中新建目录 `canary`
+  2. 上传任意 1×1 像素 PNG（建议 ≤ 100 字节）并命名为 `canary-1x1.png`
+  3. 通过 `curl -I https://{project}.supabase.co/storage/v1/object/public/public-assets/canary/canary-1x1.png` 验证 HTTP 200（public bucket 无需 Authorization）
+  4. 部署后访问 `/api/readiness` 验证 `ready=true`；如配置 `READINESS_TOKEN`，可通过 Bearer Token 查看 `storage` 子检查详情
+  5. 此对象不含 PII，仅用于 readiness 探测，不得删除或改为私有
 
 ---
 
