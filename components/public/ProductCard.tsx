@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { ArrowUpRight } from "lucide-react";
 import { localePath, type Locale } from "@/lib/i18n/config";
 import { getDictionary } from "@/lib/i18n/dictionary";
@@ -8,6 +7,29 @@ import type { Product } from "@/types/database";
 import { ProductImage } from "./ProductImage";
 import { AddToInquiryButton } from "./inquiry-list/AddToInquiryButton";
 import { getHomepageProductArtwork } from "./homeAssets";
+
+// ============================================================
+// Reliability-first architecture: product detail navigation
+// ------------------------------------------------------------
+// Product cards use a standard <a href> document navigation
+// instead of next/link client-side navigation.
+//
+// Rationale: the /products?q=<query> list page renders an RSC
+// stream for the search query. When a user clicks a product card
+// before that stream fully settles, the App Router's concurrent
+// renderer may cancel the click-triggered RSC request
+// (net::ERR_ABORTED), leaving the URL stuck on the list page.
+// Multiple rounds of mitigation (prefetch={false}, waitForRsc
+// Settled, waitForDomStable, networkidle) reduced but could not
+// eliminate the race across 50-repeat stability sweeps.
+//
+// Standard document navigation is deterministic — the browser
+// handles the navigation natively, no RSC transition is involved,
+// and the click cannot be cancelled by a concurrent renderer.
+// This is a deliberate architectural choice for reliability;
+// filtering, search and pagination still use App Router client
+// navigation where the race does not occur.
+// ============================================================
 
 type ProductCardVariant = "compact" | "full" | "editorial";
 
@@ -36,9 +58,8 @@ export function ProductCard({
   if (editorial) {
     return (
       <article className="kzq-interactive-card group flex min-w-0 overflow-hidden rounded-md border border-black/[0.06] bg-white transition-colors duration-200 hover:border-gold/30 md:rounded-lg">
-        <Link
+        <a
           href={localePath(locale, `/products/${product.slug}`)}
-          prefetch={false}
           className="flex h-full w-full flex-col"
           aria-label={`${content.name} — ${copy.common.viewAll}`}
         >
@@ -78,7 +99,7 @@ export function ProductCard({
               </span>
             </div>
           </div>
-        </Link>
+        </a>
       </article>
     );
   }
@@ -90,9 +111,8 @@ export function ProductCard({
         isFull && "flex",
       )}
     >
-      <Link
+      <a
         href={localePath(locale, `/products/${product.slug}`)}
-        prefetch={false}
         className={cn(isFull ? "flex flex-1" : "block")}
       >
         <div
@@ -159,7 +179,7 @@ export function ProductCard({
             </span>
           </div>
         </div>
-      </Link>
+      </a>
       <div
         className={cn(
           "border-t border-black/[0.06] bg-canvas-warm p-2.5",
