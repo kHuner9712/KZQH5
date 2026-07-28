@@ -22,6 +22,13 @@ jobs:
   check:
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    env:
+      # Work Package G: next.config.mjs fail-closes in production
+      # (next lint / next build both set NODE_ENV=production internally)
+      # when NEXT_PUBLIC_SUPABASE_URL is unset. A canonical placeholder
+      # satisfies the host-shape check without contacting Supabase.
+      # Demo mode never calls Supabase at build time.
+      NEXT_PUBLIC_SUPABASE_URL: "https://abcdefghijklmnopqrst.supabase.co"
     steps:
       # actions/checkout@v4.2.2
       # fetch-depth: 0 is required because the migration immutability
@@ -123,7 +130,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      NODE_ENV: production
+      # NOTE: NODE_ENV is intentionally NOT set at the job level.
+      # Setting NODE_ENV=production here would cause `npm ci` to skip
+      # devDependencies (cross-env, typescript, eslint-config-next, etc.),
+      # breaking the build. `next build` sets NODE_ENV=production
+      # internally during the build step, which is sufficient.
       NEXT_PUBLIC_DEMO_MODE: "false"
       # Review #2 WP8: localhost mock backend. BUILD_MOCK_BACKEND
       # tells next.config.mjs to bypass the canonical Supabase host
@@ -237,7 +248,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      NODE_ENV: production
+      # NOTE: NODE_ENV is intentionally NOT set at the job level.
+      # Setting NODE_ENV=production here would cause `npm ci` to skip
+      # devDependencies (typescript, eslint-config-next, postcss,
+      # tailwindcss, etc.), which breaks webpack module resolution and
+      # CSS processing. `next build` sets NODE_ENV=production internally.
       NEXT_PUBLIC_DEMO_MODE: "false"
       # Compile-only mode does not call into Supabase at build
       # time, so the canonical placeholder host is acceptable.
@@ -351,6 +366,12 @@ jobs:
   demo-e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      # Work Package G: next.config.mjs fail-closes in production
+      # when NEXT_PUBLIC_SUPABASE_URL is unset. Demo build never
+      # contacts Supabase, but the config guard runs before that
+      # is known. A canonical placeholder satisfies the guard.
+      NEXT_PUBLIC_SUPABASE_URL: "https://abcdefghijklmnopqrst.supabase.co"
     steps:
       # actions/checkout@v4.2.2
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
