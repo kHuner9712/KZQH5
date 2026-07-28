@@ -12,6 +12,24 @@
 //      Instead, this module uses only Web APIs (fetch, Headers,
 //      TextEncoder, TextDecoder, atob, btoa) that are available in
 //      BOTH the Edge Runtime and Node.js.
+//
+//   Review #4 (Auth Session Hardening):
+//     - WP1: Persists absolute `expires_at` in the refreshed session
+//       cookie so subsequent reads do NOT recompute `now + expires_in`
+//       (which would make a refreshed token look forever-fresh).
+//     - WP2: Deletes stale cookie chunks in the BROWSER via
+//       `Set-Cookie: <name>=; Max-Age=0` (matching @supabase/ssr's
+//       `applyServerStorage` behavior). Previously only the request
+//       cookies were cleared, leaving the browser holding stale chunks.
+//     - WP3: Full anti-cache header set:
+//         Cache-Control: private, no-cache, no-store, must-revalidate, max-age=0
+//         Expires: 0
+//         Pragma: no-cache
+//     - WP4: Removed `Authorization: Bearer <access_token>` from the
+//       refresh request. The Supabase Auth refresh-token endpoint
+//       authenticates via `apikey` + the `refresh_token` in the body;
+//       it does NOT require (and should not depend on) the old access
+//       token, which may already be expired.
 //   2. Safe for ISR — the caller decides WHICH paths trigger a
 //      refresh, so public ISR pages are never forced into dynamic
 //      rendering.
@@ -27,10 +45,12 @@
 //      new session) and the outgoing response (so the browser
 //      persists them).
 //   6. Response-correct — when cookies were refreshed, the function
-//      returns a NEW NextResponse that:
-//        a. carries `Cache-Control: private, no-store` so that any
-//           shared cache can never serve a session-bound response
-//           to a different user;
+//        returns a NEW NextResponse that:
+//        a. carries the full anti-cache header set
+//           (`Cache-Control: private, no-cache, no-store,
+//           must-revalidate, max-age=0`, `Expires: 0`,
+//           `Pragma: no-cache`) so that any shared cache can never
+//           serve a session-bound response to a different user;
 //        b. preserves all security headers the caller set on the
 //           original response (X-Content-Type-Options, Referrer-
 //           Policy, X-Frame-Options, Permissions-Policy, HSTS,
@@ -301,13 +321,29 @@ function getProjectRef(supabaseUrl: string): string | null {
  * Call the Supabase Auth refresh-token endpoint.
  *
  * POST to {supabaseUrl}/auth/v1/token?grant_type=refresh_token with
- * the refresh token. Returns the new session or throws on failure.
+ * the refresh token in the body. The endpoint authenticates via the
+ * `apikey` header (Supabase gateway auth) and the `refresh_token` in
+ * the body (session authorization). It does NOT require — and must not
+ * depend on — the old access token, which may already be expired.
+ *
+ * WP1: After a successful refresh, the response may only contain
+ * `expires_in` (a relative TTL). We persist the ABSOLUTE `expires_at`
+ * by computing `refreshedAt + expires_in` so that subsequent cookie
+ * reads do NOT recompute `now + expires_in` (which would make the
+ * token look forever-fresh on every request).
+ *
+ * If the response contains neither a valid `expires_at` nor a valid
+ * positive `expires_in`, the response is treated as malformed.
+ *
+ * The new `refresh_token` (if present) overwrites the old one; this
+ * is the rotation that Supabase Auth performs on every refresh.
+ *
+ * No token, cookie content, or raw auth response is ever logged.
  */
 async function callRefreshToken(
   supabaseUrl: string,
   anonKey: string,
   refreshToken: string,
-  accessToken: string,
 ): Promise<SupabaseSession> {
   const res = await fetch(
     `${supabaseUrl}/auth/v1/token?grant_type=refresh_token`,
@@ -315,7 +351,6 @@ async function callRefreshToken(
       method: "POST",
       headers: {
         apikey: anonKey,
-        Authorization: `Bearer ${accessToken}`,
         "Content-Type": "application/json",
         Accept: "application/json",
       },
@@ -338,7 +373,54 @@ async function callRefreshToken(
     throw new Error("REFRESH_MALFORMED");
   }
 
-  return body as SupabaseSession;
+  // WP1: Persist absolute expires_at. Do NOT keep recomputing
+  // now + expires_in on every subsequent cookie read.
+  const refreshedAt = Math.floor(Date.now() / 1000);
+  const bodyExpiresAt =
+    typeof body.expires_at === "number" && Number.isFinite(body.expires_at)
+      ? body.expires_at
+      : null;
+  const bodyExpiresIn =
+    typeof body.expires_in === "number" &&
+    Number.isFinite(body.expires_in) &&
+    body.expires_in > 0
+      ? body.expires_in
+      : null;
+
+  let resolvedExpiresAt: number | null = null;
+  if (bodyExpiresAt !== null) {
+    resolvedExpiresAt = bodyExpiresAt;
+  } else if (bodyExpiresIn !== null) {
+    resolvedExpiresAt = refreshedAt + bodyExpiresIn;
+  }
+
+  if (resolvedExpiresAt === null) {
+    // Neither expires_at nor a valid positive expires_in was present.
+    // Treat as malformed — the caller will fail-open and the downstream
+    // guard will handle the stale session.
+    throw new Error("REFRESH_MALFORMED");
+  }
+
+  const session: SupabaseSession = {
+    access_token: body.access_token,
+    refresh_token: body.refresh_token,
+    expires_at: resolvedExpiresAt,
+  };
+
+  // Keep expires_in for downstream compatibility, but expires_at is
+  // the authoritative expiry field. Token expiry checks MUST use
+  // expires_at, not expires_in.
+  if (bodyExpiresIn !== null) {
+    session.expires_in = bodyExpiresIn;
+  }
+  if (typeof body.token_type === "string") {
+    session.token_type = body.token_type;
+  }
+  if (body.user !== undefined) {
+    session.user = body.user;
+  }
+
+  return session;
 }
 
 // --- Main entry point -------------------------------------------------
@@ -368,10 +450,13 @@ async function callRefreshToken(
  *   - A NEW NextResponse is built via `NextResponse.next({ request })`.
  *   - All security headers and caller-set cookies from the original
  *     response are copied onto the new response.
+ *   - Stale cookie chunks are deleted in the browser via
+ *     `Set-Cookie: <name>=; Max-Age=0` (WP2).
  *   - The refreshed auth cookie chunks are applied via
  *     `response.cookies.set`.
- *   - `Cache-Control: private, no-store` is set to forbid any shared
- *     cache from serving a session-bound response to a different user.
+ *   - The full anti-cache header set is applied (WP3):
+ *     `Cache-Control: private, no-cache, no-store, must-revalidate, max-age=0`,
+ *     `Expires: 0`, `Pragma: no-cache`.
  *
  * Failures during refresh are swallowed intentionally: the middleware
  * must not block the request if the Supabase Auth server is unreachable.
@@ -420,13 +505,25 @@ export async function refreshSupabaseSession(
   }
 
   // Check if the access token is near expiry.
+  // WP1: Use the persisted absolute `expires_at` from the cookie.
+  // Do NOT recompute `now + expires_in` here — that would make a
+  // previously-refreshed token look forever-fresh on every request.
+  // The `expires_at` was persisted as an absolute timestamp at the
+  // time of the last refresh. If `expires_at` is absent (e.g. a cookie
+  // written by an older version), fall back to `expires_in` only once
+  // as a migration safety net.
   const now = Math.floor(Date.now() / 1000);
-  const expiresAt =
-    typeof session.expires_at === "number"
+  const persistedExpiresAt =
+    typeof session.expires_at === "number" && Number.isFinite(session.expires_at)
       ? session.expires_at
-      : typeof session.expires_in === "number"
-        ? now + session.expires_in
-        : null;
+      : null;
+  const fallbackExpiresAt =
+    typeof session.expires_in === "number" &&
+    Number.isFinite(session.expires_in) &&
+    session.expires_in > 0
+      ? now + session.expires_in
+      : null;
+  const expiresAt = persistedExpiresAt ?? fallbackExpiresAt;
 
   // If we can't determine expiry, or the token is still valid, skip refresh.
   if (expiresAt === null || expiresAt - now > REFRESH_THRESHOLD_SECONDS) {
@@ -440,7 +537,6 @@ export async function refreshSupabaseSession(
       url,
       anonKey,
       session.refresh_token,
-      session.access_token,
     );
   } catch {
     // Network failure / HTTP error / malformed response — do not
@@ -453,16 +549,24 @@ export async function refreshSupabaseSession(
   // --- Session was refreshed. Build the new cookie value. ---
   const encodedValue = encodeSession(newSession);
   const chunks = createChunks(cookieName, encodedValue);
+  const newNames = new Set(chunks.map((c) => c.name));
+
+  // WP2: Collect ALL existing chunk-like cookie names from the
+  // request BEFORE mutating it. We need this to compute stale names
+  // (old - new) so we can tell the browser to delete them via
+  // `Set-Cookie: <name>=; Max-Age=0`. This matches the behavior of
+  // @supabase/ssr's `applyServerStorage`.
+  const oldNames = request.cookies
+    .getAll()
+    .filter((c) => isChunkLike(c.name, cookieName))
+    .map((c) => c.name);
+  const staleNames = oldNames.filter((name) => !newNames.has(name));
 
   // 1. Forward the refreshed cookie chunks to downstream Server
   //    Components and Route Handlers by mutating request.cookies.
-  //    Remove old chunks first, then set new ones.
-  //    We need to clear ALL old chunk cookies to avoid stale chunks.
-  const allCookies = request.cookies.getAll();
-  for (const cookie of allCookies) {
-    if (isChunkLike(cookie.name, cookieName)) {
-      request.cookies.delete(cookie.name);
-    }
+  //    Remove ALL old chunk cookies first, then set new ones.
+  for (const oldName of oldNames) {
+    request.cookies.delete(oldName);
   }
   for (const { name, value } of chunks) {
     request.cookies.set(name, value);
@@ -508,23 +612,56 @@ export async function refreshSupabaseSession(
     });
   }
 
+  // WP2: Delete stale cookie chunks in the BROWSER. For each stale name
+  // (old chunk that is no longer part of the new chunk set), emit a
+  // `Set-Cookie: <name>=; Max-Age=0` directive with the SAME scope
+  // options (path, sameSite, httpOnly) as the new chunks. This matches
+  // the behavior of @supabase/ssr's `applyServerStorage` so the browser
+  // actually removes the stale chunk instead of keeping it alongside the
+  // new chunks. Without this, transitions like 3-chunk → 2-chunk would
+  // leave `.2` dangling in the browser, and the next request would
+  // combine stale + new chunks into a corrupted session.
+  //
+  // NOTE: This project does NOT currently support a custom cookie
+  // `domain` option. @supabase/ssr also clears the host-only counterpart
+  // when a domain is configured (to avoid scope migration resurrection).
+  // Since we have no custom domain, only the default (host-only) scope is
+  // cleared. If a custom domain is added in the future, this code MUST be
+  // extended to also clear host-only cookies — see the host-only logic in
+  // @supabase/ssr's `applyServerStorage`.
+  for (const staleName of staleNames) {
+    finalResponse.cookies.set(staleName, "", {
+      ...DEFAULT_COOKIE_OPTIONS,
+      maxAge: 0,
+    });
+  }
+
   // Apply the refreshed auth cookie chunks. Each chunk is set with
   // the same default cookie options that @supabase/ssr uses so that
   // cookies written here are compatible with cookies written by
   // @supabase/ssr in Route Handlers and Server Components.
+  // Order matters: stale deletions MUST come before new chunk sets so
+  // that if a chunk name is reused (same-name replacement), the new
+  // value wins.
   for (const { name, value } of chunks) {
     finalResponse.cookies.set(name, value, {
       ...DEFAULT_COOKIE_OPTIONS,
     });
   }
 
-  // Forbid any shared cache from serving this response. The "private"
-  // token allows the browser to keep a private copy (rarely useful here
-  // but harmless), "no-store" forbids any caching of the response. This
-  // is REQUIRED because the response carries Set-Cookie headers that
-  // bind it to a specific user's session — a cached copy served to a
-  // different user would leak session cookies.
-  finalResponse.headers.set("Cache-Control", "private, no-store");
+  // WP3: Full anti-cache header set, matching @supabase/ssr's
+  // `applyServerStorage` Cache-Control value. The response carries
+  // Set-Cookie headers that bind it to a specific user's session; a
+  // cached copy served to a different user would leak session cookies.
+  //   - Cache-Control: private, no-cache, no-store, must-revalidate, max-age=0
+  //   - Expires: 0
+  //   - Pragma: no-cache
+  finalResponse.headers.set(
+    "Cache-Control",
+    "private, no-cache, no-store, must-revalidate, max-age=0",
+  );
+  finalResponse.headers.set("Expires", "0");
+  finalResponse.headers.set("Pragma", "no-cache");
 
   return finalResponse;
 }

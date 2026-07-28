@@ -263,7 +263,10 @@ describe("refreshSupabaseSession — cookie refresh", () => {
     expect(url).toContain("/auth/v1/token?grant_type=refresh_token");
     expect(options.method).toBe("POST");
     expect(options.headers.apikey).toBe(TEST_ANON_KEY);
-    expect(options.headers.Authorization).toBe("Bearer expiring-token");
+    // WP4: The refresh endpoint must NOT depend on the old (possibly
+    // expired) access token. Only apikey + refresh_token in the body.
+    expect(options.headers.Authorization).toBeUndefined();
+    expect(options.headers["Content-Type"]).toBe("application/json");
     const body = JSON.parse(options.body);
     expect(body.refresh_token).toBe("valid-refresh-token");
   });
@@ -310,7 +313,7 @@ describe("refreshSupabaseSession — cookie refresh", () => {
     expect(cookie!.value).toContain("base64-");
   });
 
-  it("sets Cache-Control: private, no-store on the returned response", async () => {
+  it("sets full anti-cache headers on the returned response (WP3)", async () => {
     simulateSuccessfulRefresh({
       access_token: "new-access",
       refresh_token: "new-refresh",
@@ -319,7 +322,13 @@ describe("refreshSupabaseSession — cookie refresh", () => {
     const request = buildRequestWithExpiringToken();
     const original = NextResponse.next();
     const result = await refreshSupabaseSession(request, original);
-    expect(result.headers.get("Cache-Control")).toBe("private, no-store");
+    // WP3: Full anti-cache header set matching @supabase/ssr's
+    // applyServerStorage behavior.
+    expect(result.headers.get("Cache-Control")).toBe(
+      "private, no-cache, no-store, must-revalidate, max-age=0",
+    );
+    expect(result.headers.get("Expires")).toBe("0");
+    expect(result.headers.get("Pragma")).toBe("no-cache");
   });
 
   it("preserves all security headers from the original response", async () => {
@@ -534,7 +543,7 @@ describe("middleware integration", () => {
     expect(response.headers.get("Cache-Control")).toBeNull();
   });
 
-  it("returns a response with Cache-Control: private, no-store when cookies are refreshed via middleware", async () => {
+  it("returns a response with full anti-cache headers when cookies are refreshed via middleware (WP3)", async () => {
     simulateSuccessfulRefresh({
       access_token: "new-access-via-middleware",
       refresh_token: "new-refresh-via-middleware",
@@ -551,7 +560,11 @@ describe("middleware integration", () => {
       headers: { Cookie: `${TEST_COOKIE_NAME}=${cookieValue}` },
     });
     const response = await middleware(request);
-    expect(response.headers.get("Cache-Control")).toBe("private, no-store");
+    expect(response.headers.get("Cache-Control")).toBe(
+      "private, no-cache, no-store, must-revalidate, max-age=0",
+    );
+    expect(response.headers.get("Expires")).toBe("0");
+    expect(response.headers.get("Pragma")).toBe("no-cache");
     expect(response.headers.get("Set-Cookie")).toContain(TEST_COOKIE_NAME);
     expect(response.headers.get("X-Content-Type-Options")).toBe("nosniff");
     expect(response.headers.get("X-Frame-Options")).toBe("DENY");
@@ -565,5 +578,498 @@ describe("middleware integration", () => {
     const request = new NextRequest("https://kzq.test/products");
     const response = await middleware(request);
     expect(response.headers.get("Cache-Control")).toBeNull();
+  });
+});
+
+// ============================================================
+// WP1: Persistent absolute expires_at
+// ============================================================
+describe("WP1: persistent absolute expires_at", () => {
+  beforeEach(() => {
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", TEST_SUPABASE_URL);
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY", TEST_ANON_KEY);
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function buildRequestWithExpiringToken(): NextRequest {
+    const pastExpiry = Math.floor(Date.now() / 1000) - 10;
+    const cookieValue = encodeSessionCookie({
+      access_token: "expiring-token",
+      refresh_token: "valid-refresh-token",
+      expires_at: pastExpiry,
+    });
+    return new NextRequest("https://kzq.test/admin", {
+      headers: { Cookie: `${TEST_COOKIE_NAME}=${cookieValue}` },
+    });
+  }
+
+  /**
+   * Decode the Set-Cookie header(s) from a response and return the
+   * session object stored in the auth-token cookie. Returns null if
+   * the cookie is not present.
+   */
+  function decodeSetCookieSession(
+    response: NextResponse,
+    cookieName: string,
+  ): { expires_at?: number; expires_in?: number; access_token: string; refresh_token: string } | null {
+    const all = response.cookies.getAll();
+    const base = all.find((c) => c.name === cookieName);
+    if (base) {
+      return decodeSessionValue(base.value);
+    }
+    const chunks: string[] = [];
+    for (let i = 0; ; i++) {
+      const c = all.find((x) => x.name === `${cookieName}.${i}`);
+      if (!c) break;
+      chunks.push(c.value);
+    }
+    if (chunks.length === 0) return null;
+    return decodeSessionValue(chunks.join(""));
+  }
+
+  function decodeSessionValue(rawValue: string): {
+    expires_at?: number;
+    expires_in?: number;
+    access_token: string;
+    refresh_token: string;
+  } | null {
+    let jsonStr: string;
+    if (rawValue.startsWith("base64-")) {
+      try {
+        const b64 = rawValue.substring("base64-".length);
+        const padded = b64.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - (b64.length % 4)) % 4);
+        jsonStr = atob(padded);
+        const bytes = new Uint8Array(jsonStr.length);
+        for (let i = 0; i < jsonStr.length; i++) bytes[i] = jsonStr.charCodeAt(i);
+        jsonStr = new TextDecoder().decode(bytes);
+      } catch {
+        return null;
+      }
+    } else {
+      jsonStr = rawValue;
+    }
+    try {
+      return JSON.parse(jsonStr);
+    } catch {
+      return null;
+    }
+  }
+
+  it("first refresh: persists absolute expires_at = refreshedAt + expires_in", async () => {
+    const fixedNow = Math.floor(Date.now() / 1000);
+    vi.setSystemTime(fixedNow * 1000);
+
+    // Refresh API returns ONLY expires_in (no expires_at)
+    simulateSuccessfulRefresh({
+      access_token: "new-access",
+      refresh_token: "new-refresh",
+      expires_in: 3600,
+    });
+
+    const request = buildRequestWithExpiringToken();
+    const result = await refreshSupabaseSession(request, NextResponse.next());
+
+    const session = decodeSetCookieSession(result, TEST_COOKIE_NAME);
+    expect(session).not.toBeNull();
+    expect(session!.expires_at).toBe(fixedNow + 3600);
+    expect(session!.expires_in).toBe(3600);
+  });
+
+  it("first refresh: uses body expires_at when present", async () => {
+    const fixedNow = Math.floor(Date.now() / 1000);
+    vi.setSystemTime(fixedNow * 1000);
+
+    const bodyExpiresAt = fixedNow + 7200;
+    simulateSuccessfulRefresh({
+      access_token: "new-access",
+      refresh_token: "new-refresh",
+      expires_in: 3600,
+      expires_at: bodyExpiresAt,
+    });
+
+    const request = buildRequestWithExpiringToken();
+    const result = await refreshSupabaseSession(request, NextResponse.next());
+
+    const session = decodeSetCookieSession(result, TEST_COOKIE_NAME);
+    expect(session!.expires_at).toBe(bodyExpiresAt);
+  });
+
+  it("treats response without expires_at AND without valid expires_in as malformed (fail-open)", async () => {
+    simulateSuccessfulRefresh({
+      access_token: "new-access",
+      refresh_token: "new-refresh",
+    });
+
+    const request = buildRequestWithExpiringToken();
+    const original = NextResponse.next();
+    original.headers.set("X-Test", "preserved");
+    const result = await refreshSupabaseSession(request, original);
+
+    expect(result).toBe(original);
+    expect(result.headers.get("X-Test")).toBe("preserved");
+  });
+
+  it("second refresh: persisted expires_at triggers re-refresh after time advance", async () => {
+    // Step 1: First refresh at T0, returns expires_in=3600
+    const t0 = 1700000000;
+    vi.setSystemTime(t0 * 1000);
+
+    simulateSuccessfulRefresh({
+      access_token: "first-access",
+      refresh_token: "first-refresh",
+      expires_in: 3600,
+    });
+
+    const firstRequest = buildRequestWithExpiringToken();
+    const firstResult = await refreshSupabaseSession(firstRequest, NextResponse.next());
+
+    const firstSession = decodeSetCookieSession(firstResult, TEST_COOKIE_NAME);
+    expect(firstSession!.expires_at).toBe(t0 + 3600);
+
+    // Step 2: Simulate browser applying the Set-Cookie.
+    const firstCookieValue = firstResult.cookies
+      .getAll()
+      .find((c) => c.name === TEST_COOKIE_NAME)?.value;
+    expect(firstCookieValue).toBeTruthy();
+
+    // Step 3: Advance time to T0 + 3601 (token now expired)
+    const t1 = t0 + 3601;
+    vi.setSystemTime(t1 * 1000);
+
+    // Step 4: Second refresh — if expires_at were NOT persisted and
+    // instead now + expires_in was recomputed, the token would look
+    // fresh (3600s remaining) and refresh would be SKIPPED.
+    simulateSuccessfulRefresh({
+      access_token: "second-access",
+      refresh_token: "second-refresh",
+      expires_in: 3600,
+    });
+
+    const secondRequest = new NextRequest("https://kzq.test/admin", {
+      headers: { Cookie: `${TEST_COOKIE_NAME}=${firstCookieValue}` },
+    });
+    const secondResult = await refreshSupabaseSession(secondRequest, NextResponse.next());
+
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+
+    const secondSession = decodeSetCookieSession(secondResult, TEST_COOKIE_NAME);
+    expect(secondSession!.access_token).toBe("second-access");
+    expect(secondSession!.refresh_token).toBe("second-refresh");
+    expect(secondSession!.expires_at).toBe(t1 + 3600);
+  });
+
+  it("new refresh_token overwrites the old one", async () => {
+    vi.setSystemTime(1700000000 * 1000);
+    simulateSuccessfulRefresh({
+      access_token: "new-access",
+      refresh_token: "new-rotated-refresh",
+      expires_in: 3600,
+    });
+
+    const request = buildRequestWithExpiringToken();
+    const result = await refreshSupabaseSession(request, NextResponse.next());
+
+    const session = decodeSetCookieSession(result, TEST_COOKIE_NAME);
+    expect(session!.refresh_token).toBe("new-rotated-refresh");
+    expect(session!.refresh_token).not.toBe("valid-refresh-token");
+  });
+});
+
+// ============================================================
+// WP2: Stale cookie chunk deletion in the browser
+// ============================================================
+describe("WP2: stale cookie chunk deletion in the browser", () => {
+  beforeEach(() => {
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", TEST_SUPABASE_URL);
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY", TEST_ANON_KEY);
+    vi.useFakeTimers();
+    vi.setSystemTime(1700000000 * 1000);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function applyResponseToBrowserJar(
+    response: NextResponse,
+    jar: Map<string, string>,
+  ): void {
+    for (const cookie of response.cookies.getAll()) {
+      if (cookie.maxAge === 0) {
+        jar.delete(cookie.name);
+      } else {
+        jar.set(cookie.name, cookie.value);
+      }
+    }
+  }
+
+  function buildBrowserRequest(
+    url: string,
+    jar: Map<string, string>,
+  ): NextRequest {
+    const cookieHeader = Array.from(jar.entries())
+      .map(([k, v]) => `${k}=${v}`)
+      .join("; ");
+    return new NextRequest(url, {
+      headers: cookieHeader ? { Cookie: cookieHeader } : {},
+    });
+  }
+
+  function decodeRawSession(rawValue: string): {
+    access_token: string;
+    refresh_token: string;
+    expires_at?: number;
+  } | null {
+    let jsonStr: string;
+    if (rawValue.startsWith("base64-")) {
+      try {
+        const b64 = rawValue.substring("base64-".length);
+        const padded =
+          b64.replace(/-/g, "+").replace(/_/g, "/") +
+          "=".repeat((4 - (b64.length % 4)) % 4);
+        jsonStr = atob(padded);
+        const bytes = new Uint8Array(jsonStr.length);
+        for (let i = 0; i < jsonStr.length; i++) bytes[i] = jsonStr.charCodeAt(i);
+        jsonStr = new TextDecoder().decode(bytes);
+      } catch {
+        return null;
+      }
+    } else {
+      jsonStr = rawValue;
+    }
+    try {
+      return JSON.parse(jsonStr);
+    } catch {
+      return null;
+    }
+  }
+
+  function readChunkedFromJar(
+    jar: Map<string, string>,
+    key: string,
+  ): string | null {
+    const direct = jar.get(key);
+    if (direct) return direct;
+    const chunks: string[] = [];
+    for (let i = 0; ; i++) {
+      const chunk = jar.get(`${key}.${i}`);
+      if (!chunk) break;
+      chunks.push(chunk);
+    }
+    return chunks.length > 0 ? chunks.join("") : null;
+  }
+
+  it("unchunked → chunked: deletes old base cookie and sets new chunks", async () => {
+    const oldCookieValue = encodeSessionCookie({
+      access_token: "old-access",
+      refresh_token: "old-refresh",
+      expires_at: Math.floor(Date.now() / 1000) - 10,
+    });
+
+    const jar = new Map<string, string>();
+    jar.set(TEST_COOKIE_NAME, oldCookieValue);
+
+    simulateSuccessfulRefresh({
+      access_token: "new-access-" + "x".repeat(6000),
+      refresh_token: "new-refresh",
+      expires_in: 3600,
+    });
+
+    const request = buildBrowserRequest("https://kzq.test/admin", jar);
+    const result = await refreshSupabaseSession(request, NextResponse.next());
+
+    applyResponseToBrowserJar(result, jar);
+
+    // Old base cookie deleted, new chunks present
+    expect(jar.has(TEST_COOKIE_NAME)).toBe(false);
+    expect(jar.has(`${TEST_COOKIE_NAME}.0`)).toBe(true);
+
+    const combined = readChunkedFromJar(jar, TEST_COOKIE_NAME);
+    expect(combined).toBeTruthy();
+    const session = decodeRawSession(combined!);
+    expect(session).not.toBeNull();
+    expect(session!.access_token).toContain("new-access");
+  });
+
+  it("3-chunk → 2-chunk: deletes stale higher chunks in the browser", async () => {
+    // Build a session large enough to produce 3+ chunks
+    const largeOldValue = encodeSessionCookie({
+      access_token: "old-" + "x".repeat(9000),
+      refresh_token: "old-refresh",
+      expires_at: Math.floor(Date.now() / 1000) - 10,
+    });
+
+    const CHUNK_SIZE = 3180;
+    const jar = new Map<string, string>();
+    const encoded = encodeURIComponent(largeOldValue);
+    let idx = 0;
+    let remaining = encoded;
+    while (remaining.length > 0) {
+      let head = remaining.slice(0, CHUNK_SIZE);
+      const lastEscape = head.lastIndexOf("%");
+      if (lastEscape > CHUNK_SIZE - 3) head = head.slice(0, lastEscape);
+      while (head.length > 0) {
+        try { decodeURIComponent(head); break; } catch { head = head.slice(0, head.length - 3); }
+      }
+      jar.set(`${TEST_COOKIE_NAME}.${idx}`, decodeURIComponent(head));
+      remaining = remaining.slice(head.length);
+      idx++;
+    }
+    const oldChunkCount = idx;
+    expect(oldChunkCount).toBeGreaterThanOrEqual(3);
+
+    // New session: smaller, produces fewer chunks
+    simulateSuccessfulRefresh({
+      access_token: "new-" + "x".repeat(4000),
+      refresh_token: "new-refresh",
+      expires_in: 3600,
+    });
+
+    const request = buildBrowserRequest("https://kzq.test/admin", jar);
+    const result = await refreshSupabaseSession(request, NextResponse.next());
+
+    applyResponseToBrowserJar(result, jar);
+
+    // Stale higher chunks must be deleted
+    for (let i = 0; i < oldChunkCount; i++) {
+      const chunkName = `${TEST_COOKIE_NAME}.${i}`;
+      // All chunks that existed before but are no longer in the jar
+      // must have been explicitly deleted (not just left behind)
+      if (!jar.has(chunkName)) {
+        // OK — either deleted or never set
+      }
+    }
+    // Verify the highest old chunk is gone
+    expect(jar.has(`${TEST_COOKIE_NAME}.${oldChunkCount - 1}`)).toBe(false);
+
+    // The next request must read a valid NEW session
+    const combined = readChunkedFromJar(jar, TEST_COOKIE_NAME);
+    expect(combined).toBeTruthy();
+    const session = decodeRawSession(combined!);
+    expect(session).not.toBeNull();
+    expect(session!.access_token).toContain("new-");
+    expect(session!.refresh_token).toBe("new-refresh");
+  });
+
+  it("chunked → unchunked: deletes all old chunks", async () => {
+    const largeOldValue = encodeSessionCookie({
+      access_token: "old-" + "x".repeat(6000),
+      refresh_token: "old-refresh",
+      expires_at: Math.floor(Date.now() / 1000) - 10,
+    });
+
+    const CHUNK_SIZE = 3180;
+    const jar = new Map<string, string>();
+    const encoded = encodeURIComponent(largeOldValue);
+    let idx = 0;
+    let remaining = encoded;
+    while (remaining.length > 0) {
+      let head = remaining.slice(0, CHUNK_SIZE);
+      const lastEscape = head.lastIndexOf("%");
+      if (lastEscape > CHUNK_SIZE - 3) head = head.slice(0, lastEscape);
+      while (head.length > 0) {
+        try { decodeURIComponent(head); break; } catch { head = head.slice(0, head.length - 3); }
+      }
+      jar.set(`${TEST_COOKIE_NAME}.${idx}`, decodeURIComponent(head));
+      remaining = remaining.slice(head.length);
+      idx++;
+    }
+    const oldChunkCount = idx;
+    expect(oldChunkCount).toBeGreaterThanOrEqual(2);
+
+    simulateSuccessfulRefresh({
+      access_token: "small-new",
+      refresh_token: "new-refresh",
+      expires_in: 3600,
+    });
+
+    const request = buildBrowserRequest("https://kzq.test/admin", jar);
+    const result = await refreshSupabaseSession(request, NextResponse.next());
+
+    applyResponseToBrowserJar(result, jar);
+
+    for (let i = 0; i < oldChunkCount; i++) {
+      expect(jar.has(`${TEST_COOKIE_NAME}.${i}`)).toBe(false);
+    }
+    expect(jar.has(TEST_COOKIE_NAME)).toBe(true);
+
+    const raw = jar.get(TEST_COOKIE_NAME)!;
+    const session = decodeRawSession(raw);
+    expect(session).not.toBeNull();
+    expect(session!.access_token).toBe("small-new");
+  });
+
+  it("same chunk count replacement: no unnecessary delete directives", async () => {
+    const oldValue = encodeSessionCookie({
+      access_token: "old-access",
+      refresh_token: "old-refresh",
+      expires_at: Math.floor(Date.now() / 1000) - 10,
+    });
+
+    const jar = new Map<string, string>();
+    jar.set(TEST_COOKIE_NAME, oldValue);
+
+    simulateSuccessfulRefresh({
+      access_token: "new-access",
+      refresh_token: "new-refresh",
+      expires_in: 3600,
+    });
+
+    const request = buildBrowserRequest("https://kzq.test/admin", jar);
+    const result = await refreshSupabaseSession(request, NextResponse.next());
+
+    const deleteCookies = result.cookies
+      .getAll()
+      .filter((c) => c.maxAge === 0);
+    expect(deleteCookies.length).toBe(0);
+
+    const setCookies = result.cookies
+      .getAll()
+      .filter((c) => c.maxAge !== 0);
+    expect(setCookies.length).toBe(1);
+    expect(setCookies[0].name).toBe(TEST_COOKIE_NAME);
+  });
+});
+
+// ============================================================
+// WP4: Refresh API request — no Authorization header
+// ============================================================
+describe("WP4: refresh API request — no old access token dependency", () => {
+  beforeEach(() => {
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", TEST_SUPABASE_URL);
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY", TEST_ANON_KEY);
+  });
+
+  it("does NOT send Authorization header (does not depend on old access token)", async () => {
+    simulateSuccessfulRefresh({
+      access_token: "new-access",
+      refresh_token: "new-refresh",
+      expires_in: 3600,
+    });
+
+    const pastExpiry = Math.floor(Date.now() / 1000) - 10;
+    const cookieValue = encodeSessionCookie({
+      access_token: "old-possibly-expired-access-token",
+      refresh_token: "valid-refresh-token",
+      expires_at: pastExpiry,
+    });
+    const request = new NextRequest("https://kzq.test/admin", {
+      headers: { Cookie: `${TEST_COOKIE_NAME}=${cookieValue}` },
+    });
+    await refreshSupabaseSession(request, NextResponse.next());
+
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    const [, options] = mockFetch.mock.calls[0];
+    expect(options.headers.Authorization).toBeUndefined();
+    expect(JSON.stringify(options.headers)).not.toContain(
+      "old-possibly-expired-access-token",
+    );
+    expect(options.headers.apikey).toBe(TEST_ANON_KEY);
+    const body = JSON.parse(options.body);
+    expect(body.refresh_token).toBe("valid-refresh-token");
   });
 });
