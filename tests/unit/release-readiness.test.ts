@@ -154,6 +154,46 @@ describe("check-release-readiness.mjs — env-var driven logic", () => {
     expect(stdout).toContain("PASS");
     expect(stdout).not.toContain("vercel.app");
   });
+
+  // ============================================================
+  // Review #3 WP5: BUILD_MOCK_BACKEND must BLOCK in any deployment
+  // environment. The flag is CI-only and must never appear in a real
+  // deployment. The release-readiness script must reject it.
+  // ============================================================
+  it("Review #3 BLOCKs when BUILD_MOCK_BACKEND=true in deployment env", async () => {
+    const { exitCode, stdout } = await runScript({
+      NEXT_PUBLIC_SITE_URL: "https://staging.example.com",
+      NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:1",
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon-key",
+      NEXT_PUBLIC_DEMO_MODE: "false",
+      NEXT_PUBLIC_SITE_INDEXING_ENABLED: "false",
+      BUILD_MOCK_BACKEND: "true",
+    });
+    expect(exitCode).toBe(1);
+    expect(stdout).toContain("BLOCK");
+    expect(stdout).toContain("BUILD_MOCK_BACKEND");
+  });
+
+  it("Review #3 PASSes when BUILD_MOCK_BACKEND is unset/false", async () => {
+    const { stdout } = await runScript({
+      NEXT_PUBLIC_SITE_URL: "https://staging.example.com",
+      NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:1",
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon-key",
+      NEXT_PUBLIC_DEMO_MODE: "false",
+      NEXT_PUBLIC_SITE_INDEXING_ENABLED: "false",
+      BUILD_MOCK_BACKEND: "false",
+    });
+    // The BUILD_MOCK_BACKEND check itself should PASS (other checks
+    // may BLOCK on Supabase connection failure, but the mock-backend
+    // env check must not be the blocker).
+    expect(stdout).toContain("BUILD_MOCK_BACKEND");
+    // Verify there's a PASS line for BUILD_MOCK_BACKEND.
+    const mockLine = stdout
+      .split("\n")
+      .find((l) => l.includes("BUILD_MOCK_BACKEND"));
+    expect(mockLine).toBeTruthy();
+    expect(mockLine!.toUpperCase()).toContain("PASS");
+  });
 });
 
 // ============================================================

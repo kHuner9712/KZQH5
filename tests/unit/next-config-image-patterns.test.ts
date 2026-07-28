@@ -166,4 +166,90 @@ describe("next.config.mjs images.remotePatterns", () => {
       /no image remotePatterns configured/,
     );
   });
+
+  // ============================================================
+  // Review #3 WP5: BUILD_MOCK_BACKEND restriction tests.
+  //
+  // BUILD_MOCK_BACKEND=true is only allowed when ALL THREE conditions
+  // are met:
+  //   1. process.env.CI === "true"
+  //   2. process.env.BUILD_MOCK_BACKEND === "true"
+  //   3. NEXT_PUBLIC_SUPABASE_URL hostname is "localhost" or "127.0.0.1"
+  //
+  // If BUILD_MOCK_BACKEND=true is set without the other two conditions,
+  // the build fails immediately. This prevents the mock-backend bypass
+  // from being used in a real deployment environment or against a real
+  // Supabase server.
+  // ============================================================
+  it("Review #3 WP5: BUILD_MOCK_BACKEND=true without CI fails the build", async () => {
+    vi.stubEnv("CI", "");
+    vi.stubEnv("BUILD_MOCK_BACKEND", "true");
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "http://127.0.0.1:5433");
+    vi.stubEnv("MEDIA_CDN_DOMAINS", "");
+    await expect(loadPatterns()).rejects.toThrow(
+      /BUILD_MOCK_BACKEND=true is only allowed in CI/,
+    );
+  });
+
+  it("Review #3 WP5: BUILD_MOCK_BACKEND=true with CI but non-loopback Supabase URL fails", async () => {
+    vi.stubEnv("CI", "true");
+    vi.stubEnv("BUILD_MOCK_BACKEND", "true");
+    // Real Supabase URL, not a loopback mock server.
+    vi.stubEnv(
+      "NEXT_PUBLIC_SUPABASE_URL",
+      "https://abcdefghijklmnopqrst.supabase.co",
+    );
+    vi.stubEnv("MEDIA_CDN_DOMAINS", "");
+    await expect(loadPatterns()).rejects.toThrow(
+      /BUILD_MOCK_BACKEND=true requires NEXT_PUBLIC_SUPABASE_URL to point at a loopback hostname/,
+    );
+  });
+
+  it("Review #3 WP5: BUILD_MOCK_BACKEND=true with CI and loopback Supabase URL succeeds", async () => {
+    vi.stubEnv("CI", "true");
+    vi.stubEnv("BUILD_MOCK_BACKEND", "true");
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "http://127.0.0.1:5433");
+    vi.stubEnv("MEDIA_CDN_DOMAINS", "");
+    // Should not throw — the mock backend is allowed in CI with loopback.
+    const patterns = await loadPatterns();
+    // The localhost mock server should be in the patterns.
+    const hostnames = patterns.map((p) => p.hostname);
+    expect(hostnames).toContain("127.0.0.1");
+  });
+
+  it("Review #3 WP5: BUILD_MOCK_BACKEND=true with CI and localhost hostname succeeds", async () => {
+    vi.stubEnv("CI", "true");
+    vi.stubEnv("BUILD_MOCK_BACKEND", "true");
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "http://localhost:5433");
+    vi.stubEnv("MEDIA_CDN_DOMAINS", "");
+    // Should not throw — the mock backend is allowed in CI with loopback.
+    const patterns = await loadPatterns();
+    const hostnames = patterns.map((p) => p.hostname);
+    expect(hostnames).toContain("localhost");
+  });
+
+  it("Review #3 WP5: BUILD_MOCK_BACKEND=false never fails the build", async () => {
+    vi.stubEnv("CI", "");
+    vi.stubEnv("BUILD_MOCK_BACKEND", "false");
+    vi.stubEnv(
+      "NEXT_PUBLIC_SUPABASE_URL",
+      "https://abcdefghijklmnopqrst.supabase.co",
+    );
+    vi.stubEnv("MEDIA_CDN_DOMAINS", "");
+    // Should not throw — BUILD_MOCK_BACKEND is false, so the restriction
+    // does not apply.
+    const patterns = await loadPatterns();
+    const hostnames = patterns.map((p) => p.hostname);
+    expect(hostnames).toContain("abcdefghijklmnopqrst.supabase.co");
+  });
+
+  it("Review #3 WP5: BUILD_MOCK_BACKEND=true with missing Supabase URL fails", async () => {
+    vi.stubEnv("CI", "true");
+    vi.stubEnv("BUILD_MOCK_BACKEND", "true");
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "");
+    vi.stubEnv("MEDIA_CDN_DOMAINS", "");
+    await expect(loadPatterns()).rejects.toThrow(
+      /BUILD_MOCK_BACKEND=true requires NEXT_PUBLIC_SUPABASE_URL to point at a loopback hostname/,
+    );
+  });
 });

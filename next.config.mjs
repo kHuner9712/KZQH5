@@ -38,10 +38,74 @@
 //   available at build time and never affects runtime behavior. The
 //   flag must never be set in real deployments — release-readiness
 //   still requires a canonical Supabase URL.
+//
+// Review #3 WP5: BUILD_MOCK_BACKEND=true is now restricted to the
+//   CI environment AND a loopback NEXT_PUBLIC_SUPABASE_URL hostname.
+//   The previous implementation only checked the flag itself, which
+//   allowed a developer or a misconfigured deployment to set
+//   BUILD_MOCK_BACKEND=true with a real Supabase URL and silently
+//   bypass the canonical host shape check. The new implementation
+//   requires ALL THREE conditions:
+//     1. process.env.CI === "true"
+//     2. process.env.BUILD_MOCK_BACKEND === "true"
+//     3. NEXT_PUBLIC_SUPABASE_URL hostname is "localhost" or "127.0.0.1"
+//   If BUILD_MOCK_BACKEND=true is set without the other two
+//   conditions, the build fails immediately with a clear error.
 // ============================================================
 
 const SUPABASE_PROJECT_HOST_PATTERN = /^[a-z0-9]{20}\.supabase\.co$/;
-const BUILD_MOCK_BACKEND = process.env.BUILD_MOCK_BACKEND === "true";
+const BUILD_MOCK_BACKEND_FLAG = process.env.BUILD_MOCK_BACKEND === "true";
+const IS_CI = process.env.CI === "true";
+
+// Review #3 WP5: extract the hostname from NEXT_PUBLIC_SUPABASE_URL
+// so we can verify the mock-backend bypass only targets a loopback
+// mock server, never a real Supabase project URL.
+function getSupabaseUrlHostname() {
+  const url = (process.env.NEXT_PUBLIC_SUPABASE_URL || "").trim();
+  if (!url) return null;
+  try {
+    return new URL(url).hostname.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+const SUPABASE_URL_HOSTNAME = getSupabaseUrlHostname();
+const IS_LOOPBACK_SUPABASE_HOST =
+  SUPABASE_URL_HOSTNAME === "localhost" ||
+  SUPABASE_URL_HOSTNAME === "127.0.0.1";
+
+// Review #3 WP5: BUILD_MOCK_BACKEND is only honored when ALL three
+// conditions are met. If the flag is set but the environment is not
+// CI or the Supabase URL hostname is not loopback, the build fails
+// immediately. This prevents the mock-backend bypass from being used
+// in a real deployment environment or against a real Supabase server.
+if (BUILD_MOCK_BACKEND_FLAG) {
+  if (!IS_CI) {
+    throw new Error(
+      "next.config: BUILD_MOCK_BACKEND=true is only allowed in CI " +
+        "(process.env.CI === \"true\"). The current environment is not CI. " +
+        "Remove BUILD_MOCK_BACKEND from your environment or set CI=true " +
+        "and point NEXT_PUBLIC_SUPABASE_URL at a loopback mock server.",
+    );
+  }
+  if (!IS_LOOPBACK_SUPABASE_HOST) {
+    throw new Error(
+      "next.config: BUILD_MOCK_BACKEND=true requires " +
+        "NEXT_PUBLIC_SUPABASE_URL to point at a loopback hostname " +
+        "(localhost/127.0.0.1). The current NEXT_PUBLIC_SUPABASE_URL " +
+        `hostname is "${SUPABASE_URL_HOSTNAME ?? "<missing>"}". ` +
+        "Remove BUILD_MOCK_BACKEND from your environment or point " +
+        "NEXT_PUBLIC_SUPABASE_URL at a loopback mock server.",
+    );
+  }
+}
+
+// The mock-backend bypass is only enabled when all three conditions
+// are satisfied. In all other cases BUILD_MOCK_BACKEND_FLAG is
+// ignored (and the build would have already failed above if the
+// flag was set without CI + loopback).
+const BUILD_MOCK_BACKEND =
+  BUILD_MOCK_BACKEND_FLAG && IS_CI && IS_LOOPBACK_SUPABASE_HOST;
 
 /**
  * Validate a single MEDIA_CDN_DOMAINS entry. Returns the normalized
