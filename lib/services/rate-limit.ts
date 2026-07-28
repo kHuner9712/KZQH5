@@ -31,10 +31,13 @@ export interface RateLimiter {
 interface MemoryEntry {
   count: number;
   firstRequestAt: number;
-  // Linked-list pointers for LRU-ish eviction when capacity is reached.
-  // We keep a doubly-linked list of entries in insertion order so that
-  // when the map is full we can evict the OLDEST still-live entry in O(1)
-  // instead of scanning the entire map.
+  // Linked-list pointers for insertion-order eviction when capacity is
+  // reached. We keep a doubly-linked list of entries in INSERTION order
+  // (NOT access/LRU order) so that when the map is full we can evict
+  // the OLDEST still-live entry in O(1) instead of scanning the entire
+  // map. Accessing an existing entry does NOT move it to the head —
+  // eviction is strictly by insertion time, which matches the
+  // `firstRequestAt`-based expiry semantics.
   prev: MemoryEntry | null;
   next: MemoryEntry | null;
   key: string;
@@ -54,7 +57,8 @@ const FAIL_SAFE_ON_CAPACITY = true;
 
 export class MemoryRateLimiter implements RateLimiter {
   private readonly entries = new Map<string, MemoryEntry>();
-  // Head = most recently inserted/touched, Tail = oldest.
+  // Head = most recently inserted entry, Tail = oldest inserted entry.
+  // This is INSERTION order, not LRU access order — see MemoryEntry docs.
   private head: MemoryEntry | null = null;
   private tail: MemoryEntry | null = null;
   private lastCleanupAt: number;
@@ -109,19 +113,40 @@ export class MemoryRateLimiter implements RateLimiter {
 
     const existing = this.entries.get(key);
     if (existing) {
-      existing.count += 1;
-      const retryAfterSeconds = Math.max(
-        1,
-        Math.ceil((this.windowMs - (now - existing.firstRequestAt)) / 1000),
-      );
-      return {
-        allowed: existing.count <= this.maximum,
-        remaining: Math.max(0, this.maximum - existing.count),
-        retryAfterSeconds,
-      };
+      // Phase 1 Task 1: an existing entry may be STALE — its window may
+      // have expired even though the global cleanup throttle has not
+      // fired (cleanup runs at most once per windowMs/4). If we merely
+      // increment the count on a stale entry, a legitimate request that
+      // arrives just after the window ends will be rejected using the
+      // OLD window's count, which is the bug.
+      //
+      // Fix: when the entry's own window has elapsed, treat the request
+      // as the first request of a NEW window. Remove the stale entry
+      // from the map + linked list, then fall through to the "new key"
+      // path below (which inserts a fresh entry with count=1).
+      const entryExpired = now - existing.firstRequestAt >= this.windowMs;
+      if (!entryExpired) {
+        // Entry is still live: increment and return.
+        existing.count += 1;
+        const retryAfterSeconds = Math.max(
+          1,
+          Math.ceil((this.windowMs - (now - existing.firstRequestAt)) / 1000),
+        );
+        return {
+          allowed: existing.count <= this.maximum,
+          remaining: Math.max(0, this.maximum - existing.count),
+          retryAfterSeconds,
+        };
+      }
+      // Entry is expired: remove it so the "new key" path re-inserts a
+      // fresh entry. This keeps entryCount and the linked list consistent
+      // (no duplicate keys, no dangling pointers).
+      this.unlinkAndDelete(existing);
+      // Fall through to the "new key" path to insert a fresh entry.
     }
 
-    // New key. Enforce capacity BEFORE inserting to avoid unbounded growth.
+    // New key (or freshly-expired key treated as new). Enforce capacity
+    // BEFORE inserting to avoid unbounded growth.
     if (this.entries.size >= this.maxEntries) {
       // Try to evict expired entries first (cheap tail walk).
       while (this.tail && now - this.tail.firstRequestAt >= this.windowMs) {

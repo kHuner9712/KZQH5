@@ -130,7 +130,12 @@
 - [ ] **匿名分析接口限流生效**（频繁提交返回 429）
 - [ ] **未知 IP 时使用稳定 fallback bucket**（生产 `RATE_LIMIT_FALLBACK_SECRET` ≥ 32 字符已配置；缺失时使用 `fallback:global` 单桶，不产生随机 key）
 - [ ] **`TRUSTED_PROXY_HEADER` 已正确配置**（EdgeOne 设为 `eo-connecting-ip`；未配置或非法值时所有代理 Header 不可信）
+- [ ] **`OUTBOX_DISPATCH_SECRET` 已配置**（≥ 16 字符；缺失时 `/api/internal/outbox/dispatch` 返回 503，询盘提交仍写表但通知不投递）
 - [ ] **`x-forwarded-for` 永远不被信任**（不再有 `TRUST_X_FORWARDED_FOR` 开关）
+- [ ] **CSP Reporting 已接通**：浏览器 DevTools Network 可观察到 `/api/csp-report` 的 POST 请求；`Reporting-Endpoints` 响应头包含 `csp-endpoint`；CSP `report-to csp-endpoint` 与 `report-uri /api/csp-report` 同时存在（兼容现代 Reporting API 与 legacy `report-uri`）。当前公开站点保持 Report-Only，本阶段不要求 enforcing
+- [ ] **CSP 日志无敏感信息**：`/api/csp-report` 日志不包含 query string、`script-sample`、完整 `blocked-uri` 或完整请求体（仅记录固定错误码、route、计数）
+- [ ] **`npm run check:release-readiness:staging` 在 Staging 通过**（exit 0；任何 BLOCK 必须修复后方可发布）
+- [ ] **`npm run check:release-readiness -- --mode=production` 在正式发布前通过**（exit 0；新增的 TRUSTED_PROXY_HEADER / RATE_LIMIT_FALLBACK_SECRET / OUTBOX_DISPATCH_SECRET / BUILD_MOCK_BACKEND / loopback Site URL / loopback Supabase URL / DEMO_MODE / service role 暴露 / CSP enforcing-without-nonce 等 BLOCK 条件全部满足）
 - [ ] **Readiness Canary Provision 已部署**：在 Supabase Storage `public-assets` bucket 上传 1×1 占位 PNG 到固定路径 `canary/canary-1x1.png`（路径硬编码在 `app/api/readiness/route.ts`，不可通过环境变量修改以防止误指向私有对象）。`/api/readiness` 的 storage 子检查会 GET 此对象；非 200 即视为 storage 不可用并返回 503。部署步骤：
   1. 在 Supabase Dashboard → Storage → `public-assets` 中新建目录 `canary`
   2. 上传任意 1×1 像素 PNG（建议 ≤ 100 字节）并命名为 `canary-1x1.png`
@@ -188,3 +193,16 @@
 - [ ] 未配置微信变量时无报错且普通分享 metadata 正常
 - [ ] 配置微信变量但微信接口失败时页面仍可浏览和提交询盘
 - [ ] 公众号 JS 接口安全域名、HTTPS、正式凭据与微信内分享均已人工验证（如启用）
+
+---
+
+## 9. Vercel 遗留清理（人工操作）
+
+仓库内已无 `vercel.json` 或 `.vercel/` 配置目录，CI workflows 也不引用 Vercel。但 GitHub 仓库可能仍残留 Vercel Integration（GitHub App），无法通过代码删除。以下步骤必须在 GitHub UI 手动完成，不得谎称已通过代码删除：
+
+- [ ] 打开 `https://github.com/settings/installations`（或组织级 `https://github.com/organizations/<org>/settings/installations`），定位 `Vercel` GitHub App
+- [ ] 若仍安装：点击 `Configure` → `Uninstall`（或在 Vercel Dashboard → Settings → Git → Disconnect Repository）
+- [ ] 若已在 Vercel Dashboard 删除项目：确认 GitHub 仓库 `Settings → Webhooks` 中无残留的 Vercel webhook
+- [ ] 若仓库 `Settings → Secrets and variables → Actions` 中残留 `VERCEL_TOKEN` / `VERCEL_ORG_ID` / `VERCEL_PROJECT_ID` 等 Secret，逐项删除
+- [ ] 验证 `git log --all --oneline -- 'vercel.json'` 仅出现在历史中，当前工作树无 `vercel.json`
+- [ ] 验证 `.github/workflows/*.yml` 中无 `vercel/vercel-action` 等 Vercel Action 引用

@@ -48,6 +48,10 @@ export interface MediaUrlAllowlist {
   supabaseUrl: string | null;
   /** Comma-separated enterprise CDN domains, e.g. cdn.kzq.example.com */
   cdnDomains: readonly string[];
+  /** Captured NODE_ENV at allowlist build time, used to reject loopback
+   *  hosts in production while still permitting them in development and
+   *  test environments. */
+  nodeEnv: string;
 }
 
 const BLOCKED_SCHEMES = new Set([
@@ -61,6 +65,34 @@ const BLOCKED_SCHEMES = new Set([
 ]);
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "::1"]);
+
+// ============================================================
+// Phase 1 Task 2: loopback host detection that resists bypass.
+//
+// Normalizes the hostname before comparing against LOOPBACK_HOSTS:
+//   - lowercases (defensive; callers already lowercase)
+//   - strips a single trailing dot (DNS root label: "localhost." ≡ "localhost")
+//   - strips IPv6 brackets ("[::1]" → "::1")
+//
+// This covers the bypass vectors enumerated in the test suite:
+//   - Case variations: LOCALHOST, Localhost
+//   - Trailing dots: localhost., 127.0.0.1.
+//   - IPv6 bracket forms: [::1]
+// ============================================================
+function isLoopbackHost(host: string): boolean {
+  let normalized = host.toLowerCase();
+  if (normalized.endsWith(".")) {
+    normalized = normalized.slice(0, -1);
+  }
+  if (normalized.startsWith("[") && normalized.endsWith("]")) {
+    normalized = normalized.slice(1, -1);
+  }
+  return LOOPBACK_HOSTS.has(normalized);
+}
+
+function isProductionEnv(nodeEnv: string): boolean {
+  return nodeEnv === "production";
+}
 
 // ============================================================
 // Review #2 Work Package F: positive whitelist of public media root
@@ -145,7 +177,8 @@ export function mediaAllowlistFromEnv(env: NodeJS.ProcessEnv): MediaUrlAllowlist
         .map((d) => validateCdnDomainEntry(d))
         .filter((d): d is string => d !== null)
     : [];
-  return { supabaseUrl, cdnDomains };
+  const nodeEnv = (env.NODE_ENV || "").trim();
+  return { supabaseUrl, cdnDomains, nodeEnv };
 }
 
 export function getSupabaseHost(allowlist: MediaUrlAllowlist): string | null {
@@ -451,20 +484,33 @@ export function validateMediaUrl(
 
   const scheme = url.protocol.toLowerCase();
   const host = url.hostname.toLowerCase();
+  const isLoopback = isLoopbackHost(host);
+
+  // Phase 1 Task 2: in production, reject ALL loopback absolute URLs
+  // regardless of scheme or port. This must run BEFORE the port check
+  // so the rejection reason is "unapproved-host" (not "unapproved-port"),
+  // letting operators distinguish "loopback not allowed in production"
+  // from other configuration issues. This also keeps the CMS validator
+  // in sync with next.config.mjs remotePatterns, which already refuses
+  // loopback hosts in production.
+  if (isProductionEnv(allowlist.nodeEnv) && isLoopback) {
+    return { ok: false, reason: "unapproved-host" };
+  }
 
   if (scheme === "https:") {
-    // Non-default port (not 443) is rejected unless explicitly allowlisted.
-    if (url.port && url.port !== "443") {
+    // Non-loopback HTTPS must use default port 443. Loopback HTTPS
+    // (only reachable in non-production after the check above) may
+    // use any port — local dev servers like localhost:8443 are valid.
+    if (!isLoopback && url.port && url.port !== "443") {
       return { ok: false, reason: "unapproved-port" };
     }
   } else if (scheme === "http:") {
     // Only loopback http is tolerated (local dev); public HTTP is rejected.
-    if (!LOOPBACK_HOSTS.has(host)) {
+    if (!isLoopback) {
       return { ok: false, reason: "public-http" };
     }
-    if (url.port && url.port !== "80") {
-      return { ok: false, reason: "unapproved-port" };
-    }
+    // Loopback HTTP: any port allowed (production loopback was already
+    // rejected above, so this is only reachable in non-production).
   } else {
     // Any other scheme (ftp, ws, mailto, etc.) is rejected. The blocked
     // list above already caught the dangerous ones; this catches the rest.
@@ -482,8 +528,8 @@ export function validateMediaUrl(
     if (!SUPABASE_PROJECT_HOST_PATTERN.test(host)) {
       return { ok: false, reason: "unapproved-supabase-host" };
     }
-  } else if (allowlist.cdnDomains.includes(host) || LOOPBACK_HOSTS.has(host)) {
-    // CDN or loopback — already validated by mediaAllowlistFromEnv.
+  } else if (allowlist.cdnDomains.includes(host) || isLoopback) {
+    // CDN or loopback (loopback only reachable in non-production).
   } else {
     return { ok: false, reason: "unapproved-host" };
   }

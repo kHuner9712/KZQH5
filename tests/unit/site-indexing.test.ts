@@ -53,19 +53,6 @@ describe("isIndexingEnabled", () => {
     expect(isIndexingEnabled()).toBe(true);
   });
 
-  it("defaults to noindex in Vercel environment unless explicitly 'true'", () => {
-    // Simulate Vercel production environment (no explicit indexing flag)
-    vi.stubEnv("VERCEL", "1");
-    vi.stubEnv("NEXT_PUBLIC_SITE_INDEXING_ENABLED", "");
-    expect(isIndexingEnabled()).toBe(false);
-  });
-
-  it("can be enabled in Vercel if explicitly set (not recommended)", () => {
-    vi.stubEnv("VERCEL", "1");
-    vi.stubEnv("NEXT_PUBLIC_SITE_INDEXING_ENABLED", "true");
-    expect(isIndexingEnabled()).toBe(true);
-  });
-
   it("defaults to noindex in EdgeOne environment unless explicitly 'true'", () => {
     vi.stubEnv("EDGEONE", "true");
     vi.stubEnv("NEXT_PUBLIC_SITE_INDEXING_ENABLED", "");

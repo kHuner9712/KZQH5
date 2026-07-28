@@ -197,6 +197,312 @@ describe("check-release-readiness.mjs — env-var driven logic", () => {
 });
 
 // ============================================================
+// Phase 1 Task 4: Security & Operations release readiness checks
+//
+// Verifies the new BLOCK and WARN conditions added to
+// check-release-readiness.mjs for deployment environments
+// (staging/production mode).
+// ============================================================
+
+describe("Phase 1 Task 4: security & operations BLOCK conditions", () => {
+  it("BLOCKs when TRUSTED_PROXY_HEADER is missing in staging mode", async () => {
+    const { exitCode, stdout } = await runScript(
+      {
+        NEXT_PUBLIC_SITE_URL: "https://staging.example.com",
+        NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:1",
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon-key",
+        NEXT_PUBLIC_DEMO_MODE: "false",
+        NEXT_PUBLIC_SITE_INDEXING_ENABLED: "false",
+        TRUSTED_PROXY_HEADER: "",
+      },
+      ["--", "--mode=staging"],
+    );
+    expect(stdout).toContain("TRUSTED_PROXY_HEADER");
+    expect(stdout).toContain("BLOCK");
+    // Must not print any secret value.
+    expect(stdout).not.toContain("eo-connecting-ip");
+  });
+
+  it("BLOCKs when TRUSTED_PROXY_HEADER value is not in allowed enum", async () => {
+    const { exitCode, stdout } = await runScript(
+      {
+        NEXT_PUBLIC_SITE_URL: "https://staging.example.com",
+        NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:1",
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon-key",
+        NEXT_PUBLIC_DEMO_MODE: "false",
+        NEXT_PUBLIC_SITE_INDEXING_ENABLED: "false",
+        TRUSTED_PROXY_HEADER: "x-forwarded-for",
+      },
+      ["--", "--mode=staging"],
+    );
+    expect(stdout).toContain("TRUSTED_PROXY_HEADER");
+    expect(stdout).toContain("BLOCK");
+    expect(stdout).toContain("not in allowed enum");
+  });
+
+  it("BLOCKs when RATE_LIMIT_FALLBACK_SECRET is missing in staging mode", async () => {
+    const { stdout } = await runScript(
+      {
+        NEXT_PUBLIC_SITE_URL: "https://staging.example.com",
+        NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:1",
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon-key",
+        NEXT_PUBLIC_DEMO_MODE: "false",
+        NEXT_PUBLIC_SITE_INDEXING_ENABLED: "false",
+        RATE_LIMIT_FALLBACK_SECRET: "",
+      },
+      ["--", "--mode=staging"],
+    );
+    expect(stdout).toContain("RATE_LIMIT_FALLBACK_SECRET");
+    expect(stdout).toContain("BLOCK");
+  });
+
+  it("BLOCKs when RATE_LIMIT_FALLBACK_SECRET is too short", async () => {
+    const shortSecret = "a".repeat(31); // 31 chars, need >= 32
+    const { stdout } = await runScript(
+      {
+        NEXT_PUBLIC_SITE_URL: "https://staging.example.com",
+        NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:1",
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon-key",
+        NEXT_PUBLIC_DEMO_MODE: "false",
+        NEXT_PUBLIC_SITE_INDEXING_ENABLED: "false",
+        RATE_LIMIT_FALLBACK_SECRET: shortSecret,
+      },
+      ["--", "--mode=staging"],
+    );
+    expect(stdout).toContain("RATE_LIMIT_FALLBACK_SECRET");
+    expect(stdout).toContain("BLOCK");
+    expect(stdout).toContain("too short");
+    // Must not print the secret value.
+    expect(stdout).not.toContain(shortSecret);
+  });
+
+  it("BLOCKs when OUTBOX_DISPATCH_SECRET is missing in staging mode", async () => {
+    const { stdout } = await runScript(
+      {
+        NEXT_PUBLIC_SITE_URL: "https://staging.example.com",
+        NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:1",
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon-key",
+        NEXT_PUBLIC_DEMO_MODE: "false",
+        NEXT_PUBLIC_SITE_INDEXING_ENABLED: "false",
+        OUTBOX_DISPATCH_SECRET: "",
+      },
+      ["--", "--mode=staging"],
+    );
+    expect(stdout).toContain("OUTBOX_DISPATCH_SECRET");
+    expect(stdout).toContain("BLOCK");
+  });
+
+  it("BLOCKs when OUTBOX_DISPATCH_SECRET is too short", async () => {
+    const shortSecret = "a".repeat(15); // 15 chars, need >= 16
+    const { stdout } = await runScript(
+      {
+        NEXT_PUBLIC_SITE_URL: "https://staging.example.com",
+        NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:1",
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon-key",
+        NEXT_PUBLIC_DEMO_MODE: "false",
+        NEXT_PUBLIC_SITE_INDEXING_ENABLED: "false",
+        OUTBOX_DISPATCH_SECRET: shortSecret,
+      },
+      ["--", "--mode=staging"],
+    );
+    expect(stdout).toContain("OUTBOX_DISPATCH_SECRET");
+    expect(stdout).toContain("BLOCK");
+    expect(stdout).toContain("too short");
+    // Must not print the secret value.
+    expect(stdout).not.toContain(shortSecret);
+  });
+
+  it("BLOCKs when Supabase URL uses loopback in staging mode", async () => {
+    const { stdout } = await runScript(
+      {
+        NEXT_PUBLIC_SITE_URL: "https://staging.example.com",
+        NEXT_PUBLIC_SUPABASE_URL: "http://localhost:5432",
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon-key",
+        NEXT_PUBLIC_DEMO_MODE: "false",
+        NEXT_PUBLIC_SITE_INDEXING_ENABLED: "false",
+      },
+      ["--", "--mode=staging"],
+    );
+    expect(stdout).toContain("NEXT_PUBLIC_SUPABASE_URL");
+    expect(stdout).toContain("loopback");
+    expect(stdout).toContain("BLOCK");
+  });
+
+  it("BLOCKs when Site URL uses loopback in staging mode", async () => {
+    const { stdout } = await runScript(
+      {
+        NEXT_PUBLIC_SITE_URL: "http://localhost:3000",
+        NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:1",
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon-key",
+        NEXT_PUBLIC_DEMO_MODE: "false",
+        NEXT_PUBLIC_SITE_INDEXING_ENABLED: "false",
+      },
+      ["--", "--mode=staging"],
+    );
+    expect(stdout).toContain("NEXT_PUBLIC_SITE_URL");
+    expect(stdout).toContain("loopback");
+    expect(stdout).toContain("BLOCK");
+  });
+
+  it("BLOCKs when NEXT_PUBLIC_DEMO_MODE=true in staging mode", async () => {
+    const { stdout } = await runScript(
+      {
+        NEXT_PUBLIC_SITE_URL: "https://staging.example.com",
+        NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:1",
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon-key",
+        NEXT_PUBLIC_DEMO_MODE: "true",
+        NEXT_PUBLIC_SITE_INDEXING_ENABLED: "false",
+      },
+      ["--", "--mode=staging"],
+    );
+    expect(stdout).toContain("NEXT_PUBLIC_DEMO_MODE");
+    expect(stdout).toContain("BLOCK");
+  });
+
+  it("BLOCKs when CSP_ENFORCING=true (nonce-based CSP not yet implemented)", async () => {
+    const { stdout } = await runScript({
+      NEXT_PUBLIC_SITE_URL: "https://staging.example.com",
+      NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:1",
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon-key",
+      NEXT_PUBLIC_DEMO_MODE: "false",
+      NEXT_PUBLIC_SITE_INDEXING_ENABLED: "false",
+      CSP_ENFORCING: "true",
+    });
+    expect(stdout).toContain("CSP_ENFORCING");
+    expect(stdout).toContain("BLOCK");
+  });
+});
+
+describe("Phase 1 Task 4: security checks permissive in development mode", () => {
+  it("does NOT BLOCK when TRUSTED_PROXY_HEADER is missing in default (dev) mode", async () => {
+    const { stdout } = await runScript({
+      NEXT_PUBLIC_SITE_URL: "https://staging.example.com",
+      NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:1",
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon-key",
+      NEXT_PUBLIC_DEMO_MODE: "false",
+      NEXT_PUBLIC_SITE_INDEXING_ENABLED: "false",
+      TRUSTED_PROXY_HEADER: "",
+    });
+    // In dev mode, missing TRUSTED_PROXY_HEADER should PASS, not BLOCK.
+    const proxyLine = stdout
+      .split("\n")
+      .find((l) => l.includes("TRUSTED_PROXY_HEADER"));
+    expect(proxyLine).toBeTruthy();
+    expect(proxyLine!.toUpperCase()).toContain("PASS");
+  });
+
+  it("does NOT BLOCK when RATE_LIMIT_FALLBACK_SECRET is missing in default (dev) mode", async () => {
+    const { stdout } = await runScript({
+      NEXT_PUBLIC_SITE_URL: "https://staging.example.com",
+      NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:1",
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon-key",
+      NEXT_PUBLIC_DEMO_MODE: "false",
+      NEXT_PUBLIC_SITE_INDEXING_ENABLED: "false",
+      RATE_LIMIT_FALLBACK_SECRET: "",
+    });
+    const secretLine = stdout
+      .split("\n")
+      .find((l) => l.includes("RATE_LIMIT_FALLBACK_SECRET"));
+    expect(secretLine).toBeTruthy();
+    expect(secretLine!.toUpperCase()).toContain("PASS");
+  });
+
+  it("does NOT BLOCK when OUTBOX_DISPATCH_SECRET is missing in default (dev) mode", async () => {
+    const { stdout } = await runScript({
+      NEXT_PUBLIC_SITE_URL: "https://staging.example.com",
+      NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:1",
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon-key",
+      NEXT_PUBLIC_DEMO_MODE: "false",
+      NEXT_PUBLIC_SITE_INDEXING_ENABLED: "false",
+      OUTBOX_DISPATCH_SECRET: "",
+    });
+    const secretLine = stdout
+      .split("\n")
+      .find((l) => l.includes("OUTBOX_DISPATCH_SECRET"));
+    expect(secretLine).toBeTruthy();
+    expect(secretLine!.toUpperCase()).toContain("PASS");
+  });
+});
+
+describe("Phase 1 Task 4: WARN conditions in deployment mode", () => {
+  it("WARNs when READINESS_TOKEN is not configured in staging mode", async () => {
+    const { stdout } = await runScript(
+      {
+        NEXT_PUBLIC_SITE_URL: "https://staging.example.com",
+        NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:1",
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon-key",
+        NEXT_PUBLIC_DEMO_MODE: "false",
+        NEXT_PUBLIC_SITE_INDEXING_ENABLED: "false",
+        TRUSTED_PROXY_HEADER: "eo-connecting-ip",
+        RATE_LIMIT_FALLBACK_SECRET: "a".repeat(32),
+        OUTBOX_DISPATCH_SECRET: "a".repeat(16),
+        READINESS_TOKEN: "",
+      },
+      ["--", "--mode=staging"],
+    );
+    expect(stdout).toContain("READINESS_TOKEN");
+    expect(stdout).toContain("WARN");
+  });
+
+  it("WARNs when all notification providers are unconfigured in staging mode", async () => {
+    const { stdout } = await runScript(
+      {
+        NEXT_PUBLIC_SITE_URL: "https://staging.example.com",
+        NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:1",
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon-key",
+        NEXT_PUBLIC_DEMO_MODE: "false",
+        NEXT_PUBLIC_SITE_INDEXING_ENABLED: "false",
+        TRUSTED_PROXY_HEADER: "eo-connecting-ip",
+        RATE_LIMIT_FALLBACK_SECRET: "a".repeat(32),
+        OUTBOX_DISPATCH_SECRET: "a".repeat(16),
+        INQUIRY_WECOM_WEBHOOK_URL: "",
+        RESEND_API_KEY: "",
+      },
+      ["--", "--mode=staging"],
+    );
+    expect(stdout).toContain("notification providers");
+    expect(stdout).toContain("WARN");
+  });
+
+  it("WARNs about CSP Report-Only in staging mode", async () => {
+    const { stdout } = await runScript(
+      {
+        NEXT_PUBLIC_SITE_URL: "https://staging.example.com",
+        NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:1",
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon-key",
+        NEXT_PUBLIC_DEMO_MODE: "false",
+        NEXT_PUBLIC_SITE_INDEXING_ENABLED: "false",
+        TRUSTED_PROXY_HEADER: "eo-connecting-ip",
+        RATE_LIMIT_FALLBACK_SECRET: "a".repeat(32),
+        OUTBOX_DISPATCH_SECRET: "a".repeat(16),
+        CSP_ENFORCING: "",
+      },
+      ["--", "--mode=staging"],
+    );
+    expect(stdout).toContain("CSP mode");
+    expect(stdout).toContain("Report-Only");
+  });
+
+  it("WARNs about WAF verification in staging mode", async () => {
+    const { stdout } = await runScript(
+      {
+        NEXT_PUBLIC_SITE_URL: "https://staging.example.com",
+        NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:1",
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon-key",
+        NEXT_PUBLIC_DEMO_MODE: "false",
+        NEXT_PUBLIC_SITE_INDEXING_ENABLED: "false",
+        TRUSTED_PROXY_HEADER: "eo-connecting-ip",
+        RATE_LIMIT_FALLBACK_SECRET: "a".repeat(32),
+        OUTBOX_DISPATCH_SECRET: "a".repeat(16),
+      },
+      ["--", "--mode=staging"],
+    );
+    expect(stdout).toContain("WAF");
+    expect(stdout).toContain("WARN");
+  });
+});
+
+// ============================================================
 // Phase 7: Schema verification RPC subprocess tests
 //
 // These tests run check-release-readiness.mjs as a subprocess against

@@ -37,6 +37,11 @@ import { readFileSync } from "node:fs";
 
 const args = process.argv.slice(2);
 const stagingMode = args.some((a) => a.includes("mode=staging"));
+const productionMode = args.some((a) => a.includes("mode=production"));
+// "Deployment mode" = staging or production. New BLOCK conditions for
+// security and operational readiness only apply in deployment mode,
+// not in local development mode.
+const deploymentMode = stagingMode || productionMode;
 
 // ---------- Result collection ----------
 
@@ -152,10 +157,17 @@ function checkGitAndBuild() {
   // Demo mode
   const demoMode = process.env.NEXT_PUBLIC_DEMO_MODE === "true";
   if (demoMode) {
-    warn(
-      "env: NEXT_PUBLIC_DEMO_MODE",
-      "true — staging must set this to false before going live",
-    );
+    if (deploymentMode) {
+      block(
+        "env: NEXT_PUBLIC_DEMO_MODE",
+        "true — must be false in staging/production deployment environments",
+      );
+    } else {
+      warn(
+        "env: NEXT_PUBLIC_DEMO_MODE",
+        "true — staging must set this to false before going live",
+      );
+    }
   } else {
     pass("env: NEXT_PUBLIC_DEMO_MODE", "false / unset");
   }
@@ -295,6 +307,232 @@ function checkUrlAndSeo() {
     pass(
       "seo: indexing vs domain",
       "indexing disabled — temporary preview domain allowed",
+    );
+  }
+}
+
+// ---------- Section 2b: Security & Operations (Phase 1 Task 4) ----------
+//
+// In deployment mode (staging/production), the following conditions BLOCK:
+//   - TRUSTED_PROXY_HEADER missing or not in allowed enum
+//   - RATE_LIMIT_FALLBACK_SECRET missing or < 32 chars
+//   - OUTBOX_DISPATCH_SECRET missing or < 16 chars
+//   - Production using loopback Supabase or Site URL
+//   - CSP_ENFORCING=true without nonce-based CSP (Phase 1 hasn't
+//     implemented nonces yet, so enforcing with 'unsafe-inline' is unsafe)
+//
+// In deployment mode, the following conditions WARN:
+//   - READINESS_TOKEN not configured
+//   - All notification providers unconfigured
+//   - CSP still Report-Only (not enforcing)
+//   - Production indexing still false
+//   - Cannot verify external WAF configuration
+//
+// In local development mode, these checks are permissive (PASS or WARN)
+// so they don't block normal development.
+
+const ALLOWED_PROXY_HEADERS = [
+  "eo-connecting-ip",
+  "x-edgeone-client-ip",
+  "x-real-ip",
+  "cf-connecting-ip",
+];
+
+const EDGEONE_PROXY_HEADERS = [
+  "eo-connecting-ip",
+  "x-edgeone-client-ip",
+];
+
+function isLoopbackHost(hostname) {
+  let h = hostname.toLowerCase();
+  if (h.endsWith(".")) h = h.slice(0, -1);
+  if (h.startsWith("[") && h.endsWith("]")) h = h.slice(1, -1);
+  return h === "localhost" || h === "127.0.0.1" || h === "::1";
+}
+
+function checkSecurityAndOperations() {
+  // --- TRUSTED_PROXY_HEADER ---
+  const trustedProxyHeader = (process.env.TRUSTED_PROXY_HEADER || "").trim();
+  if (deploymentMode) {
+    if (!trustedProxyHeader) {
+      block(
+        "env: TRUSTED_PROXY_HEADER",
+        "missing — required in deployment environments for rate-limit IP extraction",
+      );
+    } else if (!ALLOWED_PROXY_HEADERS.includes(trustedProxyHeader)) {
+      block(
+        "env: TRUSTED_PROXY_HEADER",
+        "value not in allowed enum (eo-connecting-ip, x-edgeone-client-ip, x-real-ip, cf-connecting-ip)",
+      );
+    } else if (!EDGEONE_PROXY_HEADERS.includes(trustedProxyHeader)) {
+      // EdgeOne is the committed production platform. A non-EdgeOne
+      // header in deployment mode is suspicious — WARN, not BLOCK,
+      // because we cannot verify the actual deployment platform from
+      // env alone.
+      warn(
+        "env: TRUSTED_PROXY_HEADER",
+        `${trustedProxyHeader} is not an EdgeOne-specific header — verify this matches your deployment platform`,
+      );
+    } else {
+      pass("env: TRUSTED_PROXY_HEADER", `${trustedProxyHeader}`);
+    }
+  } else {
+    if (!trustedProxyHeader) {
+      pass("env: TRUSTED_PROXY_HEADER", "not set (OK in development)");
+    } else if (!ALLOWED_PROXY_HEADERS.includes(trustedProxyHeader)) {
+      warn("env: TRUSTED_PROXY_HEADER", "value not in allowed enum");
+    } else {
+      pass("env: TRUSTED_PROXY_HEADER", `${trustedProxyHeader}`);
+    }
+  }
+
+  // --- RATE_LIMIT_FALLBACK_SECRET ---
+  const rateLimitSecret = process.env.RATE_LIMIT_FALLBACK_SECRET || "";
+  if (deploymentMode) {
+    if (!rateLimitSecret) {
+      block(
+        "env: RATE_LIMIT_FALLBACK_SECRET",
+        "missing — required in deployment (>= 32 chars) for per-client rate-limit sub-bucketing",
+      );
+    } else if (rateLimitSecret.length < 32) {
+      block(
+        "env: RATE_LIMIT_FALLBACK_SECRET",
+        `too short (${rateLimitSecret.length} chars, need >= 32)`,
+      );
+    } else {
+      pass("env: RATE_LIMIT_FALLBACK_SECRET", "configured (>= 32 chars)");
+    }
+  } else {
+    if (!rateLimitSecret) {
+      pass("env: RATE_LIMIT_FALLBACK_SECRET", "not set (OK in development)");
+    } else if (rateLimitSecret.length < 32) {
+      warn("env: RATE_LIMIT_FALLBACK_SECRET", `short (${rateLimitSecret.length} chars)`);
+    } else {
+      pass("env: RATE_LIMIT_FALLBACK_SECRET", "configured");
+    }
+  }
+
+  // --- OUTBOX_DISPATCH_SECRET ---
+  const outboxSecret = process.env.OUTBOX_DISPATCH_SECRET || "";
+  if (deploymentMode) {
+    if (!outboxSecret) {
+      block(
+        "env: OUTBOX_DISPATCH_SECRET",
+        "missing — required in deployment (>= 16 chars) for outbox dispatch API",
+      );
+    } else if (outboxSecret.length < 16) {
+      block(
+        "env: OUTBOX_DISPATCH_SECRET",
+        `too short (${outboxSecret.length} chars, need >= 16)`,
+      );
+    } else {
+      pass("env: OUTBOX_DISPATCH_SECRET", "configured (>= 16 chars)");
+    }
+  } else {
+    if (!outboxSecret) {
+      pass("env: OUTBOX_DISPATCH_SECRET", "not set (OK in development)");
+    } else if (outboxSecret.length < 16) {
+      warn("env: OUTBOX_DISPATCH_SECRET", `short (${outboxSecret.length} chars)`);
+    } else {
+      pass("env: OUTBOX_DISPATCH_SECRET", "configured");
+    }
+  }
+
+  // --- Loopback Supabase / Site URL in deployment ---
+  if (deploymentMode) {
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
+    if (supabaseUrl) {
+      try {
+        const host = new URL(supabaseUrl).hostname;
+        if (isLoopbackHost(host)) {
+          block(
+            "env: NEXT_PUBLIC_SUPABASE_URL",
+            `uses loopback (${host}) — not allowed in deployment environments`,
+          );
+        }
+      } catch {
+        // Malformed URL is already caught by other checks.
+      }
+    }
+    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "";
+    if (siteUrl) {
+      try {
+        const host = new URL(siteUrl).hostname;
+        if (isLoopbackHost(host)) {
+          block(
+            "env: NEXT_PUBLIC_SITE_URL",
+            `uses loopback (${host}) — not allowed in deployment environments`,
+          );
+        }
+      } catch {
+        // Malformed URL is already caught by other checks.
+      }
+    }
+  }
+
+  // --- CSP_ENFORCING without nonce-based CSP ---
+  // Phase 1 Task 3 connected CSP reporting but did NOT implement
+  // nonce-based CSP. The current CSP policy still uses 'unsafe-inline'
+  // for script-src and style-src. Enforcing with 'unsafe-inline' defeats
+  // the purpose of CSP, so we BLOCK if CSP_ENFORCING=true is set before
+  // nonce-based CSP is implemented (Phase 3).
+  const cspEnforcing = process.env.CSP_ENFORCING === "true";
+  if (cspEnforcing) {
+    block(
+      "env: CSP_ENFORCING",
+      "true — nonce-based CSP not yet implemented; enforcing with 'unsafe-inline' is not safe. Keep Report-Only until Phase 3 CSP hardening is complete.",
+    );
+  } else {
+    pass("env: CSP_ENFORCING", "false / unset (Report-Only mode)");
+  }
+
+  // --- WARN conditions (deployment mode only) ---
+
+  if (deploymentMode) {
+    // READINESS_TOKEN
+    const readinessToken = process.env.READINESS_TOKEN || "";
+    if (!readinessToken) {
+      warn(
+        "env: READINESS_TOKEN",
+        "not configured — /api/readiness storage sub-checks will be limited",
+      );
+    } else {
+      pass("env: READINESS_TOKEN", "configured");
+    }
+
+    // Notification providers
+    const hasWecom = !!process.env.INQUIRY_WECOM_WEBHOOK_URL;
+    const hasResend = !!process.env.RESEND_API_KEY;
+    if (!hasWecom && !hasResend) {
+      warn(
+        "env: notification providers",
+        "all unconfigured — inquiry notifications will not be sent",
+      );
+    } else {
+      pass("env: notification providers", "at least one configured");
+    }
+
+    // CSP still Report-Only
+    if (!cspEnforcing) {
+      warn(
+        "env: CSP mode",
+        "Report-Only — enforcing not yet enabled (observation period)",
+      );
+    }
+
+    // Production indexing still false
+    const indexing = process.env.NEXT_PUBLIC_SITE_INDEXING_ENABLED === "true";
+    if (!indexing) {
+      warn(
+        "env: NEXT_PUBLIC_SITE_INDEXING_ENABLED",
+        "false — search engine indexing disabled",
+      );
+    }
+
+    // Cannot verify external WAF configuration
+    warn(
+      "env: WAF",
+      "cannot verify external WAF configuration from code — manual check required (see docs/EDGEONE_WAF_RULES.md)",
     );
   }
 }
@@ -779,11 +1017,12 @@ async function checkBusinessContent() {
 // ---------- Main ----------
 
 async function main() {
-  const modeLabel = stagingMode ? "staging" : "default";
+  const modeLabel = productionMode ? "production" : stagingMode ? "staging" : "default";
   console.log(`\n=== KZQ Release Readiness Check (mode: ${modeLabel}) ===\n`);
 
   checkGitAndBuild();
   checkUrlAndSeo();
+  checkSecurityAndOperations();
   await checkSupabaseSchema();
   await checkBusinessContent();
 

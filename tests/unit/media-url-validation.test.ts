@@ -365,6 +365,140 @@ describe("validateMediaUrl: relative path deny-list (SSRF prevention)", () => {
   });
 });
 
+// ============================================================
+// Phase 1 Task 2: Production must reject loopback media URLs.
+//
+// localhost, 127.0.0.1, and ::1 are only allowed in development
+// and test environments. In production, ALL loopback absolute URLs
+// must be rejected (both HTTP and HTTPS) to prevent SSRF and to
+// keep the CMS validator in sync with next.config.mjs remotePatterns
+// (which already refuses loopback in production).
+//
+// Bypass attempts that must be caught:
+//   - Case variations: LOCALHOST, Localhost
+//   - IPv6 bracket forms: [::1]
+//   - Trailing dots: localhost. (DNS-equivalent to localhost)
+//   - Non-standard ports: localhost:3000
+//   - Credentials: user:pass@localhost (already rejected, but verify)
+// ============================================================
+describe("validateMediaUrl: loopback rejection in production", () => {
+  const prodAllowlist = makeAllowlist({ NODE_ENV: "production" });
+
+  const loopbackUrls = [
+    "http://localhost/img.jpg",
+    "http://127.0.0.1/img.jpg",
+    "http://[::1]/img.jpg",
+    "https://localhost/img.jpg",
+    "https://127.0.0.1/img.jpg",
+    "https://[::1]/img.jpg",
+    // Case variations
+    "http://LOCALHOST/img.jpg",
+    "http://LocalHost/img.jpg",
+    "http://LOCALhost/img.jpg",
+    // Trailing dot (DNS-equivalent)
+    "http://localhost./img.jpg",
+    "http://127.0.0.1./img.jpg",
+    // Non-standard ports
+    "http://localhost:3000/img.jpg",
+    "http://127.0.0.1:8080/img.jpg",
+    "http://[::1]:8080/img.jpg",
+    "https://localhost:8443/img.jpg",
+  ];
+
+  for (const url of loopbackUrls) {
+    it(`rejects loopback URL in production: ${url}`, () => {
+      const result = validateMediaUrl(url, prodAllowlist);
+      expect(result.ok).toBe(false);
+      // The reason must be a host-level rejection, not a scheme/port
+      // rejection, so operators can distinguish "loopback not allowed
+      // in production" from other config issues.
+      expect(result.reason).toBe("unapproved-host");
+    });
+  }
+
+  it("rejects loopback with credentials in production", () => {
+    // Credentials are always rejected, but loopback must also be
+    // rejected even if the credential check somehow passes.
+    const result = validateMediaUrl(
+      "http://user:pass@localhost/img.jpg",
+      prodAllowlist,
+    );
+    expect(result.ok).toBe(false);
+    // Credentials take precedence in the current check order.
+    expect(result.reason).toBe("credentials");
+  });
+
+  it("does NOT break legitimate Supabase URLs in production", () => {
+    const result = validateMediaUrl(
+      `${VALID_SUPABASE_URL}/storage/v1/object/public/img/test.jpg`,
+      prodAllowlist,
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  it("does NOT break legitimate CDN URLs in production", () => {
+    const cdnAllowlist = makeAllowlist({
+      NODE_ENV: "production",
+      MEDIA_CDN_DOMAINS: "cdn.kzq.example.com",
+    });
+    const result = validateMediaUrl(
+      "https://cdn.kzq.example.com/img/test.jpg",
+      cdnAllowlist,
+    );
+    expect(result.ok).toBe(true);
+  });
+});
+
+describe("validateMediaUrl: loopback allowed in development", () => {
+  const devAllowlist = makeAllowlist({ NODE_ENV: "development" });
+
+  it("allows http://localhost in development", () => {
+    const result = validateMediaUrl(
+      "http://localhost:3000/img.jpg",
+      devAllowlist,
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  it("allows http://127.0.0.1 in development", () => {
+    const result = validateMediaUrl(
+      "http://127.0.0.1:5433/img.jpg",
+      devAllowlist,
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  it("allows http://[::1] in development", () => {
+    const result = validateMediaUrl("http://[::1]/img.jpg", devAllowlist);
+    expect(result.ok).toBe(true);
+  });
+
+  it("allows https://localhost in development", () => {
+    const result = validateMediaUrl(
+      "https://localhost:8443/img.jpg",
+      devAllowlist,
+    );
+    expect(result.ok).toBe(true);
+  });
+});
+
+describe("validateMediaUrl: loopback allowed in test", () => {
+  const testAllowlist = makeAllowlist({ NODE_ENV: "test" });
+
+  it("allows http://localhost in test environment", () => {
+    const result = validateMediaUrl("http://localhost/img.jpg", testAllowlist);
+    expect(result.ok).toBe(true);
+  });
+
+  it("allows http://127.0.0.1 in test environment", () => {
+    const result = validateMediaUrl(
+      "http://127.0.0.1/img.jpg",
+      testAllowlist,
+    );
+    expect(result.ok).toBe(true);
+  });
+});
+
 describe("validateMediaUrl: Supabase host shape validation", () => {
   it("accepts canonical 20-char project ref", () => {
     const allowlist = makeAllowlist();

@@ -10,7 +10,6 @@ function commitSha(): string {
   const value =
     process.env.EDGEONE_GIT_COMMIT_SHA ||
     process.env.GIT_COMMIT_SHA ||
-    process.env.VERCEL_GIT_COMMIT_SHA ||
     process.env.GITHUB_SHA ||
     "unknown";
   return /^[a-zA-Z0-9._-]{1,64}$/.test(value) ? value : "unknown";
