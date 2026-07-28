@@ -636,6 +636,80 @@ test.describe("Demo public acceptance", () => {
     }
   });
 
+  // ============================================================
+  // Work Package 3 (Review #3): Real English product navigation
+  // via client-side click.
+  //
+  // The existing "English server language, locale switch and inquiry
+  // flow" test navigates from /en/products?q=fire to a product
+  // detail page via `page.goto(href)`. That bypasses the App Router
+  // client-side navigation path entirely, so it cannot detect
+  // regressions in the English click → RSC → detail-route pipeline
+  // (e.g. prefetch storms, cancelled RSC requests, Router state
+  // desync).
+  //
+  // This test is the English counterpart of the Chinese flow's
+  // `openProductDetailFromCard` call. It:
+  //   1. loads /en/products?q=fire,
+  //   2. waits for RSC + DOM to settle,
+  //   3. issues a REAL `locator.click()` on the first English
+  //      product card (no `page.goto(href)`, no `force: true`),
+  //   4. asserts the URL commits to /en/products/{slug},
+  //   5. asserts the detail title is visible.
+  //
+  // Failures record the post-click URL, the presence of the detail
+  // title, and any browser-side errors so the cause (cancelled RSC,
+  // Router stuck, missing element) is diagnosable.
+  // ============================================================
+  test("English product card navigation via real click", async (
+    { page },
+    testInfo,
+  ) => {
+    test.setTimeout(60_000);
+    const dumpDiagnostics = attachDiagnostics(page, testInfo);
+    try {
+      // Use a unique IP per repeat iteration so the search request's
+      // rate limiter does not block the repeat-each stability sweep.
+      const ipSuffix = testInfo.repeatEachIndex ?? 0;
+      await page.context().setExtraHTTPHeaders({
+        "x-edgeone-client-ip": `192.0.2.${30 + ipSuffix}`,
+      });
+
+      await page.goto("/en/products?q=fire");
+      await expect(page.getByRole("heading", { name: "Products" })).toBeVisible();
+
+      // Real click navigation — no `page.goto(href)`, no `force: true`.
+      // `openProductDetailFromCard` waits for the initial RSC stream
+      // and DOM to settle before clicking, then polls the URL and
+      // asserts the detail-only `[data-testid="product-detail-title"]`
+      // element becomes visible. If the click-triggered RSC request
+      // is cancelled by the Router, the URL poll fails with full
+      // diagnostics.
+      const enProductLink = page
+        .locator('article a[href^="/en/products/"]')
+        .first();
+      await expect(enProductLink).toBeVisible({ timeout: 30_000 });
+      await openProductDetailFromCard(
+        page,
+        enProductLink,
+        /^\/en\/products\/[^/?]+$/,
+      );
+
+      // Detail-route-only assertion: the product list page also has
+      // an H1 ("Products"), so checking only `heading level=1` would
+      // pass on the list page. The detail page renders a unique
+      // `data-testid="product-detail-title"` H1.
+      await expect(
+        page.locator('[data-testid="product-detail-title"]'),
+      ).toBeVisible({ timeout: 30_000 });
+
+      await expectNoHorizontalOverflow(page);
+      await expectFixedNavigationDoesNotCoverContent(page);
+    } finally {
+      await dumpDiagnostics();
+    }
+  });
+
   test("dialogs close and product CTA does not overlap mobile navigation", async ({
     page,
   }, testInfo) => {

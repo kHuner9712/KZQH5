@@ -31,6 +31,15 @@ export default defineConfig({
         env: {
           ...process.env,
           NEXT_PUBLIC_DEMO_MODE: "true",
+          // Trust the x-edgeone-client-ip header so E2E tests can
+          // simulate distinct client IPs via setExtraHTTPHeaders.
+          // Without this, getClientIp() returns null for every
+          // request (TRUSTED_PROXY_HEADER unconfigured), and all
+          // tests share the single `fallback:global` rate-limit
+          // bucket — earlier tests exhaust it and later tests get
+          // 429s on /api/analytics/events and /api/products/selection,
+          // which breaks RSC navigation in the product-card click test.
+          TRUSTED_PROXY_HEADER: "x-edgeone-client-ip",
         },
       },
   projects: [
