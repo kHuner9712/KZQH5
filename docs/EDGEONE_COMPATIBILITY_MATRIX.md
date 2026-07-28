@@ -104,3 +104,207 @@ was changed during this execution.
 This result concerns a Staging technical acceptance target only. It is not
 Production evidence and does not establish mainland carrier or WeChat quality.
 
+# 2026-07-28 EdgeOne upload body limit correction (Review #2 WP7)
+
+The previous project documentation (LAUNCH_CHECKLIST, TWO_PHASE_UPLOAD_DESIGN)
+claimed that setting the EdgeOne WAF request body limit to 21 MB would allow
+20 MB PDF uploads through `POST /api/admin/storage/upload`. This is incorrect.
+
+EdgeOne Cloud Functions documentation
+(https://pages.edgeone.ai/document/cloud-functions) explicitly states the
+request/response body limit is **6 MB**. This is a platform-level hard cap
+that **cannot** be raised by WAF configuration. The WAF rule cited in the
+old Launch Checklist only controls what the WAF itself inspects; it does not
+override the Cloud Functions runtime body limit.
+
+Consequence: any single-stage multipart upload exceeding ~6 MB would be
+rejected by the EdgeOne platform layer before reaching the Node.js process,
+producing an opaque error to the client. The previous 21 MB / 20 MB
+contract was therefore unachievable in production.
+
+## Corrected application-layer limits
+
+| Layer | Before | After | Rationale |
+| --- | --- | --- | --- |
+| Route `MAX_REQUEST_BYTES` | 21 MB | 5 MB | Below 6 MB platform cap with 1 MB headroom |
+| Route `MAX_FILE_BYTES` | 20 MB | 4.5 MB | 500 KB multipart overhead below `MAX_REQUEST_BYTES` |
+| per-MIME (image/PDF) | 5 MB / 20 MB | 4 MB / 4 MB | Unified below `MAX_FILE_BYTES` |
+| Supabase bucket `file_size_limit` | 20 MB | 20 MB (unchanged) | Allows future two-stage upload (browser → Supabase direct, bypasses EdgeOne) and the catalog import script (direct to Supabase) |
+
+The Supabase bucket limit is intentionally kept at 20 MB because:
+1. Two-stage upload (when implemented) uploads directly browser → Supabase,
+   bypassing EdgeOne Cloud Functions entirely. The bucket must accept larger
+   files for this path to be useful.
+2. The `scripts/import-catalog-assets.mjs` bulk import tool uploads directly
+   to Supabase via the service_role key, not through the EdgeOne-routed API.
+   Its 20 MB filter matches the bucket limit.
+
+The route-layer 4 MB limit is the **single-stage API contract** that
+clients see. The bucket's higher limit is an internal backend allowance
+for direct-to-Supabase paths that do not traverse EdgeOne.
+
+## Release blocker
+
+Two-stage upload (`/api/admin/storage/upload/authorize` → browser direct to
+Supabase → `/api/admin/storage/upload/finalize`) remains the documented
+release blocker for restoring large-PDF upload support. Design:
+`docs/TWO_PHASE_UPLOAD_DESIGN.md`. Launch Checklist entry:
+`docs/LAUNCH_CHECKLIST.md` (section 6, "发布阻断项 — 两阶段上传未实现").
+
+
+
+# 2026-07-28 Node engine alignment (Review #2 Work Package 6)
+
+EdgeOne Cloud Functions runtime is documented as Node.js v20.x
+(https://pages.edgeone.ai/document/cloud-functions). The build host
+default is Node 20.18.0 (https://pages.edgeone.ai/document/build-guide)
+with `.nvmrc` switching supported. There is no EdgeOne Makers
+documentation stating that Cloud Functions can run Node 22.x, so
+Plan A (lock to Node 20-compatible dependency versions) was selected.
+
+## Evidence — installed versions before / after
+
+| Dependency | Before | engines.node | After | engines.node |
+| --- | --- | --- | --- | --- |
+| `@supabase/supabase-js` | 2.110.8 | `>=22.0.0` | 2.109.0 | `>=20.0.0` |
+| `@supabase/ssr` | 0.12.3 | (none, peer `supabase-js ^2.110.5`) | 0.12.0 | (none, peer `supabase-js ^2.108.0`) |
+| `pdfjs-dist` | 6.1.200 | `>=22.13.0 \|\| >=24` | 5.4.624 | `>=20.16.0 \|\| >=22.3.0` |
+
+Version boundaries were verified directly via `npm view <pkg>@<ver> engines`:
+
+- `@supabase/supabase-js@2.109.0` → `>=20.0.0` (last Node 20 release)
+- `@supabase/supabase-js@2.110.0` → `>=22.0.0` (first Node 22-only release)
+- `pdfjs-dist@5.4.624` → `>=20.16.0 || >=22.3.0` (last Node 20 release in 5.x)
+- `pdfjs-dist@5.5.207` → `>=20.19.0 || >=22.13.0 || >=24` (requires Node 20.19+, above EdgeOne 20.18.0 default)
+- `pdfjs-dist@5.7.284` → `>=22.13.0 || >=24` (drops Node 20)
+- `pdfjs-dist@6.1.200` → `>=22.13.0 || >=24` (current 6.x, requires Node 22.13+)
+
+`pdfjs-dist` was pinned to 5.4.624 (not 5.5+ which would require Node
+20.19+) because the EdgeOne build host default is Node 20.18.0 and we
+do not rely on `.nvmrc` switching behavior being documented for
+Cloud Functions.
+
+## API compatibility
+
+- `@supabase/ssr@0.12.0` → `@supabase/supabase-js@2.109.0` peer is
+  satisfied; no breaking API changes between ssr 0.12.0 and 0.12.3
+  affect this project (only `createServerClient` + cookie adapter
+  are used, both stable across 0.12.x).
+- `pdfjs-dist@5.4.624` exposes the same API surface used by this
+  project (`getDocument`, `GlobalWorkerOptions`, `PDFDocumentProxy`,
+  `PDFPageProxy.getPage`, `Viewport`, `TextLayer`). The `legacy/build`
+  path used by `scripts/sync-pdfjs-worker.mjs` exists in both v5 and
+  v6. Type-check, 1261 unit tests, and demo build all pass with the
+  downgrade.
+
+## Enforcement
+
+- `package.json` `engines.node` remains `"20.x"`, declaring the
+  EdgeOne Cloud Functions runtime target.
+- `package.json` pins `@supabase/ssr`, `@supabase/supabase-js`, and
+  `pdfjs-dist` to exact versions (no caret) to prevent npm from
+  auto-bumping into a Node 22-only release.
+- CI gains an explicit "Verify dependency engines" step
+  (`.github/workflows/ci.yml`) that runs `npm ls --engine-strict`
+  under Node 20 and fails the build if any installed dependency
+  declares an `engines.node` constraint incompatible with Node 20.
+
+## Decision
+
+Plan A selected. Plan B (upgrade to Node 22.13+) is **not** adopted
+because no EdgeOne Makers documentation confirms Node 22.x support for
+Cloud Functions, and the user's instruction requires EdgeOne runtime
+verification evidence before changing the runtime target.
+
+# 2026-07-29 Middleware Edge Runtime compatibility (Review #3 WP2)
+
+EdgeOne Makers documentation states that Next.js middleware "默认运行在
+Edge Runtime 环境中" (defaults to Edge Runtime). The docs do NOT
+explicitly mention support for Node.js runtime in middleware. The
+user's instruction requires EdgeOne-recommended values to be confirmed
+through real Staging requests, not documentation assumptions alone.
+
+## Problem
+
+Vercel build output reported:
+
+```
+A Node.js module is loaded (@supabase/supabase-js uses process.version),
+which is unsupported in the Edge Runtime.
+```
+
+Import chain: `@supabase/supabase-js` → `@supabase/ssr` →
+`lib/supabase/middleware-session.ts` → `middleware.ts`.
+
+`@supabase/supabase-js` uses `process.version` (a Node.js-only API) for
+runtime version detection / telemetry. Although the code guards with
+`typeof process !== 'undefined'`, the bundler still detects the usage
+and emits the warning, which must not be ignored.
+
+## Solution
+
+Since EdgeOne docs only confirm Edge Runtime support for middleware
+(not Node.js runtime), the safe path is to remove the
+`@supabase/ssr` / `@supabase/supabase-js` dependency from the
+middleware bundle entirely:
+
+1. `lib/supabase/middleware-session.ts` was rewritten to use only
+   Web APIs (`fetch`, `Headers`, `TextEncoder`, `TextDecoder`,
+   `atob`, `btoa`) — all available in both Edge Runtime and Node.js.
+2. Token refresh is now performed by a direct `fetch()` call to the
+   Supabase Auth refresh-token endpoint
+   (`POST /auth/v1/token?grant_type=refresh_token`).
+3. Cookie chunking (read + write) is implemented manually to stay
+   compatible with `@supabase/ssr` v0.12.x's cookie format
+   (base64-prefixed, 3180-byte chunks).
+4. All existing security semantics are preserved: cookie forwarding
+   to request, `Set-Cookie` on response, `Cache-Control: private,
+   no-store` when cookies are rotated, security header preservation.
+
+## CI enforcement
+
+A new CI step (`Check middleware Edge Runtime compatibility`) was
+added to the `compile-contract` job. It runs
+`scripts/check-middleware-edge-runtime.mjs` which scans the build
+output for Edge Runtime warning patterns:
+
+- `uses process.version`
+- `not supported in the Edge Runtime`
+- `A Node.js module is loaded`
+- `which is not supported in the Edge Runtime`
+
+If any pattern is found, the CI job fails. This prevents regressions
+where a dependency update silently reintroduces a Node.js-only API
+into the middleware bundle.
+
+## Unit test enforcement
+
+`tests/unit/middleware-session.test.ts` includes a static source-level
+test (`Edge Runtime compatibility > does NOT import @supabase/ssr or
+@supabase/supabase-js`) that reads the module source and asserts no
+banned imports are present.
+
+## Staging validation checklist (PENDING — not yet executed)
+
+The following checklist MUST be executed against a real EdgeOne Staging
+deployment before claiming Auth Middleware is adapted to EdgeOne.
+Until all items pass, the middleware must be considered "Staging
+unverified".
+
+| Step | Action | Expected result | Status |
+| --- | --- | --- | --- |
+| 1 | Log in to the admin backend via the Staging login page | Auth cookies set in browser | PENDING |
+| 2 | Manually shorten the access token's expiry (or wait near expiry) | Token is close to expiry | PENDING |
+| 3 | Request `/admin` (any admin page) | Page loads without auth redirect | PENDING |
+| 4 | Verify the access token was refreshed (check cookie value changed) | New access token cookie present | PENDING |
+| 5 | Verify the response carries `Set-Cookie` with the rotated auth cookie | `Set-Cookie: sb-<ref>-auth-token=...` present | PENDING |
+| 6 | Verify the response carries `Cache-Control: private, no-store` | Header present on refreshed responses | PENDING |
+| 7 | Make a subsequent admin API call (e.g. `GET /api/admin/products`) | API succeeds (200) with the refreshed token | PENDING |
+| 8 | Verify a public ISR page (e.g. `/products`) is still statically cached | No `Cache-Control: private, no-store` on public pages | PENDING |
+| 9 | Verify no `process.version` or Edge Runtime warnings in EdgeOne build logs | Clean build log | PENDING |
+
+**Until this checklist is fully executed and passed, the Auth Middleware
+must NOT be claimed as EdgeOne-verified.** The CI check ensures the
+middleware bundle is Edge-compatible at build time; the Staging checklist
+ensures it works at runtime on EdgeOne.
+

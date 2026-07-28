@@ -69,17 +69,25 @@ export type PublicAssetTopCategory = (typeof PUBLIC_ASSETS_ALLOWED_TOP_CATEGORIE
 
 /**
  * private-assets bucket 的 MIME 白名单与大小上限。
- *   - 图片（jpeg/png/webp）：5MB（5242880 字节）
- *   - PDF：20MB（20971520 字节）
+ *
+ * Review #2 Work Package 7: 上限受 EdgeOne Cloud Functions 平台 6MB 请求体
+ * 限制约束。路由层 MAX_REQUEST_BYTES=5MB / MAX_FILE_BYTES=4.5MB；per-MIME
+ * 限制统一为 4MB 以留出 multipart 框架开销。
+ *   - 图片（jpeg/png/webp）：4MB（4194304 字节，此前为 5MB）
+ *   - PDF：4MB（4194304 字节，此前为 20MB）
+ *
+ * 此前 4-20MB 范围内的 PDF 在单阶段上传路径下不再可用。两阶段上传
+ * (authorize -> 直传 Supabase -> finalize) 作为正式发布阻断项，详见
+ * docs/TWO_PHASE_UPLOAD_DESIGN.md 与 docs/LAUNCH_CHECKLIST.md。
  *
  * SVG、HTML、text/html、application/javascript 及任何可执行内容均不在白名单内，
  * 在 MIME 校验阶段即被拒绝；即便伪造 MIME，Magic Bytes 校验也会拦截。
  */
 const MIME_MAX_SIZE: Readonly<Record<string, number>> = {
-  "image/jpeg": 5 * 1024 * 1024, // 5242880
-  "image/png": 5 * 1024 * 1024, // 5242880
-  "image/webp": 5 * 1024 * 1024, // 5242880
-  "application/pdf": 20 * 1024 * 1024, // 20971520
+  "image/jpeg": 4 * 1024 * 1024, // 4194304
+  "image/png": 4 * 1024 * 1024, // 4194304
+  "image/webp": 4 * 1024 * 1024, // 4194304
+  "application/pdf": 4 * 1024 * 1024, // 4194304
 };
 
 const PRIVATE_ASSETS_ALLOWED_MIME: readonly string[] = Object.keys(MIME_MAX_SIZE);

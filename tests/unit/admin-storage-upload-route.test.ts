@@ -93,12 +93,20 @@ function multipartRequest(
       bucket?: string;
       path?: string;
     };
+    /** Extra unknown fields to test the strict allow-list. */
+    extra?: Record<string, string>;
     file: { name: string; type: string; bytes: Uint8Array };
   },
   headers: Record<string, string> = {
     Host: "kzq.test",
     Origin: "https://kzq.test",
   },
+  /**
+   * Override the Content-Length header explicitly. Pass "missing" to omit it
+   * (used to test the strict fail-closed CL check), "nan" for non-numeric,
+   * "negative" for -1, or a specific number.
+   */
+  contentLengthOverride?: "missing" | "nan" | "negative" | number,
 ): NextRequest {
   const formData = new FormData();
   if (fields.purpose !== undefined) {
@@ -114,19 +122,83 @@ function multipartRequest(
     if (fields.legacy.path !== undefined)
       formData.set("path", fields.legacy.path);
   }
+  if (fields.extra) {
+    for (const [k, v] of Object.entries(fields.extra)) {
+      formData.set(k, v);
+    }
+  }
   // Copy bytes into a fresh ArrayBuffer to avoid SharedArrayBuffer typing
   // issues in the test environment.
   const ab = new ArrayBuffer(fields.file.bytes.length);
   new Uint8Array(ab).set(fields.file.bytes);
   const blob = new Blob([ab], { type: fields.file.type });
   formData.set("file", blob, fields.file.name);
-  // Do NOT set Content-Type explicitly — NextRequest with a FormData body
-  // auto-generates the correct multipart/form-data; boundary header.
-  // Setting it manually omits the boundary and breaks parsing.
+
+  // Serialize the FormData to a concrete multipart body so we can set
+  // Content-Length explicitly. Without this, undici may not auto-set CL
+  // on FormData bodies, which would fail our strict CL check in
+  // requireAdminWrite's skip mode.
+  // Round-trip: FormData → Blob → ArrayBuffer → set CL + raw body.
+  // This is a synchronous operation in undici (FormData is buffered).
+  // We use a trick: serialize to multipart using a manual approach.
+  //
+  // Note: the manual serialization below is necessary because
+  // `request.formData()` body is async-streamed in undici; we need a
+  // buffered body for the strict CL check.
+  const boundary = "----kzq-test-boundary-" + Math.random().toString(36).slice(2);
+  const parts: Uint8Array[] = [];
+  const encoder = new TextEncoder();
+  let totalLength = 0;
+
+  for (const [key, value] of formData.entries()) {
+    if (value instanceof Blob) {
+      const fileBytes = new Uint8Array(ab.byteLength);
+      fileBytes.set(fields.file.bytes);
+      const header =
+        `--${boundary}\r\n` +
+        `Content-Disposition: form-data; name="${key}"; filename="${fields.file.name}"\r\n` +
+        `Content-Type: ${fields.file.type}\r\n\r\n`;
+      parts.push(encoder.encode(header));
+      parts.push(fileBytes);
+      parts.push(encoder.encode("\r\n"));
+    } else {
+      const header =
+        `--${boundary}\r\n` +
+        `Content-Disposition: form-data; name="${key}"\r\n\r\n`;
+      parts.push(encoder.encode(header));
+      parts.push(encoder.encode(String(value)));
+      parts.push(encoder.encode("\r\n"));
+    }
+  }
+  parts.push(encoder.encode(`--${boundary}--\r\n`));
+  for (const p of parts) totalLength += p.length;
+  const bodyBytes = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const p of parts) {
+    bodyBytes.set(p, offset);
+    offset += p.length;
+  }
+
+  const finalHeaders: Record<string, string> = {
+    ...headers,
+    "Content-Type": `multipart/form-data; boundary=${boundary}`,
+  };
+  if (contentLengthOverride === "missing") {
+    // intentionally omit Content-Length
+  } else if (contentLengthOverride === "nan") {
+    finalHeaders["Content-Length"] = "not-a-number";
+  } else if (contentLengthOverride === "negative") {
+    finalHeaders["Content-Length"] = "-1";
+  } else if (typeof contentLengthOverride === "number") {
+    finalHeaders["Content-Length"] = String(contentLengthOverride);
+  } else {
+    finalHeaders["Content-Length"] = String(totalLength);
+  }
+
   return new NextRequest(url, {
     method,
-    headers,
-    body: formData,
+    headers: finalHeaders,
+    body: bodyBytes,
   });
 }
 
@@ -240,7 +312,7 @@ describe("Phase 13: Storage upload route — server-side Magic Bytes enforcement
     expect(res.status).toBe(415);
   });
 
-  it("rejects image exceeding 5MB (server-side size limit)", async () => {
+  it("rejects image exceeding 4MB (server-side size limit)", async () => {
     getVerifiedAdmin.mockResolvedValue(makeAdminContext());
     uploadByPurpose.mockResolvedValue({
       ok: false,
@@ -248,9 +320,13 @@ describe("Phase 13: Storage upload route — server-side Magic Bytes enforcement
     });
     const { POST } = await import("@/app/api/admin/storage/upload/route");
 
-    // 6MB PNG — exceeds the 5MB image limit enforced in storage-upload.ts.
+    // 4.5MB PNG — exceeds the 4MB image limit enforced in storage-upload.ts,
+    // but under MAX_FILE_BYTES (4.5MB) so the route forwards to
+    // uploadByPurpose which enforces the per-MIME limit.
+    // (Review #2 WP7: limit lowered from 5MB to 4MB to fit EdgeOne 6MB
+    // platform request body cap with multipart overhead.)
     const pngMagic = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-    const oversized = new Uint8Array(6 * 1024 * 1024);
+    const oversized = new Uint8Array(Math.floor(4.5 * 1024 * 1024) - 1);
     oversized.set(pngMagic, 0);
     const res = await POST(
       multipartRequest("https://kzq.test/api/admin/storage/upload", "POST", {
@@ -263,7 +339,7 @@ describe("Phase 13: Storage upload route — server-side Magic Bytes enforcement
     expect(uploadByPurpose).toHaveBeenCalledTimes(1);
   });
 
-  it("rejects PDF exceeding 20MB (server-side size limit)", async () => {
+  it("rejects PDF exceeding 4MB (server-side size limit)", async () => {
     getVerifiedAdmin.mockResolvedValue(makeAdminContext());
     uploadByPurpose.mockResolvedValue({
       ok: false,
@@ -271,9 +347,12 @@ describe("Phase 13: Storage upload route — server-side Magic Bytes enforcement
     });
     const { POST } = await import("@/app/api/admin/storage/upload/route");
 
-    // 21MB PDF — exceeds the 20MB PDF limit.
+    // 4.5MB PDF — exceeds the 4MB PDF limit, under MAX_FILE_BYTES.
+    // (Review #2 WP7: limit lowered from 20MB to 4MB to fit EdgeOne 6MB
+    // platform request body cap with multipart overhead. Two-stage upload
+    // is the long-term solution for larger PDFs.)
     const pdfMagic = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x34]);
-    const oversized = new Uint8Array(21 * 1024 * 1024);
+    const oversized = new Uint8Array(Math.floor(4.5 * 1024 * 1024) - 1);
     oversized.set(pdfMagic, 0);
     const res = await POST(
       multipartRequest("https://kzq.test/api/admin/storage/upload", "POST", {
@@ -552,6 +631,190 @@ describe("Phase 13: Storage upload route — server-side Magic Bytes enforcement
     expect(body.success).toBe(true);
     expect(body.bucket).toBe("private-assets");
     expect(body.publicUrl).toBeNull();
+  });
+});
+
+// ============================================================
+// Work Package D: Anti-abuse hardening
+// ------------------------------------------------------------
+// Tests the strict Content-Length validation, defense-in-depth
+// post-arrayBuffer byte check, unknown-field rejection, and
+// per-actor rate limiting added in WP-D.
+// ============================================================
+describe("Work Package D: Storage upload route — anti-abuse hardening", () => {
+  beforeEach(() => {
+    getVerifiedAdmin.mockReset();
+    uploadByPurpose.mockReset();
+    isDemoMode.mockReturnValue(false);
+    resolvePurposeConfig.mockReset();
+    resolvePurposeConfig.mockImplementation((purpose: string) =>
+      PURPOSE_CONFIGS[purpose] ?? null,
+    );
+  });
+
+  it("rejects missing Content-Length with 411 (fail-closed)", async () => {
+    getVerifiedAdmin.mockResolvedValue(makeAdminContext());
+    const { POST } = await import("@/app/api/admin/storage/upload/route");
+
+    const pngBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const res = await POST(
+      multipartRequest(
+        "https://kzq.test/api/admin/storage/upload",
+        "POST",
+        { purpose: "product-image", file: { name: "test.png", type: "image/png", bytes: pngBytes } },
+        { Host: "kzq.test", Origin: "https://kzq.test" },
+        "missing",
+      ),
+    );
+
+    expect(res.status).toBe(411);
+    expect(uploadByPurpose).not.toHaveBeenCalled();
+  });
+
+  it("rejects non-numeric Content-Length with 413", async () => {
+    getVerifiedAdmin.mockResolvedValue(makeAdminContext());
+    const { POST } = await import("@/app/api/admin/storage/upload/route");
+
+    const pngBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const res = await POST(
+      multipartRequest(
+        "https://kzq.test/api/admin/storage/upload",
+        "POST",
+        { purpose: "product-image", file: { name: "test.png", type: "image/png", bytes: pngBytes } },
+        { Host: "kzq.test", Origin: "https://kzq.test" },
+        "nan",
+      ),
+    );
+
+    expect(res.status).toBe(413);
+    expect(uploadByPurpose).not.toHaveBeenCalled();
+  });
+
+  it("rejects negative Content-Length with 413", async () => {
+    getVerifiedAdmin.mockResolvedValue(makeAdminContext());
+    const { POST } = await import("@/app/api/admin/storage/upload/route");
+
+    const pngBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const res = await POST(
+      multipartRequest(
+        "https://kzq.test/api/admin/storage/upload",
+        "POST",
+        { purpose: "product-image", file: { name: "test.png", type: "image/png", bytes: pngBytes } },
+        { Host: "kzq.test", Origin: "https://kzq.test" },
+        "negative",
+      ),
+    );
+
+    expect(res.status).toBe(413);
+    expect(uploadByPurpose).not.toHaveBeenCalled();
+  });
+
+  it("rejects Content-Length exceeding MAX_REQUEST_BYTES with 413", async () => {
+    getVerifiedAdmin.mockResolvedValue(makeAdminContext());
+    const { POST } = await import("@/app/api/admin/storage/upload/route");
+
+    const pngBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    // Declare 100MB (exceeds 5MB MAX_REQUEST_BYTES — Review #2 WP7 lowered
+    // from 21MB to 5MB to fit EdgeOne Cloud Functions 6MB platform cap.)
+    const res = await POST(
+      multipartRequest(
+        "https://kzq.test/api/admin/storage/upload",
+        "POST",
+        { purpose: "product-image", file: { name: "test.png", type: "image/png", bytes: pngBytes } },
+        { Host: "kzq.test", Origin: "https://kzq.test" },
+        100 * 1024 * 1024,
+      ),
+    );
+
+    expect(res.status).toBe(413);
+    expect(uploadByPurpose).not.toHaveBeenCalled();
+  });
+
+  it("rejects actual file bytes exceeding MAX_FILE_BYTES (defense-in-depth)", async () => {
+    getVerifiedAdmin.mockResolvedValue(makeAdminContext());
+    const { POST } = await import("@/app/api/admin/storage/upload/route");
+
+    // 4.7MB PNG with valid Magic Bytes — exceeds MAX_FILE_BYTES (4.5MB).
+    // requireAdminWrite passes (CL = actual size, both <= 5MB MAX_REQUEST_BYTES).
+    // Route's post-arrayBuffer check rejects with 413 BEFORE calling uploadByPurpose.
+    // (Review #2 WP7: MAX_FILE_BYTES lowered from 20MB to 4.5MB.)
+    const pngMagic = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const oversized = new Uint8Array(Math.floor(4.7 * 1024 * 1024));
+    oversized.set(pngMagic, 0);
+
+    const res = await POST(
+      multipartRequest("https://kzq.test/api/admin/storage/upload", "POST", {
+        purpose: "product-image",
+        file: { name: "big.png", type: "image/png", bytes: oversized },
+      }),
+    );
+
+    expect(res.status).toBe(413);
+    expect(uploadByPurpose).not.toHaveBeenCalled();
+  });
+
+  it("rejects unknown extra field with 400 (strict allow-list)", async () => {
+    getVerifiedAdmin.mockResolvedValue(makeAdminContext());
+    const { POST } = await import("@/app/api/admin/storage/upload/route");
+
+    const pngBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const res = await POST(
+      multipartRequest("https://kzq.test/api/admin/storage/upload", "POST", {
+        purpose: "product-image",
+        extra: { unknown_field: "evil" },
+        file: { name: "test.png", type: "image/png", bytes: pngBytes },
+      }),
+    );
+
+    expect(res.status).toBe(400);
+    expect(uploadByPurpose).not.toHaveBeenCalled();
+  });
+
+  it("rate-limits admin actor after burst (429 with Retry-After + no-store)", async () => {
+    // Default limiter: 20 uploads / 5min. Issue 20 successful uploads then
+    // assert the 21st is rejected with 429 + Retry-After + Cache-Control.
+    getVerifiedAdmin.mockResolvedValue(makeAdminContext());
+    uploadByPurpose.mockResolvedValue({
+      ok: true,
+      ref: {
+        bucket: "public-assets",
+        path: "products/abc.png",
+        publicUrl: "https://kzq.test/storage/v1/object/public/public-assets/products/abc.png",
+        mimeType: "image/png",
+        size: 8,
+      },
+    });
+
+    // Reset the module-level singleton to ensure a clean limiter state.
+    vi.resetModules();
+    const { POST } = await import("@/app/api/admin/storage/upload/route");
+    const { getStorageUploadRateLimiter } = await import("@/lib/services/rate-limit");
+    // Warm up the singleton (it's lazy).
+    getStorageUploadRateLimiter();
+
+    const pngBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+    // Issue 20 successful uploads (exactly the limit).
+    for (let i = 0; i < 20; i++) {
+      const res = await POST(
+        multipartRequest("https://kzq.test/api/admin/storage/upload", "POST", {
+          purpose: "product-image",
+          file: { name: `test-${i}.png`, type: "image/png", bytes: pngBytes },
+        }),
+      );
+      expect(res.status).toBe(200);
+    }
+
+    // 21st upload should be rate-limited.
+    const res21 = await POST(
+      multipartRequest("https://kzq.test/api/admin/storage/upload", "POST", {
+        purpose: "product-image",
+        file: { name: "test-20.png", type: "image/png", bytes: pngBytes },
+      }),
+    );
+    expect(res21.status).toBe(429);
+    expect(res21.headers.get("Retry-After")).toBeTruthy();
+    expect(res21.headers.get("Cache-Control")).toBe("private, no-store");
   });
 });
 

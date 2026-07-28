@@ -12,18 +12,30 @@ permissions:
 # Pinned actions (SHA-pinned for supply-chain security).
 # Update by verifying the new SHA against the upstream release
 # notes and bumping both the SHA and the version comment.
-# SHA verified via GitHub API (refs/tags/<tag>) on 2026-07-24.
+#
+# Review #3 WP6: SHA-to-tag provenance re-verified via GitHub API
+# (repos/<owner>/<repo>/git/refs/tags/<tag>) on 2026-07-29.
+# The previous comments claimed v4.2.2 / v4.4.0 / v4.4.3, but the
+# actual SHAs belonged to v7.0.1 / v7.0.0 / v7.0.1 respectively.
+# Corrected below.
 # ============================================================
-# - actions/checkout@v4.2.2      → 11bd71901bbe5b1630ceea73d27597364c9af683
-# - actions/setup-node@v4.4.0    → 49933ea5288caeca8642d1e84afbd3f7d6820020
-# - actions/upload-artifact@v4.4.3 → b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882
+# - actions/checkout@v7.0.1      → 3d3c42e5aac5ba805825da76410c181273ba90b1
+# - actions/setup-node@v7.0.0    → 820762786026740c76f36085b0efc47a31fe5020
+# - actions/upload-artifact@v7.0.1 → 043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
 
 jobs:
   check:
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    env:
+      # Work Package G: next.config.mjs fail-closes in production
+      # (next lint / next build both set NODE_ENV=production internally)
+      # when NEXT_PUBLIC_SUPABASE_URL is unset. A canonical placeholder
+      # satisfies the host-shape check without contacting Supabase.
+      # Demo mode never calls Supabase at build time.
+      NEXT_PUBLIC_SUPABASE_URL: "https://abcdefghijklmnopqrst.supabase.co"
     steps:
-      # actions/checkout@v4.2.2
+      # actions/checkout@v7.0.1
       # fetch-depth: 0 is required because the migration immutability
       # gate (scripts/check-migration-immutability.mjs) will use
       # `git rev-list` / `git show` to anchor the manifest to a
@@ -35,7 +47,7 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
-      # actions/setup-node@v4.4.0
+      # actions/setup-node@v7.0.0
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: 20
@@ -46,6 +58,16 @@ jobs:
           npm --version
           which node
       - run: npm ci
+      - name: Verify dependency engines match Node 20
+        # Work Package 6 (Review #2): EdgeOne Cloud Functions run on
+        # Node.js v20.x. @supabase/supabase-js 2.110+ and pdfjs-dist
+        # 6.x both require Node >=22, which would silently break
+        # production at runtime even though `npm ci` succeeds locally
+        # on a Node 22 dev machine. `npm ls --engine-strict` runs
+        # against the CI Node 20 install and fails the build if any
+        # installed dependency declares an engines.node constraint
+        # that Node 20 does not satisfy.
+        run: npm ls --engine-strict --omit=dev --depth=Infinity
       - name: Verify frozen migration hashes
         # CI_DISALLOW_INITIALIZE prevents the --initialize bootstrap
         # mode from running in CI. --initialize rewrites the entire
@@ -66,11 +88,228 @@ jobs:
       - run: npm run typecheck
       - run: npm run lint
       - run: npm run test:unit
+      # Demo build (NEXT_PUBLIC_DEMO_MODE=true) — verifies that the
+      # mock-data preview build still compiles. The non-demo
+      # production-contract build is exercised by the production-build
+      # job below to avoid coupling the basic check job to production
+      # env validation.
       - run: npm run build
         env:
           NEXT_PUBLIC_DEMO_MODE: "true"
       - name: Audit production deps (high+ critical, blocking)
         run: npm audit --omit=dev --audit-level=high
+      - name: Check for whitespace / conflict markers
+        run: git diff --check
+
+  # ============================================================
+  # Work Package H / Review #2 WP8: production-contract build.
+  #
+  # This is the FULL production build — `npm run build:production`
+  # MUST exit 0. Previously the job allowed `next build` to exit
+  # non-zero and converted failures to success via
+  # `grep "prerender-error"`. That hid real build regressions
+  # behind prerender failures caused by the placeholder Supabase
+  # URL pointing at nothing.
+  #
+  # To make the build deterministic without a remote production
+  # dependency, the job spins up a local mock Supabase REST server
+  # (scripts/mock-supabase-for-build.mjs) on 127.0.0.1:5433. The
+  # server returns a small, fixed dataset that satisfies every CMS
+  # query exercised during `next build` (site_settings,
+  # homepage_content, page_content, company_profile, products,
+  # categories, certificates, projects). The
+  # BUILD_MOCK_BACKEND=true env var tells next.config.mjs to accept
+  # the localhost NEXT_PUBLIC_SUPABASE_URL without the canonical
+  # Supabase host shape check. The release-readiness script still
+  # blocks real deployments from using a non-canonical host.
+  #
+  # The mock server is a CI build-time fixture only — it is never
+  # shipped and never runs at request time.
+  #
+  # Compile-only verification (TypeScript + ESLint + webpack, no
+  # prerender) is provided by the separate `compile-contract` job
+  # below. The two jobs are intentionally split so compile-only
+  # regressions surface faster than full build regressions.
+  # ============================================================
+  production-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # NOTE: NODE_ENV is intentionally NOT set at the job level.
+      # Setting NODE_ENV=production here would cause `npm ci` to skip
+      # devDependencies (cross-env, typescript, eslint-config-next, etc.),
+      # breaking the build. `next build` sets NODE_ENV=production
+      # internally during the build step, which is sufficient.
+      NEXT_PUBLIC_DEMO_MODE: "false"
+      # Review #2 WP8: localhost mock backend. BUILD_MOCK_BACKEND
+      # tells next.config.mjs to bypass the canonical Supabase host
+      # shape check so the build can complete against the mock.
+      BUILD_MOCK_BACKEND: "true"
+      NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:5433"
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: "ci-test-anon-key-not-real"
+      SUPABASE_SERVICE_ROLE_KEY: "ci-test-service-role-key-not-real"
+      NEXT_PUBLIC_SITE_URL: "https://kzq.test"
+      NEXT_PUBLIC_SITE_INDEXING_ENABLED: "false"
+      OUTBOX_DISPATCH_SECRET: "ci-test-outbox-dispatch-secret-not-real"
+    steps:
+      # actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      # actions/setup-node@v7.0.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 20
+          cache: npm
+      - name: Show tool versions (after setup-node)
+        run: |
+          node --version
+          npm --version
+          which node
+      - run: npm ci
+      - name: Start mock Supabase REST server
+        # Review #2 WP8: spin up a deterministic local HTTP server
+        # that responds to PostgREST queries with fixed test data.
+        # The server runs in the background and is shut down after
+        # the build step. Logs are printed for debugging on failure.
+        run: |
+          node scripts/mock-supabase-for-build.mjs --port=5433 > mock-supabase.log 2>&1 &
+          MOCK_PID=$!
+          echo "MOCK_PID=$MOCK_PID" >> $GITHUB_ENV
+          # Wait for the server to be ready before continuing.
+          for i in $(seq 1 30); do
+            if curl -sSf -o /dev/null http://127.0.0.1:5433/rest/v1/site_settings?select=id; then
+              echo "Mock Supabase server is ready."
+              break
+            fi
+            sleep 0.5
+          done
+      - name: Production-contract build (must exit 0)
+        # Review #2 WP8: the build MUST exit 0. No grep-based
+        # conversion of failure to success is allowed. If
+        # prerender fails, the build fails — the mock backend is
+        # responsible for providing deterministic responses so the
+        # build does not need to fail.
+        run: npm run build:production
+      - name: Verify production build artifacts exist
+        # Additional (not replacement) check: the build must have
+        # produced server output AND the production-only routes.
+        # This is an additive check on top of the exit-0 contract.
+        run: |
+          if [ ! -d ".next/server" ]; then
+            echo "ERROR: .next/server directory missing — build did not compile"
+            exit 1
+          fi
+          for route in \
+            "app/api/readiness/route.js" \
+            "app/api/csp-report/route.js" \
+            "app/api/internal/outbox/dispatch/route.js" \
+            "app/api/internal/outbox/status/route.js"; do
+            if [ ! -f ".next/server/${route}" ]; then
+              echo "ERROR: production build missing route: ${route}"
+              exit 1
+            fi
+          done
+          echo "All production-only routes were bundled successfully."
+      - name: Print mock Supabase server log on failure
+        if: failure()
+        run: |
+          echo "----- mock-supabase.log -----"
+          cat mock-supabase.log || true
+          echo "----- end mock-supabase.log -----"
+      - name: Upload build artifacts on failure
+        if: failure()
+        # actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: production-build-artifacts
+          path: |
+            mock-supabase.log
+            .next/build-logs/
+          retention-days: 7
+      - name: Stop mock Supabase server
+        if: always()
+        run: |
+          if [ -n "$MOCK_PID" ]; then
+            kill $MOCK_PID 2>/dev/null || true
+          fi
+      - name: Check for whitespace / conflict markers
+        run: git diff --check
+
+  # ============================================================
+  # Review #2 WP8: compile-only contract.
+  #
+  # Verifies that the production code path COMPILES (TypeScript +
+  # ESLint + webpack) without exercising the prerender step. This
+  # is intentionally a separate job from the full production build
+  # so compile regressions surface faster and the two failure
+  # modes (compile vs prerender) are distinguishable in PR checks.
+  #
+  # Uses Next.js's experimental --build-mode=compile flag, which
+  # was added in Next 15.4. The flag skips static generation
+  # entirely, so the job does not need any Supabase backend
+  # (mock or real).
+  # ============================================================
+  compile-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # NOTE: NODE_ENV is intentionally NOT set at the job level.
+      # Setting NODE_ENV=production here would cause `npm ci` to skip
+      # devDependencies (typescript, eslint-config-next, postcss,
+      # tailwindcss, etc.), which breaks webpack module resolution and
+      # CSS processing. `next build` sets NODE_ENV=production internally.
+      NEXT_PUBLIC_DEMO_MODE: "false"
+      # Compile-only mode does not call into Supabase at build
+      # time, so the canonical placeholder host is acceptable.
+      BUILD_MOCK_BACKEND: "false"
+      NEXT_PUBLIC_SUPABASE_URL: "https://abcdefghijklmnopqrst.supabase.co"
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: "ci-test-anon-key-not-real"
+      SUPABASE_SERVICE_ROLE_KEY: "ci-test-service-role-key-not-real"
+      NEXT_PUBLIC_SITE_URL: "https://kzq.test"
+      NEXT_PUBLIC_SITE_INDEXING_ENABLED: "false"
+      OUTBOX_DISPATCH_SECRET: "ci-test-outbox-dispatch-secret-not-real"
+    steps:
+      # actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      # actions/setup-node@v7.0.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 20
+          cache: npm
+      - name: Show tool versions (after setup-node)
+        run: |
+          node --version
+          npm --version
+          which node
+      - run: npm ci
+      - name: Compile-only production build (--experimental-build-mode=compile)
+        # MUST exit 0. --build-mode=compile skips static
+        # generation entirely, so the canonical placeholder Supabase
+        # URL is never contacted and no prerender happens. This job
+        # isolates compile-phase regressions (TS errors, ESLint,
+        # webpack resolution, env validation in next.config.mjs)
+        # from prerender-phase regressions exercised by the
+        # `production-build` job above.
+        run: npx next build --experimental-build-mode=compile 2>&1 | tee build-output.log
+      - name: Verify compile produced server output
+        run: |
+          if [ ! -d ".next/server" ]; then
+            echo "ERROR: .next/server directory missing — compile did not complete"
+            exit 1
+          fi
+      # Review #3 WP2: Middleware Edge Runtime compatibility check.
+      # Scans the build output for warnings that indicate a Node.js-only
+      # API (e.g. process.version from @supabase/supabase-js) was bundled
+      # into the middleware. The middleware must use only Web APIs so it
+      # is compatible with the Edge Runtime (which EdgeOne Makers uses by
+      # default for Next.js middleware). If any warning is detected, the
+      # CI job fails. This prevents regressions where a dependency update
+      # silently reintroduces a Node.js-only API into the middleware bundle.
+      - name: Check middleware Edge Runtime compatibility
+        run: node scripts/check-middleware-edge-runtime.mjs build-output.log
       - name: Check for whitespace / conflict markers
         run: git diff --check
 
@@ -95,7 +334,7 @@ jobs:
       DATABASE_TEST_URL: postgresql://postgres:postgres@localhost:5432/kzq_fresh_test
       DATABASE_UPGRADE_TEST_URL: postgresql://postgres:postgres@localhost:5432/kzq_upgrade_test
     steps:
-      # actions/checkout@v4.2.2
+      # actions/checkout@v7.0.1
       # fetch-depth: 0 is required because scripts/verify-database.mjs
       # reads baseline schema/policies/seed files from the legacy commit
       # (LEGACY_BASELINE_COMMIT, default d5c5822) via `git show <sha>:<path>`
@@ -105,7 +344,7 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
-      # actions/setup-node@v4.4.0
+      # actions/setup-node@v7.0.0
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: 20
@@ -143,12 +382,18 @@ jobs:
   demo-e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      # Work Package G: next.config.mjs fail-closes in production
+      # when NEXT_PUBLIC_SUPABASE_URL is unset. Demo build never
+      # contacts Supabase, but the config guard runs before that
+      # is known. A canonical placeholder satisfies the guard.
+      NEXT_PUBLIC_SUPABASE_URL: "https://abcdefghijklmnopqrst.supabase.co"
     steps:
-      # actions/checkout@v4.2.2
+      # actions/checkout@v7.0.1
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
-      # actions/setup-node@v4.4.0
+      # actions/setup-node@v7.0.0
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: 20
@@ -167,6 +412,7 @@ jobs:
           NEXT_PUBLIC_DEMO_MODE: "true"
       - name: Upload Playwright artifacts on failure
         if: failure()
+        # actions/upload-artifact@v7.0.1
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: playwright-report

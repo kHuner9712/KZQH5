@@ -13,6 +13,8 @@ import { buildLocalizedMetadata } from "@/lib/i18n/metadata";
 import { mockCertificates } from "@/lib/mock-data";
 import { fetchPageContent } from "@/lib/queries/cms";
 import { createPublicSupabaseClient } from "@/lib/supabase/public";
+import { PublicDataUnavailableError } from "@/lib/repositories/public-types";
+import { CERTIFICATE_FIELDS } from "@/lib/repositories/public-fields";
 import type { Certificate } from "@/types/database";
 import { getPublishedProductAssets } from "@/lib/repositories/product-assets";
 
@@ -44,11 +46,11 @@ export async function CertificatesPageContent(locale: Locale) {
   else {
     const { data, error } = await createPublicSupabaseClient()
       .from("certificates")
-      .select("*")
+      .select(CERTIFICATE_FIELDS)
       .eq("is_published", true)
       .order("sort_order", { ascending: true });
-    if (error) throw new Error("PUBLIC_DATA_UNAVAILABLE", { cause: error });
-    certificates = (data as Certificate[] | null) || [];
+    if (error) throw new PublicDataUnavailableError("PUBLIC_DATA_READ_FAILED", { cause: error });
+    certificates = (data as unknown as Certificate[] | null) || [];
   }
   const content = localizePage(await fetchPageContent("certificates"), locale);
   const copy = getDictionary(locale).certificates;

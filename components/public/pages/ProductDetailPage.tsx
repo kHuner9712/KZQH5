@@ -50,6 +50,14 @@ import { AddToInquiryButton } from "@/components/public/inquiry-list/AddToInquir
 import { getPublishedProductAssets } from "@/lib/repositories/product-assets";
 import { ContextEventTracker } from "@/components/public/AnalyticsTracker";
 import { safePhone } from "@/lib/content/placeholder-detection";
+import { PublicDataUnavailableError } from "@/lib/repositories/public-types";
+import {
+  CATEGORY_FIELDS,
+  CERTIFICATE_FIELDS,
+  PRODUCT_FIELDS,
+  PRODUCT_IMAGE_FIELDS,
+  SUBCATEGORY_FIELDS,
+} from "@/lib/repositories/public-fields";
 
 export const publicProductDetailRevalidate = 300;
 
@@ -57,11 +65,14 @@ const fetchProduct = cache(async (slug: string): Promise<Product | null> => {
   if (isDemoMode()) return getMockProductBySlug(slug);
   const { data, error } = await createPublicSupabaseClient()
     .from("products")
-    .select("*")
+    .select(PRODUCT_FIELDS)
     .eq("slug", slug)
     .eq("is_published", true)
     .maybeSingle();
-  if (error) throw new Error("PUBLIC_DATA_UNAVAILABLE", { cause: error });
+  if (error)
+    throw new PublicDataUnavailableError("PUBLIC_DATA_READ_FAILED", {
+      cause: error,
+    });
   return (data as Product | null) || null;
 });
 
@@ -138,26 +149,26 @@ export async function ProductDetailPageContent(locale: Locale, slug: string) {
     ] = await Promise.all([
       supabase
         .from("product_images")
-        .select("*")
+        .select(PRODUCT_IMAGE_FIELDS)
         .eq("product_id", product.id)
         .order("sort_order", { ascending: true }),
       product.category_id
         ? supabase
             .from("categories")
-            .select("*")
+            .select(CATEGORY_FIELDS)
             .eq("id", product.category_id)
             .maybeSingle()
         : Promise.resolve({ data: null, error: null }),
       product.subcategory_id
         ? supabase
             .from("subcategories")
-            .select("*")
+            .select(SUBCATEGORY_FIELDS)
             .eq("id", product.subcategory_id)
             .maybeSingle()
         : Promise.resolve({ data: null, error: null }),
       supabase
         .from("certificates")
-        .select("*")
+        .select(CERTIFICATE_FIELDS)
         .eq("is_published", true)
         .order("sort_order", { ascending: true })
         .limit(4),
@@ -170,11 +181,13 @@ export async function ProductDetailPageContent(locale: Locale, slug: string) {
       certificateResult.error ||
       companyResult.error;
     if (queryError)
-      throw new Error("PUBLIC_DATA_UNAVAILABLE", { cause: queryError });
-    images = (imageResult.data as ProductImage[] | null) || [];
+      throw new PublicDataUnavailableError("PUBLIC_DATA_READ_FAILED", {
+        cause: queryError,
+      });
+    images = (imageResult.data as unknown as ProductImage[] | null) || [];
     category = categoryResult.data as Category | null;
     subcategory = subcategoryResult.data as Subcategory | null;
-    certificates = (certificateResult.data as Certificate[] | null) || [];
+    certificates = (certificateResult.data as unknown as Certificate[] | null) || [];
     phone =
       (companyResult.data as { phone: string | null } | null)?.phone || null;
   }

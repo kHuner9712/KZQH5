@@ -190,6 +190,26 @@ function checkGitAndBuild() {
   } else {
     pass("env: service role exposure", "not exposed via NEXT_PUBLIC_");
   }
+
+  // Review #3 WP5: BUILD_MOCK_BACKEND must NEVER be set in any real
+  // deployment environment. The flag is a CI-only build-time bypass
+  // that allows the production-contract build to point at a local
+  // mock Supabase server. If it appears in a deployment environment
+  // (staging or production), it means the deployment is using mock
+  // data instead of real Supabase — a critical misconfiguration.
+  const buildMockBackend = process.env.BUILD_MOCK_BACKEND === "true";
+  if (buildMockBackend) {
+    block(
+      "env: BUILD_MOCK_BACKEND",
+      "true — this flag is CI-only and must NOT be set in any " +
+        "deployment environment. It bypasses the canonical Supabase " +
+        "host shape check and would serve mock data instead of real " +
+        "CMS content. Remove it from the deployment environment " +
+        "before going live.",
+    );
+  } else {
+    pass("env: BUILD_MOCK_BACKEND", "false / unset");
+  }
 }
 
 // ---------- Section 2: URL & SEO ----------

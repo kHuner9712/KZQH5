@@ -10,16 +10,26 @@
 //     can actually serve requests by checking:
 //       1. Public product query (Supabase REST is reachable + RLS works)
 //       2. Critical RPC (verify_schema_readiness is callable via service_role)
-//       3. Storage (Supabase Storage bucket is reachable)
+//       3. Storage canary object (Supabase Storage can serve public objects)
 //
 // Security contract:
 //   - Returns HTTP 200 when all checks pass, HTTP 503 when any fails.
-//   - Default response body contains ONLY booleans and coarse latency
-//     buckets ("fast" / "slow" / "timeout" / "error"). No schema details,
-//     no error messages, no secrets.
-//   - If READINESS_TOKEN env var is set and the request sends
-//     `Authorization: Bearer <token>`, the response includes per-check
-//     detail (still sanitized — no raw error text).
+//   - Work Package G: rate-limited per IP (12 / 60s) to prevent abuse.
+//   - Work Package G: default response body contains ONLY `{ ready,
+//     timestamp }` — the per-check array is gated behind READINESS_TOKEN
+//     to prevent attackers from enumerating which subsystem is failing.
+//   - With READINESS_TOKEN, the response includes per-check `name`,
+//     `ready`, `latency` (coarse bucket), and a sanitized `detail`
+//     string. No raw error text, no Supabase error messages, no secrets.
+//   - Work Package G: storage check now fetches a public canary object
+//     instead of HEAD-ing the bucket root. This verifies end-to-end
+//     Storage retrieval (not just HTTP service liveness). The canary
+//     is a small fixed-size object under a public path; HEAD on the
+//     bucket root previously accepted 401/403 as "ready" which is a
+//     fail-open behavior (a broken bucket policy could still 401).
+//   - Work Package G: token comparison uses crypto.timingSafeEqual
+//     via safeSecretEqualBuffer instead of a hand-rolled charCodeAt
+//     loop.
 //   - Cache-Control: no-store (readiness must be checked fresh each time).
 //   - runtime = nodejs, dynamic = force-dynamic (never cached at CDN).
 //
@@ -32,12 +42,26 @@
 
 import { NextResponse, type NextRequest } from "next/server";
 import { logServerError } from "@/lib/logging/server-log";
+import {
+  checkRateLimitKeys,
+  safeSecretEqualBuffer,
+} from "@/lib/services/http-security";
+import { getReadinessRateLimiter } from "@/lib/services/rate-limit";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const TIMEOUT_MS = 5_000;
 const SLOW_THRESHOLD_MS = 500;
+
+// Work Package G: canary object path. This is a small (1x1 placeholder)
+// image stored at a fixed path in the public Supabase Storage bucket.
+// Its existence is intentional and non-sensitive — it carries no PII
+// and exists solely for the readiness probe. The path is intentionally
+// NOT configurable via env to prevent operators from accidentally
+// pointing the probe at a private object (which would leak via the
+// readiness response code).
+const STORAGE_CANARY_PATH = "public-assets/canary/canary-1x1.png";
 
 type LatencyBucket = "fast" | "slow" | "timeout" | "error";
 
@@ -157,30 +181,41 @@ async function checkCriticalRpc(): Promise<CheckResult> {
 }
 
 /**
- * Checks that Supabase Storage is reachable by making a HEAD request to the
- * storage API root. We don't check a specific bucket to avoid leaking
- * bucket names; we only verify the storage service responds.
+ * Work Package G: storage check via a public canary object.
+ *
+ * Previously: HEAD on /storage/v1/bucket and treated 200/401/403 as
+ * "ready" (fail-open). A 401/403 only proves the storage HTTP service
+ * is alive — it does NOT prove that any object can actually be
+ * retrieved (a broken bucket policy or missing canary would still 401).
+ *
+ * New behavior: GET the public canary object. Only HTTP 200 indicates
+ * readiness; any other status (including 401/403/404) is a failure.
+ * The canary is a small fixed-size image with no PII; its path is
+ * hardcoded (not env-configurable) to prevent operators from
+ * accidentally pointing the probe at a private object.
  */
 async function checkStorage(): Promise<CheckResult> {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  if (!url || !anonKey) {
+  if (!url) {
     return { name: "storage", ready: false, latency: "error" };
   }
   const start = Date.now();
   try {
-    // HEAD the storage/v1/bucket endpoint. A 401/403 is actually a PASS
-    // because it means the storage service is alive — we just don't have
-    // permission to list buckets with the anon key (which is correct).
-    // A 404 or 500 means storage is broken.
-    const res = await fetch(`${url}/storage/v1/bucket`, {
-      method: "HEAD",
-      headers: { apikey: anonKey, Authorization: `Bearer ${anonKey}` },
-      signal: AbortSignal.timeout(TIMEOUT_MS),
-    });
+    // The Supabase Storage public URL pattern is:
+    //   {SUPABASE_URL}/storage/v1/object/public/{path}
+    // Public buckets don't require Authorization; if a request with
+    // no Authorization returns 200, the public read path is healthy.
+    const res = await fetch(
+      `${url}/storage/v1/object/public/${STORAGE_CANARY_PATH}`,
+      {
+        method: "GET",
+        signal: AbortSignal.timeout(TIMEOUT_MS),
+      },
+    );
     const elapsed = Date.now() - start;
-    // 200, 401, 403 all indicate the storage service is alive.
-    if (res.status === 200 || res.status === 401 || res.status === 403) {
+    if (res.ok) {
+      // We don't read the body — we only care about the HTTP status.
+      // Reading the body would consume bandwidth for every probe.
       return {
         name: "storage",
         ready: true,
@@ -207,9 +242,16 @@ async function checkStorage(): Promise<CheckResult> {
 }
 
 /**
- * Checks if the request is authorized to see detailed readiness info.
+ * Work Package G: checks if the request is authorized to see the
+ * per-check array. The basic response is `{ ready, timestamp }` only;
+ * an authorized request gets the full `checks` array with per-check
+ * name / ready / latency / detail.
+ *
  * Returns true if READINESS_TOKEN is set and the request sends a matching
- * Bearer token. If READINESS_TOKEN is not set, detailed mode is disabled.
+ * Bearer token. If READINESS_TOKEN is not set, detail mode is disabled.
+ *
+ * Uses crypto.timingSafeEqual via safeSecretEqualBuffer instead of a
+ * hand-rolled charCodeAt loop.
  */
 function isAuthorizedForDetail(request: NextRequest): boolean {
   const token = process.env.READINESS_TOKEN;
@@ -217,17 +259,30 @@ function isAuthorizedForDetail(request: NextRequest): boolean {
   const authHeader = request.headers.get("authorization") || "";
   const match = /^Bearer\s+(.+)$/i.exec(authHeader);
   if (!match) return false;
-  // Constant-time comparison to prevent timing attacks.
-  const provided = match[1];
-  if (provided.length !== token.length) return false;
-  let diff = 0;
-  for (let i = 0; i < token.length; i++) {
-    diff |= provided.charCodeAt(i) ^ token.charCodeAt(i);
-  }
-  return diff === 0;
+  return safeSecretEqualBuffer(match[1], token);
 }
 
 export async function GET(request: NextRequest) {
+  // --- Rate limit: 12 / 60s / IP ---
+  // Without rate limiting, an attacker could DOS Supabase by repeatedly
+  // hitting readiness (which calls Supabase REST + Storage + a service_role
+  // RPC) or use it as an oracle to probe service_role behavior.
+  // Two-layer model: global floor (unknown-IP) + optional HMAC sub-bucket.
+  const limiter = getReadinessRateLimiter();
+  const { allowed, retryAfterSeconds } = await checkRateLimitKeys(request, limiter);
+  if (!allowed) {
+    return NextResponse.json(
+      { ready: false, error: "RATE_LIMITED" },
+      {
+        status: 429,
+        headers: {
+          "Retry-After": String(retryAfterSeconds),
+          "Cache-Control": "no-store",
+        },
+      },
+    );
+  }
+
   const includeDetail = isAuthorizedForDetail(request);
 
   const checks = await Promise.all([
@@ -250,19 +305,32 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  // Build the response body. Without detail authorization, we only expose
-  // the check name, ready boolean, and latency bucket. With authorization,
-  // we also include the sanitized detail string.
-  const body = {
+  // Build the response body. Work Package G: the per-check array is
+  // gated behind READINESS_TOKEN. Without the token, an unauthenticated
+  // caller only sees `{ ready, timestamp }` — they cannot enumerate
+  // which subsystem is failing (which would leak operational state).
+  const body: {
+    ready: boolean;
+    timestamp: string;
+    checks?: Array<{
+      name: string;
+      ready: boolean;
+      latency: LatencyBucket;
+      detail?: string;
+    }>;
+  } = {
     ready: allReady,
-    checks: checks.map((c) => ({
+    timestamp: new Date().toISOString(),
+  };
+
+  if (includeDetail) {
+    body.checks = checks.map((c) => ({
       name: c.name,
       ready: c.ready,
       latency: c.latency,
-      ...(includeDetail && c.detail ? { detail: c.detail } : {}),
-    })),
-    timestamp: new Date().toISOString(),
-  };
+      ...(c.detail ? { detail: c.detail } : {}),
+    }));
+  }
 
   return NextResponse.json(body, {
     status: allReady ? 200 : 503,

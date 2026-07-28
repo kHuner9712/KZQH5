@@ -24,6 +24,8 @@ import {
 import { fetchPageContent } from "@/lib/queries/cms";
 import { createPublicSupabaseClient } from "@/lib/supabase/public";
 import { cn } from "@/lib/utils";
+import { PublicDataUnavailableError } from "@/lib/repositories/public-types";
+import { CATEGORY_FIELDS, SUBCATEGORY_FIELDS } from "@/lib/repositories/public-fields";
 import type { Category, Product, Subcategory } from "@/types/database";
 import { searchProducts } from "@/lib/services/products/search";
 import { ContextEventTracker } from "@/components/public/AnalyticsTracker";
@@ -73,25 +75,25 @@ export async function ProductsPageContent(
     const supabase = createPublicSupabaseClient();
     const { data: categoryData, error: categoryError } = await supabase
       .from("categories")
-      .select("*")
+      .select(CATEGORY_FIELDS)
       .eq("is_active", true)
       .order("sort_order", { ascending: true });
     if (categoryError)
-      throw new Error("PUBLIC_DATA_UNAVAILABLE", { cause: categoryError });
-    categories = (categoryData as Category[] | null) || [];
+      throw new PublicDataUnavailableError("PUBLIC_DATA_READ_FAILED", { cause: categoryError });
+    categories = (categoryData as unknown as Category[] | null) || [];
     const active = categories.find(
       (item) => item.slug === searchParams.category,
     );
     let subQuery = supabase
       .from("subcategories")
-      .select("*")
+      .select(SUBCATEGORY_FIELDS)
       .eq("is_active", true)
       .order("sort_order", { ascending: true });
     if (active) subQuery = subQuery.eq("category_id", active.id);
     const { data: subData, error: subError } = await subQuery;
     if (subError)
-      throw new Error("PUBLIC_DATA_UNAVAILABLE", { cause: subError });
-    subcategories = (subData as Subcategory[] | null) || [];
+      throw new PublicDataUnavailableError("PUBLIC_DATA_READ_FAILED", { cause: subError });
+    subcategories = (subData as unknown as Subcategory[] | null) || [];
   }
   const active = categories.find((item) => item.slug === searchParams.category);
   const selectedSubcategory = subcategories.find(

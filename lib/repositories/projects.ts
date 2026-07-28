@@ -1,6 +1,16 @@
 import { isDemoMode } from "@/lib/demo";
 import { mockProjectImages, mockProjectProducts, mockProjects, mockProducts } from "@/lib/mock-data";
 import { createPublicSupabaseClient } from "@/lib/supabase/public";
+import {
+  PublicDataUnavailableError,
+  logPublicDataFailure,
+} from "@/lib/repositories/public-types";
+import {
+  PROJECT_FIELDS,
+  PROJECT_IMAGE_FIELDS,
+  PROJECT_PRODUCT_FIELDS,
+  PRODUCT_FIELDS,
+} from "@/lib/repositories/public-fields";
 import type { Product, Project, ProjectImage, ProjectProduct } from "@/types/database";
 
 export async function getPublishedProjects(options: { featuredOnly?: boolean; limit?: number } = {}): Promise<Project[]> {
@@ -11,15 +21,20 @@ export async function getPublishedProjects(options: { featuredOnly?: boolean; li
       .slice(0, options.limit);
   }
   try {
-    let query = createPublicSupabaseClient().from("projects").select("*").eq("is_published", true);
+    let query = createPublicSupabaseClient().from("projects").select(PROJECT_FIELDS).eq("is_published", true);
     if (options.featuredOnly) query = query.eq("is_featured", true);
     let ordered = query.order("is_featured", { ascending: false }).order("sort_order", { ascending: true }).order("created_at", { ascending: false });
     if (options.limit) ordered = ordered.limit(options.limit);
     const { data, error } = await ordered;
-    if (error) throw error;
-    return (data as Project[] | null) || [];
+    if (error) {
+      logPublicDataFailure("PUBLIC_DATA_READ_FAILED", error);
+      throw new PublicDataUnavailableError("PUBLIC_DATA_READ_FAILED", { cause: error });
+    }
+    return (data as unknown as Project[] | null) || [];
   } catch (error) {
-    throw new Error("PUBLIC_DATA_UNAVAILABLE", { cause: error });
+    if (PublicDataUnavailableError.is(error)) throw error;
+    logPublicDataFailure("PUBLIC_DATA_READ_EXCEPTION", error);
+    throw new PublicDataUnavailableError("PUBLIC_DATA_READ_EXCEPTION", { cause: error });
   }
 }
 
@@ -40,26 +55,40 @@ export async function getPublishedProjectBySlug(slug: string): Promise<Project |
   }
   try {
     const client = createPublicSupabaseClient();
-    const { data, error } = await client.from("projects").select("*").eq("slug", slug).eq("is_published", true).maybeSingle();
-    if (error) throw error;
+    const { data, error } = await client.from("projects").select(PROJECT_FIELDS).eq("slug", slug).eq("is_published", true).maybeSingle();
+    if (error) {
+      logPublicDataFailure("PUBLIC_DATA_READ_FAILED", error);
+      throw new PublicDataUnavailableError("PUBLIC_DATA_READ_FAILED", { cause: error });
+    }
     if (!data) return null;
-    const project = data as Project;
+    const project = data as unknown as Project;
     const [{ data: imageRows, error: imageError }, { data: relationRows, error: relationError }] = await Promise.all([
-      client.from("project_images").select("*").eq("project_id", project.id).order("sort_order", { ascending: true }),
-      client.from("project_products").select("*").eq("project_id", project.id).order("sort_order", { ascending: true }),
+      client.from("project_images").select(PROJECT_IMAGE_FIELDS).eq("project_id", project.id).order("sort_order", { ascending: true }),
+      client.from("project_products").select(PROJECT_PRODUCT_FIELDS).eq("project_id", project.id).order("sort_order", { ascending: true }),
     ]);
-    if (imageError) throw imageError;
-    if (relationError) throw relationError;
-    const relations = (relationRows as ProjectProduct[] | null) || [];
+    if (imageError) {
+      logPublicDataFailure("PUBLIC_DATA_READ_FAILED", imageError);
+      throw new PublicDataUnavailableError("PUBLIC_DATA_READ_FAILED", { cause: imageError });
+    }
+    if (relationError) {
+      logPublicDataFailure("PUBLIC_DATA_READ_FAILED", relationError);
+      throw new PublicDataUnavailableError("PUBLIC_DATA_READ_FAILED", { cause: relationError });
+    }
+    const relations = (relationRows as unknown as ProjectProduct[] | null) || [];
     let products: Product[] = [];
     if (relations.length) {
-      const { data: productRows, error: productError } = await client.from("products").select("*").in("id", relations.map((item) => item.product_id)).eq("is_published", true);
-      if (productError) throw productError;
-      const byId = new Map(((productRows as Product[] | null) || []).map((item) => [item.id, item]));
+      const { data: productRows, error: productError } = await client.from("products").select(PRODUCT_FIELDS).in("id", relations.map((item) => item.product_id)).eq("is_published", true);
+      if (productError) {
+        logPublicDataFailure("PUBLIC_DATA_READ_FAILED", productError);
+        throw new PublicDataUnavailableError("PUBLIC_DATA_READ_FAILED", { cause: productError });
+      }
+      const byId = new Map(((productRows as unknown as Product[] | null) || []).map((item) => [item.id, item]));
       products = relations.map((item) => byId.get(item.product_id)).filter((item): item is Product => Boolean(item));
     }
-    return { ...project, project_images: (imageRows as ProjectImage[] | null) || [], products };
+    return { ...project, project_images: (imageRows as unknown as ProjectImage[] | null) || [], products };
   } catch (error) {
-    throw new Error("PUBLIC_DATA_UNAVAILABLE", { cause: error });
+    if (PublicDataUnavailableError.is(error)) throw error;
+    logPublicDataFailure("PUBLIC_DATA_READ_EXCEPTION", error);
+    throw new PublicDataUnavailableError("PUBLIC_DATA_READ_EXCEPTION", { cause: error });
   }
 }

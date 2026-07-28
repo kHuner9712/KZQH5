@@ -27,6 +27,8 @@ import {
 import { fetchPageContent } from "@/lib/queries/cms";
 import { createPublicSupabaseClient } from "@/lib/supabase/public";
 import { serializeJsonLd, siteUrl } from "@/lib/utils";
+import { PublicDataUnavailableError } from "@/lib/repositories/public-types";
+import { COMPANY_PROFILE_FIELDS } from "@/lib/repositories/public-fields";
 import type { CompanyProfile } from "@/types/database";
 
 export const publicAboutRevalidate = 300;
@@ -57,10 +59,10 @@ export async function AboutPageContent(locale: Locale) {
   else {
     const { data, error } = await createPublicSupabaseClient()
       .from("company_profile")
-      .select("*")
+      .select(COMPANY_PROFILE_FIELDS)
       .limit(1)
       .maybeSingle();
-    if (error) throw new Error("PUBLIC_DATA_UNAVAILABLE", { cause: error });
+    if (error) throw new PublicDataUnavailableError("PUBLIC_DATA_READ_FAILED", { cause: error });
     company = sanitizeCompany((data as CompanyProfile | null) || null);
   }
   const content = localizePage(await fetchPageContent("about"), locale);

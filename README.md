@@ -210,7 +210,7 @@ npm run dev
 - **双语询盘**：中文要求姓名、感兴趣产品及手机号/微信号之一；英文要求姓名、感兴趣产品及 Email/WhatsApp 之一。提交记录产品 ID/slug、来源页面、referrer 与 UTM。
 - **询盘管理**：后台支持未读角标、筛选、分页、状态、备注、负责人和带 UTF-8 BOM/公式注入防护的筛选结果 CSV 导出。
 - **询盘安全与通知**：提交必须通过 `/api/inquiries`，服务端做 honeypot、可替换限流边界、垃圾内容和字段校验；写入后可选发企业微信/邮件通知，通知失败不影响提交，Demo 模式不写库也不发送。
-- **图片上传**：基于 Supabase Storage，5MB 限制，仅上传展示版/水印版图片
+- **图片上传**：基于 Supabase Storage，4MB 限制（EdgeOne Cloud Functions 6MB 平台请求体限制约束，Review #2 WP7），仅上传展示版/水印版图片
 
 ## 业务口径
 

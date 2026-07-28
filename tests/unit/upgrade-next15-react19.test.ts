@@ -191,6 +191,15 @@ vi.mock("@/lib/services/http-security", () => ({
   isAllowedFetchSite: mockIsAllowedFetchSite,
   readJsonBody: mockReadJsonBody,
   ephemeralRateKey: vi.fn(() => "rate-key"),
+  ephemeralRateKeySet: vi.fn(() => ({
+    keys: ["fallback:global"],
+    strategy: "global-fallback",
+  })),
+  checkRateLimitKeys: vi.fn(async () => ({
+    allowed: true,
+    remaining: 10,
+    retryAfterSeconds: 0,
+  })),
   UUID_PATTERN: { test: () => true },
 }));
 

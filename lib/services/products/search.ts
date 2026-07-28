@@ -2,6 +2,10 @@ import { isDemoMode } from "@/lib/demo";
 import { mockProducts } from "@/lib/mock-data";
 import { createPublicSupabaseClient } from "@/lib/supabase/public";
 import type { Product } from "@/types/database";
+import {
+  PublicDataUnavailableError,
+  logPublicDataFailure,
+} from "@/lib/repositories/public-types";
 
 export interface ProductSearchRequest {
   query?: string;
@@ -94,20 +98,35 @@ export async function searchProducts(
 ): Promise<ProductSearchResult> {
   if (isDemoMode()) return searchProductsInMemory(mockProducts, request);
 
-  const { data, error } = await createPublicSupabaseClient().rpc(
-    "search_published_products",
-    {
-      p_query: request.query?.slice(0, 120) || null,
-      p_category_id: request.categoryId || null,
-      p_subcategory_id: request.subcategoryId || null,
-      p_offset: (request.page - 1) * request.pageSize,
-      p_limit: request.pageSize,
-    },
-  );
-  if (error) throw error;
-  const payload = data as { items?: Product[]; total?: number } | null;
-  return {
-    items: Array.isArray(payload?.items) ? payload.items : [],
-    total: Number.isFinite(Number(payload?.total)) ? Number(payload?.total) : 0,
-  };
+  try {
+    const { data, error } = await createPublicSupabaseClient().rpc(
+      "search_published_products",
+      {
+        p_query: request.query?.slice(0, 120) || null,
+        p_category_id: request.categoryId || null,
+        p_subcategory_id: request.subcategoryId || null,
+        p_offset: (request.page - 1) * request.pageSize,
+        p_limit: request.pageSize,
+      },
+    );
+    if (error) {
+      logPublicDataFailure("PUBLIC_DATA_READ_FAILED", error);
+      throw new PublicDataUnavailableError("PUBLIC_DATA_READ_FAILED", {
+        cause: error,
+      });
+    }
+    const payload = data as { items?: Product[]; total?: number } | null;
+    return {
+      items: Array.isArray(payload?.items) ? payload.items : [],
+      total: Number.isFinite(Number(payload?.total))
+        ? Number(payload?.total)
+        : 0,
+    };
+  } catch (error) {
+    if (PublicDataUnavailableError.is(error)) throw error;
+    logPublicDataFailure("PUBLIC_DATA_READ_EXCEPTION", error);
+    throw new PublicDataUnavailableError("PUBLIC_DATA_READ_EXCEPTION", {
+      cause: error,
+    });
+  }
 }

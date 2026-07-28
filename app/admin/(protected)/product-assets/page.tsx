@@ -344,7 +344,7 @@ function AssetModal({ initial, onClose, onSaved }: { initial: ProductAsset | nul
                 // 'application/pdf', which is not a valid URL.
               }}
               label="上传 Catalog 草稿"
-              hint="PDF/JPG/PNG/WebP，最大 20MB；保存为 private-assets 草稿，需单独发布到 public-assets。"
+              hint="PDF/JPG/PNG/WebP，最大 4MB；保存为 private-assets 草稿，需单独发布到 public-assets。"
             />
             <p className="mt-1 text-[11px] text-gray-400">
               当前草稿路径：{draftSourceRef?.path || initial?.source_object_path || "(未上传)"}

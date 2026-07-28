@@ -42,6 +42,15 @@ import {
   safePhone,
   sanitizeCompany,
 } from "@/lib/content/placeholder-detection";
+import {
+  PublicDataUnavailableError,
+} from "@/lib/repositories/public-types";
+import {
+  PRODUCT_FIELDS,
+  CATEGORY_FIELDS,
+  CERTIFICATE_FIELDS,
+  COMPANY_PROFILE_FIELDS,
+} from "@/lib/repositories/public-fields";
 import type {
   Category,
   Certificate,
@@ -143,23 +152,23 @@ export async function HomePageContent(locale: Locale) {
       await Promise.all([
         supabase
           .from("products")
-          .select("*")
+          .select(PRODUCT_FIELDS)
           .eq("is_published", true)
           .eq("is_featured", true)
           .order("sort_order", { ascending: true })
           .limit(8),
         supabase
           .from("categories")
-          .select("*")
+          .select(CATEGORY_FIELDS)
           .eq("is_active", true)
           .order("sort_order", { ascending: true }),
         supabase
           .from("certificates")
-          .select("*")
+          .select(CERTIFICATE_FIELDS)
           .eq("is_published", true)
           .order("sort_order", { ascending: true })
           .limit(3),
-        supabase.from("company_profile").select("*").limit(1).maybeSingle(),
+        supabase.from("company_profile").select(COMPANY_PROFILE_FIELDS).limit(1).maybeSingle(),
       ]);
     const queryError =
       productsResult.error ||
@@ -167,11 +176,13 @@ export async function HomePageContent(locale: Locale) {
       certificateResult.error ||
       companyResult.error;
     if (queryError) {
-      throw new Error("PUBLIC_DATA_UNAVAILABLE", { cause: queryError });
+      throw new PublicDataUnavailableError("PUBLIC_DATA_READ_FAILED", {
+        cause: queryError,
+      });
     }
-    featuredProducts = (productsResult.data as Product[] | null) || [];
-    categories = (categoryResult.data as Category[] | null) || [];
-    certificates = (certificateResult.data as Certificate[] | null) || [];
+    featuredProducts = (productsResult.data as unknown as Product[] | null) || [];
+    categories = (categoryResult.data as unknown as Category[] | null) || [];
+    certificates = (certificateResult.data as unknown as Certificate[] | null) || [];
     company = sanitizeCompany(companyResult.data as CompanyProfile | null);
   }
 
