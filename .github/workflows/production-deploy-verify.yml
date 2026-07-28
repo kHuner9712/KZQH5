@@ -1,0 +1,39 @@
+# ============================================================
+# Production Deploy Verification (Phase 2 Task 3)
+#
+# Read-only smoke verification that runs AFTER a production
+# deployment to EdgeOne. Calls the same reusable workflow as
+# staging validation to ensure the deployed site is healthy.
+#
+# This workflow does NOT perform write tests. Write tests in
+# production require explicit, separate approval.
+#
+# Usage:
+#   Triggered manually after a production deployment to verify
+#   the deployment is healthy. Pass the production base URL and
+#   the SHA that was deployed.
+# ============================================================
+name: Production Deploy Verify
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: EdgeOne Production base URL
+        required: true
+        type: string
+      deployed_sha:
+        description: SHA that was deployed (for verification)
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  read-only-smoke:
+    uses: ./.github/workflows/staging-read-only-validation.yml
+    with:
+      base_url: ${{ inputs.base_url }}
+      expected_sha: ${{ inputs.deployed_sha || github.sha }}
+    secrets: inherit
