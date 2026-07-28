@@ -2,15 +2,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest, NextResponse } from "next/server";
 
 // ============================================================
-// Supabase Auth Session Refresh — Middleware Tests
+// Supabase Auth Session Refresh — Edge-Compatible Middleware Tests
 // ------------------------------------------------------------
 // Verifies that:
 //   1. shouldRefreshSession() only matches /admin, /api/admin, /api/internal
 //      (and their subpaths) — NOT public ISR pages.
 //   2. refreshSupabaseSession() is a no-op (returns original response
 //      unchanged) when Supabase env vars are missing (Demo mode / local dev).
-//   3. refreshSupabaseSession() calls supabase.auth.getUser() when env
-//      vars are present.
+//   3. refreshSupabaseSession() calls the Supabase Auth refresh-token
+//      endpoint via fetch() when the access token is near expiry.
 //   4. Refreshed cookies are written to BOTH the request and the
 //      returned response (Set-Cookie header present).
 //   5. When cookies were refreshed:
@@ -21,88 +21,80 @@ import { NextRequest, NextResponse } from "next/server";
 //        e. The downstream request sees the rotated cookies.
 //   6. When NO cookie was refreshed, the original response is returned
 //      unchanged (no Cache-Control mutation, no extra response churn).
-//   7. A network failure during getUser() does NOT block the request
+//   7. A network failure during refresh does NOT block the request
 //      (fail-open for refresh; authorization is server-side). The
 //      original response is returned.
 //   8. The middleware applies security headers to ALL responses.
-//   9. Public ISR paths do NOT trigger the session refresh (no Supabase
-//      client is constructed).
+//   9. Public ISR paths do NOT trigger the session refresh (no fetch call).
+//  10. The module does NOT import @supabase/ssr or @supabase/supabase-js
+//      (Edge Runtime compatibility).
 // ============================================================
 
 // --- Mocks ---------------------------------------------------------------
-// We mock @supabase/ssr's createServerClient to:
-//   - capture the cookies adapter (getAll/setAll) so tests can invoke
-//     setAll() to simulate Supabase's auto-refresh behavior;
-//   - return a stubbed auth.getUser() that tests can configure per-case.
-//
-// vi.mock is hoisted to the top of the file by the Vitest transformer,
-// so any variables it closes over MUST be created via vi.hoisted() to
-// avoid "Cannot access X before initialization" ReferenceErrors.
-const hoisted = vi.hoisted(() => {
-  // Mutable container — the hoisted mock writes the captured cookies
-  // adapter here, and the test body reads it.
-  const container = {
-    mockGetUser: vi.fn(),
-    createServerClientMock: vi.fn(),
-    capturedCookiesAdapter: null as {
-      getAll: () => Array<{ name: string; value: string }>;
-      setAll: (
-        cookies: Array<{ name: string; value: string; options?: unknown }>,
-      ) => void;
-    } | null,
-  };
-  return container;
+// We mock global fetch to simulate the Supabase Auth refresh-token
+// endpoint. The mock is reset before each test.
+const mockFetch = vi.fn();
+
+beforeEach(() => {
+  vi.unstubAllEnvs();
+  mockFetch.mockReset();
+  vi.stubGlobal("fetch", mockFetch);
 });
 
-vi.mock("@supabase/ssr", () => ({
-  createServerClient: hoisted.createServerClientMock,
-}));
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
+});
 
-const { mockGetUser, createServerClientMock } = hoisted;
+/**
+ * Build a valid Supabase auth cookie value (base64-prefixed JSON)
+ * for the given session fields.
+ */
+function encodeSessionCookie(session: {
+  access_token: string;
+  refresh_token: string;
+  expires_at?: number;
+  expires_in?: number;
+}): string {
+  const json = JSON.stringify(session);
+  const bytes = new TextEncoder().encode(json);
+  let binary = "";
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  const base64 = btoa(binary)
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+  return `base64-${base64}`;
+}
+
+/**
+ * Configure mockFetch to simulate a successful token refresh.
+ * Returns the new session that the refresh endpoint "sent back".
+ */
+function simulateSuccessfulRefresh(newSession: {
+  access_token: string;
+  refresh_token: string;
+  expires_in?: number;
+  expires_at?: number;
+}) {
+  mockFetch.mockResolvedValueOnce({
+    ok: true,
+    status: 200,
+    json: async () => newSession,
+  });
+}
+
+const TEST_SUPABASE_URL = "https://abcdefghijklmnopqrst.supabase.co";
+const TEST_ANON_KEY = "test-anon-key";
+const TEST_COOKIE_NAME = "sb-abcdefghijklmnopqrst-auth-token";
 
 import {
   refreshSupabaseSession,
   shouldRefreshSession,
   SESSION_REFRESH_PATHS,
 } from "@/lib/supabase/middleware-session";
-
-beforeEach(() => {
-  hoisted.capturedCookiesAdapter = null;
-  createServerClientMock.mockImplementation((_url, _key, config) => {
-    hoisted.capturedCookiesAdapter = config.cookies;
-    return {
-      auth: {
-        getUser: mockGetUser,
-      },
-    };
-  });
-  mockGetUser.mockReset();
-  // Default: getUser resolves without rotating any cookie. Individual
-  // tests opt into simulating a refresh via `simulateCookieRefresh()`.
-  mockGetUser.mockResolvedValue({ data: { user: null }, error: null });
-});
-
-afterEach(() => {
-  vi.unstubAllEnvs();
-});
-
-/**
- * Configure mockGetUser to invoke the captured setAll() adapter with the
- * given cookies, simulating @supabase/ssr's auto-refresh behavior when
- * the access token is rotated.
- */
-function simulateCookieRefresh(
-  cookies: Array<{ name: string; value: string; options?: unknown }>,
-) {
-  mockGetUser.mockImplementationOnce(async () => {
-    const adapter = hoisted.capturedCookiesAdapter;
-    if (!adapter) {
-      throw new Error("cookies adapter was not captured");
-    }
-    adapter.setAll(cookies);
-    return { data: { user: null }, error: null };
-  });
-}
 
 // ============================================================
 // shouldRefreshSession
@@ -139,7 +131,6 @@ describe("shouldRefreshSession — path matching", () => {
   });
 
   it("does NOT match /admin-prefixed-but-different paths", () => {
-    // /admin-foo should NOT be treated as /admin/**
     expect(shouldRefreshSession("/admin-foo")).toBe(false);
     expect(shouldRefreshSession("/administration")).toBe(false);
     expect(shouldRefreshSession("/api/admin-foo")).toBe(false);
@@ -164,73 +155,77 @@ describe("refreshSupabaseSession — Demo / no-env mode", () => {
     response.headers.set("X-Content-Type-Options", "nosniff");
     const result = await refreshSupabaseSession(request, response);
     expect(result).toBe(response);
-    expect(mockGetUser).not.toHaveBeenCalled();
-    expect(createServerClientMock).not.toHaveBeenCalled();
-    // No Cache-Control mutation in Demo mode.
+    expect(mockFetch).not.toHaveBeenCalled();
     expect(result.headers.get("Cache-Control")).toBeNull();
-    // Security headers preserved.
     expect(result.headers.get("X-Content-Type-Options")).toBe("nosniff");
   });
 
   it("returns the original response unchanged when NEXT_PUBLIC_SUPABASE_ANON_KEY is missing", async () => {
-    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://test.supabase.co");
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", TEST_SUPABASE_URL);
     vi.stubEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY", "");
     const request = new NextRequest("https://kzq.test/admin");
     const response = NextResponse.next();
     const result = await refreshSupabaseSession(request, response);
     expect(result).toBe(response);
-    expect(mockGetUser).not.toHaveBeenCalled();
-    expect(createServerClientMock).not.toHaveBeenCalled();
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it("returns the original response unchanged for non-canonical Supabase URL", async () => {
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "http://127.0.0.1:5433");
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY", "test-key");
+    const request = new NextRequest("https://kzq.test/admin");
+    const response = NextResponse.next();
+    const result = await refreshSupabaseSession(request, response);
+    expect(result).toBe(response);
+    expect(mockFetch).not.toHaveBeenCalled();
   });
 });
 
 // ============================================================
-// refreshSupabaseSession — no refresh occurred
+// refreshSupabaseSession — no refresh needed
 // ============================================================
-describe("refreshSupabaseSession — no cookie refresh", () => {
+describe("refreshSupabaseSession — no refresh needed", () => {
   beforeEach(() => {
-    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://test.supabase.co");
-    vi.stubEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY", "test-anon-key");
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", TEST_SUPABASE_URL);
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY", TEST_ANON_KEY);
   });
 
-  it("calls supabase.auth.getUser() to trigger auto-refresh", async () => {
-    const request = new NextRequest("https://kzq.test/admin");
-    const response = NextResponse.next();
-    await refreshSupabaseSession(request, response);
-    expect(mockGetUser).toHaveBeenCalledTimes(1);
-  });
-
-  it("returns the original response unchanged when no cookie was rotated", async () => {
-    // Default mock: getUser resolves without calling setAll.
+  it("returns the original response unchanged when no session cookie is present", async () => {
     const request = new NextRequest("https://kzq.test/admin");
     const response = NextResponse.next();
     response.headers.set("X-Content-Type-Options", "nosniff");
-    response.headers.set("X-Frame-Options", "DENY");
-
     const result = await refreshSupabaseSession(request, response);
-
-    // Same response object — no need to churn when nothing changed.
     expect(result).toBe(response);
-    // No Cache-Control mutation when no auth cookie was refreshed.
+    expect(mockFetch).not.toHaveBeenCalled();
     expect(result.headers.get("Cache-Control")).toBeNull();
-    // Security headers preserved.
-    expect(result.headers.get("X-Content-Type-Options")).toBe("nosniff");
-    expect(result.headers.get("X-Frame-Options")).toBe("DENY");
   });
 
-  it("does NOT throw when getUser() fails (fail-open for refresh)", async () => {
-    mockGetUser.mockRejectedValueOnce(new Error("network error"));
-    const request = new NextRequest("https://kzq.test/admin");
+  it("returns the original response unchanged when the access token is still valid", async () => {
+    const futureExpiry = Math.floor(Date.now() / 1000) + 3600;
+    const cookieValue = encodeSessionCookie({
+      access_token: "valid-token",
+      refresh_token: "valid-refresh",
+      expires_at: futureExpiry,
+    });
+    const request = new NextRequest("https://kzq.test/admin", {
+      headers: { Cookie: `${TEST_COOKIE_NAME}=${cookieValue}` },
+    });
     const response = NextResponse.next();
     response.headers.set("X-Content-Type-Options", "nosniff");
-    // Must not throw — and must return the original response so the
-    // caller's security headers survive the network failure.
-    await expect(refreshSupabaseSession(request, response)).resolves.toBe(
-      response,
-    );
-    expect(response.headers.get("X-Content-Type-Options")).toBe("nosniff");
-    // No Cache-Control mutation on failure.
-    expect(response.headers.get("Cache-Control")).toBeNull();
+    const result = await refreshSupabaseSession(request, response);
+    expect(result).toBe(response);
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(result.headers.get("Cache-Control")).toBeNull();
+  });
+
+  it("returns the original response unchanged for corrupted session cookie", async () => {
+    const request = new NextRequest("https://kzq.test/admin", {
+      headers: { Cookie: `${TEST_COOKIE_NAME}=not-valid-json` },
+    });
+    const response = NextResponse.next();
+    const result = await refreshSupabaseSession(request, response);
+    expect(result).toBe(response);
+    expect(mockFetch).not.toHaveBeenCalled();
   });
 });
 
@@ -239,19 +234,47 @@ describe("refreshSupabaseSession — no cookie refresh", () => {
 // ============================================================
 describe("refreshSupabaseSession — cookie refresh", () => {
   beforeEach(() => {
-    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://test.supabase.co");
-    vi.stubEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY", "test-anon-key");
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", TEST_SUPABASE_URL);
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY", TEST_ANON_KEY);
+  });
+
+  function buildRequestWithExpiringToken(): NextRequest {
+    const pastExpiry = Math.floor(Date.now() / 1000) - 10;
+    const cookieValue = encodeSessionCookie({
+      access_token: "expiring-token",
+      refresh_token: "valid-refresh-token",
+      expires_at: pastExpiry,
+    });
+    return new NextRequest("https://kzq.test/admin", {
+      headers: { Cookie: `${TEST_COOKIE_NAME}=${cookieValue}` },
+    });
+  }
+
+  it("calls the Supabase Auth refresh endpoint when the token is near expiry", async () => {
+    simulateSuccessfulRefresh({
+      access_token: "new-access-token",
+      refresh_token: "new-refresh-token",
+      expires_in: 3600,
+    });
+    const request = buildRequestWithExpiringToken();
+    await refreshSupabaseSession(request, NextResponse.next());
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    const [url, options] = mockFetch.mock.calls[0];
+    expect(url).toContain("/auth/v1/token?grant_type=refresh_token");
+    expect(options.method).toBe("POST");
+    expect(options.headers.apikey).toBe(TEST_ANON_KEY);
+    expect(options.headers.Authorization).toBe("Bearer expiring-token");
+    const body = JSON.parse(options.body);
+    expect(body.refresh_token).toBe("valid-refresh-token");
   });
 
   it("returns a NEW NextResponse (not the original) when cookies were refreshed", async () => {
-    simulateCookieRefresh([
-      {
-        name: "sb-test-auth-token",
-        value: "rotated-token-value",
-        options: { httpOnly: true, path: "/" },
-      },
-    ]);
-    const request = new NextRequest("https://kzq.test/admin");
+    simulateSuccessfulRefresh({
+      access_token: "new-access",
+      refresh_token: "new-refresh",
+      expires_in: 3600,
+    });
+    const request = buildRequestWithExpiringToken();
     const original = NextResponse.next();
     const result = await refreshSupabaseSession(request, original);
     expect(result).not.toBe(original);
@@ -259,65 +282,53 @@ describe("refreshSupabaseSession — cookie refresh", () => {
   });
 
   it("writes Set-Cookie on the returned response with the rotated value", async () => {
-    simulateCookieRefresh([
-      {
-        name: "sb-test-auth-token",
-        value: "rotated-token-value",
-        options: { httpOnly: true, path: "/" },
-      },
-    ]);
-    const request = new NextRequest("https://kzq.test/admin");
+    simulateSuccessfulRefresh({
+      access_token: "new-access",
+      refresh_token: "new-refresh",
+      expires_in: 3600,
+    });
+    const request = buildRequestWithExpiringToken();
     const original = NextResponse.next();
     const result = await refreshSupabaseSession(request, original);
     const setCookie = result.headers.get("Set-Cookie");
-    expect(setCookie).toContain("sb-test-auth-token=rotated-token-value");
-    expect(setCookie).toContain("HttpOnly");
-    expect(setCookie).toContain("Path=/");
+    expect(setCookie).toBeTruthy();
+    expect(setCookie).toContain(TEST_COOKIE_NAME);
   });
 
-  it("forwards the rotated cookie to the downstream request (request.headers)", async () => {
-    simulateCookieRefresh([
-      {
-        name: "sb-test-auth-token",
-        value: "rotated-token-value",
-        options: { httpOnly: true, path: "/" },
-      },
-    ]);
-    const request = new NextRequest("https://kzq.test/admin");
-    // Pre-condition: cookie is not present.
-    expect(request.cookies.get("sb-test-auth-token")).toBeUndefined();
+  it("forwards the rotated cookie to the downstream request", async () => {
+    simulateSuccessfulRefresh({
+      access_token: "new-access",
+      refresh_token: "new-refresh",
+      expires_in: 3600,
+    });
+    const request = buildRequestWithExpiringToken();
     await refreshSupabaseSession(request, NextResponse.next());
-    // The downstream handler reading request.cookies should see the
-    // rotated cookie — this is what makes the auto-refresh visible to
-    // Server Components and Route Handlers.
-    expect(request.cookies.get("sb-test-auth-token")?.value).toBe(
-      "rotated-token-value",
-    );
-    // And it should be reflected in the Cookie header too.
-    expect(request.headers.get("Cookie")).toContain(
-      "sb-test-auth-token=rotated-token-value",
-    );
+    // The downstream handler reading request.cookies should see a cookie
+    // with the new encoded session value.
+    const cookie = request.cookies.get(TEST_COOKIE_NAME);
+    expect(cookie).toBeTruthy();
+    expect(cookie!.value).toContain("base64-");
   });
 
   it("sets Cache-Control: private, no-store on the returned response", async () => {
-    simulateCookieRefresh([
-      {
-        name: "sb-test-auth-token",
-        value: "rotated-token-value",
-        options: {},
-      },
-    ]);
-    const request = new NextRequest("https://kzq.test/admin");
+    simulateSuccessfulRefresh({
+      access_token: "new-access",
+      refresh_token: "new-refresh",
+      expires_in: 3600,
+    });
+    const request = buildRequestWithExpiringToken();
     const original = NextResponse.next();
     const result = await refreshSupabaseSession(request, original);
     expect(result.headers.get("Cache-Control")).toBe("private, no-store");
   });
 
   it("preserves all security headers from the original response", async () => {
-    simulateCookieRefresh([
-      { name: "sb-test-auth-token", value: "v", options: {} },
-    ]);
-    const request = new NextRequest("https://kzq.test/admin");
+    simulateSuccessfulRefresh({
+      access_token: "new-access",
+      refresh_token: "new-refresh",
+      expires_in: 3600,
+    });
+    const request = buildRequestWithExpiringToken();
     const original = NextResponse.next();
     original.headers.set("X-Content-Type-Options", "nosniff");
     original.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
@@ -354,13 +365,13 @@ describe("refreshSupabaseSession — cookie refresh", () => {
   });
 
   it("preserves cookies the caller already set on the original response", async () => {
-    simulateCookieRefresh([
-      { name: "sb-test-auth-token", value: "rotated", options: {} },
-    ]);
-    const request = new NextRequest("https://kzq.test/admin");
+    simulateSuccessfulRefresh({
+      access_token: "new-access",
+      refresh_token: "new-refresh",
+      expires_in: 3600,
+    });
+    const request = buildRequestWithExpiringToken();
     const original = NextResponse.next();
-    // Caller-set cookie unrelated to Supabase auth — must survive the
-    // response swap.
     original.cookies.set("caller-cookie", "caller-value", {
       httpOnly: true,
       path: "/",
@@ -368,38 +379,54 @@ describe("refreshSupabaseSession — cookie refresh", () => {
 
     const result = await refreshSupabaseSession(request, original);
 
-    // The combined Set-Cookie header should contain BOTH the caller's
-    // cookie and the refreshed auth cookie.
     const setCookieHeader = result.headers.get("Set-Cookie");
     expect(setCookieHeader).toContain("caller-cookie=caller-value");
-    expect(setCookieHeader).toContain("sb-test-auth-token=rotated");
   });
 
-  it("applies multiple rotated cookies when @supabase/ssr rotates access + refresh tokens", async () => {
-    simulateCookieRefresh([
-      {
-        name: "sb-test-auth-token",
-        value: "new-access",
-        options: { httpOnly: true, path: "/" },
-      },
-      {
-        name: "sb-test-refresh-token",
-        value: "new-refresh",
-        options: { httpOnly: true, path: "/" },
-      },
-    ]);
-    const request = new NextRequest("https://kzq.test/admin");
-    const original = NextResponse.next();
-    const result = await refreshSupabaseSession(request, original);
-    const setCookie = result.headers.get("Set-Cookie");
-    expect(setCookie).toContain("sb-test-auth-token=new-access");
-    expect(setCookie).toContain("sb-test-refresh-token=new-refresh");
-    expect(request.cookies.get("sb-test-auth-token")?.value).toBe(
-      "new-access",
+  it("does NOT throw when fetch fails (fail-open for refresh)", async () => {
+    mockFetch.mockRejectedValueOnce(new Error("network error"));
+    const request = buildRequestWithExpiringToken();
+    const response = NextResponse.next();
+    response.headers.set("X-Content-Type-Options", "nosniff");
+    await expect(refreshSupabaseSession(request, response)).resolves.toBe(
+      response,
     );
-    expect(request.cookies.get("sb-test-refresh-token")?.value).toBe(
-      "new-refresh",
+    expect(response.headers.get("X-Content-Type-Options")).toBe("nosniff");
+    expect(response.headers.get("Cache-Control")).toBeNull();
+  });
+
+  it("does NOT throw when refresh endpoint returns HTTP error", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 401,
+      json: async () => ({ error: "invalid_grant" }),
+    });
+    const request = buildRequestWithExpiringToken();
+    const response = NextResponse.next();
+    await expect(refreshSupabaseSession(request, response)).resolves.toBe(
+      response,
     );
+    expect(response.headers.get("Cache-Control")).toBeNull();
+  });
+});
+
+// ============================================================
+// Edge Runtime compatibility
+// ============================================================
+describe("Edge Runtime compatibility", () => {
+  it("does NOT import @supabase/ssr or @supabase/supabase-js", async () => {
+    // Read the module source and verify no banned imports.
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const modulePath = path.resolve(
+      process.cwd(),
+      "lib/supabase/middleware-session.ts",
+    );
+    const source = fs.readFileSync(modulePath, "utf8");
+    expect(source).not.toMatch(/from\s+["']@supabase\/ssr["']/);
+    expect(source).not.toMatch(/from\s+["']@supabase\/supabase-js["']/);
+    expect(source).not.toMatch(/createServerClient/);
+    expect(source).not.toMatch(/createClient/);
   });
 });
 
@@ -408,8 +435,8 @@ describe("refreshSupabaseSession — cookie refresh", () => {
 // ============================================================
 describe("middleware integration", () => {
   beforeEach(() => {
-    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://test.supabase.co");
-    vi.stubEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY", "test-anon-key");
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", TEST_SUPABASE_URL);
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY", TEST_ANON_KEY);
   });
 
   it("applies security headers to ALL responses (public and admin)", async () => {
@@ -431,51 +458,53 @@ describe("middleware integration", () => {
     expect(adminRes.headers.get("X-Frame-Options")).toBe("DENY");
   });
 
-  it("does NOT construct a Supabase Session Client on public ISR paths", async () => {
-    createServerClientMock.mockClear();
+  it("does NOT call fetch on public ISR paths", async () => {
     const { middleware } = await import("@/middleware");
     const request = new NextRequest("https://kzq.test/products");
     await middleware(request);
-    // Public ISR paths must not trigger session refresh — the Supabase
-    // client must not be constructed at all.
-    expect(createServerClientMock).not.toHaveBeenCalled();
+    expect(mockFetch).not.toHaveBeenCalled();
   });
 
-  it("does NOT call supabase.auth.getUser() on public ISR paths", async () => {
-    mockGetUser.mockClear();
-    const { middleware } = await import("@/middleware");
-    const request = new NextRequest("https://kzq.test/products");
-    await middleware(request);
-    expect(mockGetUser).not.toHaveBeenCalled();
-  });
-
-  it("calls supabase.auth.getUser() on /admin paths", async () => {
-    mockGetUser.mockClear();
+  it("does NOT call fetch on /admin when no session cookie is present", async () => {
     const { middleware } = await import("@/middleware");
     const request = new NextRequest("https://kzq.test/admin");
     await middleware(request);
-    expect(mockGetUser).toHaveBeenCalledTimes(1);
+    expect(mockFetch).not.toHaveBeenCalled();
   });
 
-  it("calls supabase.auth.getUser() on /api/admin paths", async () => {
-    mockGetUser.mockClear();
+  it("does NOT call fetch on /admin when the token is still valid", async () => {
+    const futureExpiry = Math.floor(Date.now() / 1000) + 3600;
+    const cookieValue = encodeSessionCookie({
+      access_token: "valid-token",
+      refresh_token: "valid-refresh",
+      expires_at: futureExpiry,
+    });
     const { middleware } = await import("@/middleware");
-    const request = new NextRequest("https://kzq.test/api/admin/products", {
-      method: "GET",
+    const request = new NextRequest("https://kzq.test/admin", {
+      headers: { Cookie: `${TEST_COOKIE_NAME}=${cookieValue}` },
     });
     await middleware(request);
-    expect(mockGetUser).toHaveBeenCalledTimes(1);
+    expect(mockFetch).not.toHaveBeenCalled();
   });
 
-  it("calls supabase.auth.getUser() on /api/internal paths", async () => {
-    mockGetUser.mockClear();
+  it("calls fetch on /admin when the token is near expiry", async () => {
+    simulateSuccessfulRefresh({
+      access_token: "new-access",
+      refresh_token: "new-refresh",
+      expires_in: 3600,
+    });
+    const pastExpiry = Math.floor(Date.now() / 1000) - 10;
+    const cookieValue = encodeSessionCookie({
+      access_token: "expiring-token",
+      refresh_token: "valid-refresh",
+      expires_at: pastExpiry,
+    });
     const { middleware } = await import("@/middleware");
-    const request = new NextRequest(
-      "https://kzq.test/api/internal/outbox/dispatch",
-      { method: "POST" },
-    );
+    const request = new NextRequest("https://kzq.test/admin", {
+      headers: { Cookie: `${TEST_COOKIE_NAME}=${cookieValue}` },
+    });
     await middleware(request);
-    expect(mockGetUser).toHaveBeenCalledTimes(1);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 
   it("applies HSTS only on HTTPS", async () => {
@@ -488,40 +517,42 @@ describe("middleware integration", () => {
   });
 
   it("still returns a response even if session refresh throws", async () => {
-    mockGetUser.mockRejectedValueOnce(new Error("network failure"));
+    mockFetch.mockRejectedValueOnce(new Error("network failure"));
+    const pastExpiry = Math.floor(Date.now() / 1000) - 10;
+    const cookieValue = encodeSessionCookie({
+      access_token: "expiring-token",
+      refresh_token: "valid-refresh",
+      expires_at: pastExpiry,
+    });
     const { middleware } = await import("@/middleware");
-    const request = new NextRequest("https://kzq.test/admin");
+    const request = new NextRequest("https://kzq.test/admin", {
+      headers: { Cookie: `${TEST_COOKIE_NAME}=${cookieValue}` },
+    });
     const response = await middleware(request);
     expect(response).toBeInstanceOf(NextResponse);
     expect(response.headers.get("X-Content-Type-Options")).toBe("nosniff");
-    // No Cache-Control mutation on failure path.
     expect(response.headers.get("Cache-Control")).toBeNull();
   });
 
   it("returns a response with Cache-Control: private, no-store when cookies are refreshed via middleware", async () => {
-    // Configure getUser to simulate a refresh.
-    mockGetUser.mockImplementationOnce(async () => {
-      const adapter = hoisted.capturedCookiesAdapter;
-      if (!adapter) {
-        throw new Error("cookies adapter was not captured");
-      }
-      adapter.setAll([
-        {
-          name: "sb-test-auth-token",
-          value: "rotated-via-middleware",
-          options: { httpOnly: true, path: "/" },
-        },
-      ]);
-      return { data: { user: null }, error: null };
+    simulateSuccessfulRefresh({
+      access_token: "new-access-via-middleware",
+      refresh_token: "new-refresh-via-middleware",
+      expires_in: 3600,
+    });
+    const pastExpiry = Math.floor(Date.now() / 1000) - 10;
+    const cookieValue = encodeSessionCookie({
+      access_token: "expiring-token",
+      refresh_token: "valid-refresh",
+      expires_at: pastExpiry,
     });
     const { middleware } = await import("@/middleware");
-    const request = new NextRequest("https://kzq.test/admin");
+    const request = new NextRequest("https://kzq.test/admin", {
+      headers: { Cookie: `${TEST_COOKIE_NAME}=${cookieValue}` },
+    });
     const response = await middleware(request);
     expect(response.headers.get("Cache-Control")).toBe("private, no-store");
-    expect(response.headers.get("Set-Cookie")).toContain(
-      "sb-test-auth-token=rotated-via-middleware",
-    );
-    // Security headers must survive the response swap.
+    expect(response.headers.get("Set-Cookie")).toContain(TEST_COOKIE_NAME);
     expect(response.headers.get("X-Content-Type-Options")).toBe("nosniff");
     expect(response.headers.get("X-Frame-Options")).toBe("DENY");
     expect(response.headers.get("Referrer-Policy")).toBe(

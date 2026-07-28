@@ -216,3 +216,95 @@ because no EdgeOne Makers documentation confirms Node 22.x support for
 Cloud Functions, and the user's instruction requires EdgeOne runtime
 verification evidence before changing the runtime target.
 
+# 2026-07-29 Middleware Edge Runtime compatibility (Review #3 WP2)
+
+EdgeOne Makers documentation states that Next.js middleware "默认运行在
+Edge Runtime 环境中" (defaults to Edge Runtime). The docs do NOT
+explicitly mention support for Node.js runtime in middleware. The
+user's instruction requires EdgeOne-recommended values to be confirmed
+through real Staging requests, not documentation assumptions alone.
+
+## Problem
+
+Vercel build output reported:
+
+```
+A Node.js module is loaded (@supabase/supabase-js uses process.version),
+which is unsupported in the Edge Runtime.
+```
+
+Import chain: `@supabase/supabase-js` → `@supabase/ssr` →
+`lib/supabase/middleware-session.ts` → `middleware.ts`.
+
+`@supabase/supabase-js` uses `process.version` (a Node.js-only API) for
+runtime version detection / telemetry. Although the code guards with
+`typeof process !== 'undefined'`, the bundler still detects the usage
+and emits the warning, which must not be ignored.
+
+## Solution
+
+Since EdgeOne docs only confirm Edge Runtime support for middleware
+(not Node.js runtime), the safe path is to remove the
+`@supabase/ssr` / `@supabase/supabase-js` dependency from the
+middleware bundle entirely:
+
+1. `lib/supabase/middleware-session.ts` was rewritten to use only
+   Web APIs (`fetch`, `Headers`, `TextEncoder`, `TextDecoder`,
+   `atob`, `btoa`) — all available in both Edge Runtime and Node.js.
+2. Token refresh is now performed by a direct `fetch()` call to the
+   Supabase Auth refresh-token endpoint
+   (`POST /auth/v1/token?grant_type=refresh_token`).
+3. Cookie chunking (read + write) is implemented manually to stay
+   compatible with `@supabase/ssr` v0.12.x's cookie format
+   (base64-prefixed, 3180-byte chunks).
+4. All existing security semantics are preserved: cookie forwarding
+   to request, `Set-Cookie` on response, `Cache-Control: private,
+   no-store` when cookies are rotated, security header preservation.
+
+## CI enforcement
+
+A new CI step (`Check middleware Edge Runtime compatibility`) was
+added to the `compile-contract` job. It runs
+`scripts/check-middleware-edge-runtime.mjs` which scans the build
+output for Edge Runtime warning patterns:
+
+- `uses process.version`
+- `not supported in the Edge Runtime`
+- `A Node.js module is loaded`
+- `which is not supported in the Edge Runtime`
+
+If any pattern is found, the CI job fails. This prevents regressions
+where a dependency update silently reintroduces a Node.js-only API
+into the middleware bundle.
+
+## Unit test enforcement
+
+`tests/unit/middleware-session.test.ts` includes a static source-level
+test (`Edge Runtime compatibility > does NOT import @supabase/ssr or
+@supabase/supabase-js`) that reads the module source and asserts no
+banned imports are present.
+
+## Staging validation checklist (PENDING — not yet executed)
+
+The following checklist MUST be executed against a real EdgeOne Staging
+deployment before claiming Auth Middleware is adapted to EdgeOne.
+Until all items pass, the middleware must be considered "Staging
+unverified".
+
+| Step | Action | Expected result | Status |
+| --- | --- | --- | --- |
+| 1 | Log in to the admin backend via the Staging login page | Auth cookies set in browser | PENDING |
+| 2 | Manually shorten the access token's expiry (or wait near expiry) | Token is close to expiry | PENDING |
+| 3 | Request `/admin` (any admin page) | Page loads without auth redirect | PENDING |
+| 4 | Verify the access token was refreshed (check cookie value changed) | New access token cookie present | PENDING |
+| 5 | Verify the response carries `Set-Cookie` with the rotated auth cookie | `Set-Cookie: sb-<ref>-auth-token=...` present | PENDING |
+| 6 | Verify the response carries `Cache-Control: private, no-store` | Header present on refreshed responses | PENDING |
+| 7 | Make a subsequent admin API call (e.g. `GET /api/admin/products`) | API succeeds (200) with the refreshed token | PENDING |
+| 8 | Verify a public ISR page (e.g. `/products`) is still statically cached | No `Cache-Control: private, no-store` on public pages | PENDING |
+| 9 | Verify no `process.version` or Edge Runtime warnings in EdgeOne build logs | Clean build log | PENDING |
+
+**Until this checklist is fully executed and passed, the Auth Middleware
+must NOT be claimed as EdgeOne-verified.** The CI check ensures the
+middleware bundle is Edge-compatible at build time; the Staging checklist
+ensures it works at runtime on EdgeOne.
+
