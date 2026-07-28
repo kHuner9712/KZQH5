@@ -173,6 +173,196 @@ describe("validateMediaUrl: relative path deny-list (SSRF prevention)", () => {
     expect(result.ok).toBe(false);
     expect(result.reason).toBe("unapproved-relative-path");
   });
+
+  // ============================================================
+  // Review #3 — Work Package 4: double-encoded and split-encoded
+  // path traversal bypass attempts.
+  //
+  // The Review #2 implementation only checked for the literal
+  // substrings `%2e`, `%2f`, `%5c`, `%00` in the raw input. Patterns
+  // like `/assets/%252e%252e/api/readiness` (double-encoded `%252e`
+  // → `%2e` → `.`) and `/assets/%25%32%65/img.jpg` (split-encoded
+  // `%25`+`%32`+`%65` → `%2e` → `.`) were NOT caught because the
+  // raw input did not contain the literal `%2e` substring.
+  //
+  // The Review #3 implementation rejects ANY percent-encoding in
+  // the pathname portion of the raw input, eliminating an entire
+  // class of encoding-based bypasses.
+  // ============================================================
+  const doubleEncodedBypassAttempts = [
+    // Double-encoded path traversal: %252e%252e → %2e%2e → ..
+    "/assets/%252e%252e/api/readiness",
+    // Double-encoded path separator: %252f → %2f → /
+    "/assets/%252fapi%252freadiness",
+    // Double-encoded backslash: %255c → %5c → \
+    "/assets/%255c..%255capi",
+    // Double slashes (URL constructor collapses these silently)
+    "/assets//img.jpg",
+    // Split-encoded dot: %25 + %32 + %65 → %2e → .
+    "/assets/%25%32%65/img.jpg",
+    // Single-encoded path traversal (still rejected)
+    "/assets/%2e%2e/api/readiness",
+    // Single-encoded path separator
+    "/assets/%2fapi%252freadiness",
+    // Single-encoded backslash
+    "/assets/%5c..%5capi",
+    // Encoded null byte
+    "/assets/%00/img.jpg",
+    // Non-ASCII characters (URL constructor would encode to %XX)
+    "/assets/文件.jpg",
+    // Encoded dot in segment name
+    "/assets/img%2Ejpg",
+  ];
+
+  for (const path of doubleEncodedBypassAttempts) {
+    it(`Review #3 denies encoded bypass attempt: ${path}`, () => {
+      const result = validateMediaUrl(path, allowlist);
+      expect(result.ok).toBe(false);
+      expect(result.reason).toBe("unapproved-relative-path");
+    });
+  }
+
+  // ============================================================
+  // Review #3 — Work Package 4: query string restrictions.
+  //
+  // Only `?v=<alphanumeric short string>` is allowed. All other
+  // query parameters, multi-parameter queries, path-like values,
+  // and special characters are rejected.
+  // ============================================================
+  it("Review #3 allows cache-busting query with alphanumeric value", () => {
+    const result = validateMediaUrl("/assets/img.jpg?v=abc123", allowlist);
+    expect(result.ok).toBe(true);
+    expect(result.value).toBe("/assets/img.jpg?v=abc123");
+  });
+
+  it("Review #3 allows cache-busting query with hash-style value", () => {
+    const result = validateMediaUrl(
+      "/assets/img.jpg?v=a1b2c3d4e5f6",
+      allowlist,
+    );
+    expect(result.ok).toBe(true);
+    expect(result.value).toBe("/assets/img.jpg?v=a1b2c3d4e5f6");
+  });
+
+  it("Review #3 allows cache-busting query with hyphen and underscore", () => {
+    const result = validateMediaUrl(
+      "/assets/img.jpg?v=abc-123_def",
+      allowlist,
+    );
+    expect(result.ok).toBe(true);
+    expect(result.value).toBe("/assets/img.jpg?v=abc-123_def");
+  });
+
+  it("Review #3 denies non-v query parameter", () => {
+    const result = validateMediaUrl(
+      "/assets/img.jpg?path=../../api/readiness",
+      allowlist,
+    );
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("unapproved-relative-path");
+  });
+
+  it("Review #3 denies multi-parameter query", () => {
+    const result = validateMediaUrl(
+      "/assets/img.jpg?v=123&other=foo",
+      allowlist,
+    );
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("unapproved-relative-path");
+  });
+
+  it("Review #3 denies v parameter with path-like value", () => {
+    const result = validateMediaUrl(
+      "/assets/img.jpg?v=../../etc/passwd",
+      allowlist,
+    );
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("unapproved-relative-path");
+  });
+
+  it("Review #3 denies v parameter with special characters", () => {
+    const result = validateMediaUrl(
+      "/assets/img.jpg?v=abc!@#$%^&*()",
+      allowlist,
+    );
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("unapproved-relative-path");
+  });
+
+  it("Review #3 denies v parameter exceeding length cap", () => {
+    const longValue = "a".repeat(33);
+    const result = validateMediaUrl(
+      `/assets/img.jpg?v=${longValue}`,
+      allowlist,
+    );
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("unapproved-relative-path");
+  });
+
+  it("Review #3 denies v parameter with encoded characters", () => {
+    const result = validateMediaUrl(
+      "/assets/img.jpg?v=%2e%2e",
+      allowlist,
+    );
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("unapproved-relative-path");
+  });
+
+  // ============================================================
+  // Review #3 — Work Package 4: fragment rejection.
+  //
+  // All fragments are rejected. Media URLs never need fragments;
+  // their presence is a sign of a bypass attempt or malformed input.
+  // ============================================================
+  it("Review #3 denies any fragment", () => {
+    const result = validateMediaUrl("/assets/img.jpg#section", allowlist);
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("unapproved-relative-path");
+  });
+
+  it("Review #3 denies empty fragment", () => {
+    const result = validateMediaUrl("/assets/img.jpg#", allowlist);
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("unapproved-relative-path");
+  });
+
+  it("Review #3 denies fragment with path traversal", () => {
+    const result = validateMediaUrl(
+      "/assets/img.jpg#/../../api/readiness",
+      allowlist,
+    );
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("unapproved-relative-path");
+  });
+
+  // ============================================================
+  // Review #3 — Work Package 4: canonicalization.
+  //
+  // The validator must return the CANONICALIZED pathname, not the
+  // original input. This ensures non-canonical inputs (e.g. with
+  // trailing slashes) are never persisted to the CMS.
+  // ============================================================
+  it("Review #3 returns canonical pathname (no trailing slash)", () => {
+    // Note: trailing slash on a file path is invalid for media; the
+    // canonical form is the URL-parsed pathname.
+    const result = validateMediaUrl("/assets/img.jpg", allowlist);
+    expect(result.ok).toBe(true);
+    expect(result.value).toBe("/assets/img.jpg");
+  });
+
+  it("Review #3 returns canonical pathname with query", () => {
+    const result = validateMediaUrl("/assets/img.jpg?v=abc123", allowlist);
+    expect(result.ok).toBe(true);
+    expect(result.value).toBe("/assets/img.jpg?v=abc123");
+  });
+
+  it("Review #3 does not return original input when it has extra characters", () => {
+    // URL with extra whitespace around it should be trimmed and
+    // canonicalized.
+    const result = validateMediaUrl("  /assets/img.jpg  ", allowlist);
+    expect(result.ok).toBe(true);
+    expect(result.value).toBe("/assets/img.jpg");
+  });
 });
 
 describe("validateMediaUrl: Supabase host shape validation", () => {

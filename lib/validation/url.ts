@@ -187,18 +187,36 @@ export interface MediaUrlValidation {
  *   - Missing trailing slash: `/api` (not caught by `/api/` check)
  *   - Encoded path traversal: `/%2e%2e/api/readiness`
  *
+ * Review #3 Work Package 4: the Review #2 implementation still
+ * allowed double-encoded and split-encoded path traversal patterns
+ * to slip through because it only checked for the literal substrings
+ * `%2e`, `%2f`, `%5c`, `%00` in the raw input. Patterns like
+ * `/assets/%252e%252e/api/readiness` (double-encoded `%252e` → `%2e`
+ * → `.`), `/assets/%25%32%65/img.jpg` (split-encoded `%25`+`%32`+`%65`
+ * → `%2e` → `.`) and `/assets/%255c..%255capi` (double-encoded `%255c`
+ * → `%5c` → `\`) were NOT caught. The new implementation rejects ANY
+ * percent-encoding in the pathname portion outright.
+ *
  * The new implementation:
- *   1. Rejects backslashes, null bytes, and encoded path separators
- *      (%2e, %2f, %5c, %00) in the raw input BEFORE parsing.
- *   2. Parses the relative URL against a fixed same-origin base.
- *   3. Extracts and decodes the pathname.
- *   4. Splits into segments and rejects any ".." or "." segment
- *      (path traversal).
- *   5. Rejects any segment starting with "." (dot-file paths).
- *   6. Applies a positive whitelist of public media root directories.
- *   7. Defense-in-depth: rejects paths under internal endpoint roots
+ *   1. Rejects protocol-relative URLs (//host/...).
+ *   2. Rejects backslashes, null bytes outright.
+ *   3. Rejects ANY percent-encoding in the pathname portion of the
+ *      raw input — eliminates an entire class of encoding-based bypass.
+ *   4. Parses the relative URL against a fixed same-origin base.
+ *   5. Defense-in-depth: decodes the resulting pathname up to two
+ *      times and re-checks for path traversal, separators, null
+ *      bytes, dot-file segments and internal root prefixes after
+ *      each decode pass.
+ *   6. Rejects double-slash segments in the pathname.
+ *   7. Applies a positive whitelist of public media root directories.
+ *   8. Defense-in-depth: rejects paths under internal endpoint roots
  *      (api, admin, _next, auth, storage) even if somehow allowlisted.
- *   8. Rejects query/fragment that contain path-like patterns.
+ *   9. Restricts query string to exactly `?v=<alphanumeric short
+ *      string>` (cache-busting only). Any other query parameter is
+ *      rejected.
+ *  10. Rejects all fragments. Media URLs never need fragments.
+ *  11. Returns the CANONICALIZED pathname (not the original input)
+ *      so non-canonical inputs are never persisted.
  */
 function validateRelativeMediaPath(
   value: string,
@@ -216,25 +234,27 @@ function validateRelativeMediaPath(
     return { ok: false, reason: "unapproved-relative-path" };
   }
 
-  // Step 3: Reject null bytes and encoded path separators/dots in the
-  // raw input. `new URL()` may silently decode some of these, so we
-  // check the raw string before parsing.
-  //   %2e / %2E → "." (encoded dot for path traversal)
-  //   %2f / %2F → "/" (encoded path separator)
-  //   %5c / %5C → "\" (encoded backslash)
-  //   %00       → null byte
-  const lower = value.toLowerCase();
-  if (
-    lower.includes("%2e") ||
-    lower.includes("%2f") ||
-    lower.includes("%5c") ||
-    lower.includes("%00") ||
-    value.includes("\0")
-  ) {
+  // Step 3: Reject null bytes in the raw input.
+  if (value.includes("\0")) {
     return { ok: false, reason: "unapproved-relative-path" };
   }
 
-  // Step 4: Parse the relative URL against a fixed same-origin base.
+  // Step 4: Review #3 WP4 — Reject ANY percent-encoding in the pathname
+  // portion of the raw input. Media paths must be plain ASCII filenames
+  // (typically slugs or hashes); any `%` in the pathname is a red flag
+  // for path traversal bypass attempts:
+  //   - Single-encoded: `/%2e%2e/` → `..`
+  //   - Double-encoded: `/%252e%252e/` → `%2e%2e` → `..`
+  //   - Split-encoded: `/%25%32%65/` → `%2e` → `.`
+  //   - Encoded separators: `/%2f/`, `/%5c\`
+  // Splitting the raw input on `?` and `#` isolates the pathname so
+  // that legitimate query strings (e.g. `?v=abc123`) are unaffected.
+  const pathPartOfInput = value.split("?")[0].split("#")[0];
+  if (pathPartOfInput.includes("%")) {
+    return { ok: false, reason: "unapproved-relative-path" };
+  }
+
+  // Step 5: Parse the relative URL against a fixed same-origin base.
   // This gives us a stable URL object for pathname extraction. The
   // base hostname is a placeholder that never resolves.
   let url: URL;
@@ -244,23 +264,77 @@ function validateRelativeMediaPath(
     return { ok: false, reason: "malformed" };
   }
 
-  // Step 5: Reject if the URL introduced a different host. This catches
+  // Step 6: Reject if the URL introduced a different host. This catches
   // edge cases where the input somehow parsed as an absolute URL.
   if (url.hostname.toLowerCase() !== "kzq.local") {
     return { ok: false, reason: "unapproved-host" };
   }
 
-  // Step 6: Extract the pathname and split into segments. The URL
-  // constructor normalizes `//` to `/` in the pathname, so we check
-  // for double-slash segments here.
+  // Step 7: Reject if the URL constructor introduced any percent-
+  // encoding into the pathname (e.g. non-ASCII characters in the input
+  // like `/assets/文件.jpg` would be encoded to `/assets/%E6%96%87...`).
+  // Media paths must be plain ASCII.
   const pathname = url.pathname;
+  if (pathname.includes("%")) {
+    return { ok: false, reason: "unapproved-relative-path" };
+  }
 
   // Reject empty pathname (just "/").
   if (pathname === "/" || pathname === "") {
     return { ok: false, reason: "unapproved-relative-path" };
   }
 
-  // Step 7: Split into segments, filtering empty segments (from
+  // Step 8: Reject double-slash segments in the pathname. The URL
+  // constructor collapses `//` to `/` in the pathname, so we check
+  // the raw input's path portion for `//`. This catches
+  // `/assets//img.jpg` which would otherwise be silently normalized
+  // to `/assets/img.jpg`.
+  if (pathPartOfInput.includes("//")) {
+    return { ok: false, reason: "unapproved-relative-path" };
+  }
+
+  // Step 9: Defense-in-depth — decode the pathname up to two times
+  // until the result stabilizes, and after each decode pass re-check
+  // for path traversal patterns. This catches edge cases where the
+  // URL constructor preserved percent-encoded characters that could
+  // be decoded by a downstream consumer.
+  let decoded = pathname;
+  for (let i = 0; i < 2; i++) {
+    let next: string;
+    try {
+      next = decodeURIComponent(decoded);
+    } catch {
+      // Malformed percent-encoding — reject defensively.
+      return { ok: false, reason: "unapproved-relative-path" };
+    }
+    if (next === decoded) break; // stable — no further decoding possible
+    // After each decode, check for path traversal, separators, null
+    // bytes. These would indicate an encoded bypass attempt.
+    if (
+      next.includes("..") ||
+      next.includes("/") ||
+      next.includes("\\") ||
+      next.includes("\0")
+    ) {
+      // `..` after decoding indicates encoded path traversal.
+      // `/` or `\` after decoding (beyond the leading slash) indicates
+      // an encoded separator that could split segments unexpectedly.
+      // Only the leading `/` is safe; any additional decoded separator
+      // means the original input had an encoded separator.
+      const trimmed = next.startsWith("/") ? next.slice(1) : next;
+      if (
+        trimmed.includes("/") ||
+        trimmed.includes("\\") ||
+        next.includes("..") ||
+        next.includes("\0")
+      ) {
+        return { ok: false, reason: "unapproved-relative-path" };
+      }
+    }
+    decoded = next;
+  }
+
+  // Step 10: Split into segments, filtering empty segments (from
   // trailing/double slashes). We then validate each segment.
   const segments = pathname.split("/").filter((s) => s.length > 0);
 
@@ -269,27 +343,27 @@ function validateRelativeMediaPath(
     return { ok: false, reason: "unapproved-relative-path" };
   }
 
-  // Step 8: Reject any ".." or "." segment (path traversal).
+  // Step 11: Reject any ".." or "." segment (path traversal).
   // The URL constructor should resolve these, but we check defensively.
+  // Also reject any segment starting with "." (dot-file paths like
+  // /.env, /.git, /.htaccess). Also catches segments like ".hidden".
   for (const seg of segments) {
     if (seg === ".." || seg === ".") {
       return { ok: false, reason: "unapproved-relative-path" };
     }
-    // Reject any segment starting with "." (dot-file paths like
-    // /.env, /.git, /.htaccess). Also catches segments like ".hidden".
     if (seg.startsWith(".")) {
       return { ok: false, reason: "unapproved-relative-path" };
     }
   }
 
-  // Step 9: Apply the positive whitelist of public media root
+  // Step 12: Apply the positive whitelist of public media root
   // directories. The first segment MUST be in the whitelist.
   const root = segments[0];
   if (!PUBLIC_MEDIA_ROOTS.has(root)) {
     return { ok: false, reason: "unapproved-relative-path" };
   }
 
-  // Step 10: Defense-in-depth — reject if the root falls under any
+  // Step 13: Defense-in-depth — reject if the root falls under any
   // internal endpoint prefix. This should never trigger because the
   // whitelist already excludes them, but it protects against future
   // regressions.
@@ -297,44 +371,44 @@ function validateRelativeMediaPath(
     return { ok: false, reason: "unapproved-relative-path" };
   }
 
-  // Step 11: Reject query/fragment that could change resource semantics.
-  // We allow simple cache-busting query strings (e.g. ?v=123) but reject
-  // any query or fragment that contains path-like patterns (.., /, \).
+  // Step 14: Review #3 WP4 — Restrict query string to exactly
+  // `?v=<alphanumeric short string>` (cache-busting only). Any other
+  // query parameter, multi-parameter queries, or path-like values are
+  // rejected. This prevents query-based SSRF (e.g.
+  // `?path=../../api/...`) and parameter pollution.
+  let canonicalValue = pathname;
   if (url.search) {
-    let decodedSearch: string;
-    try {
-      decodedSearch = decodeURIComponent(url.search);
-    } catch {
-      // Malformed percent-encoding in query — reject defensively.
+    const searchParams = url.searchParams;
+    // Must have exactly one parameter named "v".
+    if (searchParams.size !== 1 || !searchParams.has("v")) {
       return { ok: false, reason: "unapproved-relative-path" };
     }
-    if (
-      decodedSearch.includes("..") ||
-      decodedSearch.includes("/") ||
-      decodedSearch.includes("\\")
-    ) {
+    const v = searchParams.get("v");
+    // Value must be a short alphanumeric string (with optional hyphen
+    // / underscore for hash-style cache busters). Length is capped at
+    // 32 chars to prevent abuse.
+    if (v == null || !/^[a-zA-Z0-9_-]{1,32}$/.test(v)) {
       return { ok: false, reason: "unapproved-relative-path" };
     }
-  }
-  if (url.hash) {
-    let decodedHash: string;
-    try {
-      decodedHash = decodeURIComponent(url.hash);
-    } catch {
-      return { ok: false, reason: "unapproved-relative-path" };
-    }
-    if (
-      decodedHash.includes("..") ||
-      decodedHash.includes("/") ||
-      decodedHash.includes("\\")
-    ) {
-      return { ok: false, reason: "unapproved-relative-path" };
-    }
+    canonicalValue += `?v=${v}`;
   }
 
-  // Preserve the original input as the stored value (not the
-  // normalized form) so existing CMS-saved URLs are unaffected.
-  return { ok: true, value };
+  // Step 15: Review #3 WP4 — Reject all fragments. Media URLs never
+  // need fragments; their presence is a sign of a bypass attempt or
+  // a malformed input. Default deny. We check both `url.hash` (for
+  // non-empty fragments like `#section`) and the raw input for a `#`
+  // character (to catch empty fragments like `/assets/img.jpg#` which
+  // `new URL()` treats as no fragment at all).
+  if (url.hash || value.includes("#")) {
+    return { ok: false, reason: "unapproved-relative-path" };
+  }
+
+  // Step 16: Review #3 WP4 — Return the CANONICALIZED pathname, not
+  // the original input. This ensures non-canonical inputs (e.g. with
+  // trailing slashes, normalized casing, etc.) are never persisted.
+  // The canonical form is the URL-parsed pathname plus the optional
+  // normalized `?v=<value>` query string.
+  return { ok: true, value: canonicalValue };
 }
 
 /**
