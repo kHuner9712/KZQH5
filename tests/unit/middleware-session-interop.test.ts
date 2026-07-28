@@ -329,6 +329,17 @@ describe("WP5: chunk count changes interop with official library", () => {
     const oldChunks = buildOfficialChunks(TEST_COOKIE_NAME, largeOldSession);
     expect(oldChunks.length).toBeGreaterThanOrEqual(3);
 
+    // Simulate the browser state BEFORE the refresh: every old chunk
+    // is already present in the browser jar. The middleware's Set-Cookie
+    // directives will be applied on top of this pre-existing state.
+    const jar = new Map<string, string>();
+    for (const c of oldChunks) {
+      jar.set(c.name, c.value);
+    }
+    // Verify the highest old chunk actually exists before refresh.
+    const highestOldChunkName = `${TEST_COOKIE_NAME}.${oldChunks.length - 1}`;
+    expect(jar.has(highestOldChunkName)).toBe(true);
+
     // New session: smaller, produces fewer chunks
     mockFetch.mockResolvedValueOnce({
       ok: true,
@@ -343,8 +354,9 @@ describe("WP5: chunk count changes interop with official library", () => {
     const request = buildRequestWithCookies("https://kzq.test/admin", oldChunks);
     const result = await refreshSupabaseSession(request, NextResponse.next());
 
-    // Apply Set-Cookie to a simulated browser jar
-    const jar = new Map<string, string>();
+    // Apply the middleware's Set-Cookie directives to the pre-seeded jar,
+    // simulating real browser behavior: Max-Age=0 deletes, others
+    // overwrite or add.
     for (const cookie of result.cookies.getAll()) {
       if (cookie.maxAge === 0) {
         jar.delete(cookie.name);
@@ -353,8 +365,9 @@ describe("WP5: chunk count changes interop with official library", () => {
       }
     }
 
-    // The highest old chunk must be gone
-    expect(jar.has(`${TEST_COOKIE_NAME}.${oldChunks.length - 1}`)).toBe(false);
+    // The highest old chunk must have been deleted from a state where
+    // it previously existed (not merely absent from an empty jar).
+    expect(jar.has(highestOldChunkName)).toBe(false);
 
     // Read the new session using official combineChunks
     const rawValue = await combineChunks(TEST_COOKIE_NAME, async (name) =>
