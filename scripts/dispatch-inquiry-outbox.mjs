@@ -307,6 +307,19 @@ async function main() {
   }
 
   const result = payload.result || {};
+
+  // Phase 2: Double-safety — even though the route contract guarantees
+  // that aborted=true returns 504 (caught by !response.ok above), verify
+  // the field in case a future route change accidentally returns 200
+  // with aborted=true. This must fail the workflow so the scheduler
+  // does not report success for an aborted dispatch.
+  if (result.aborted === true) {
+    console.error(
+      `ERROR: dispatcher returned 200 but result.aborted=true (skippedDueToAbort=${result.skippedDueToAbort ?? 0}). This violates the route contract — the route should have returned 504.`,
+    );
+    fail(3, "ERROR: dispatch aborted but returned 200 (contract violation)");
+  }
+
   console.log("Outbox dispatch completed");
   console.log(`  initialized:  ${result.initialized ?? 0}`);
   console.log(`  claimed:      ${result.claimed ?? 0}`);

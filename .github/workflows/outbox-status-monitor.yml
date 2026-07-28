@@ -1,0 +1,106 @@
+# ============================================================
+# Outbox Status Monitor (Phase 2 Task 2)
+#
+# Periodically checks the Outbox health snapshot via
+# GET /api/internal/outbox/status and fails the workflow if
+# any threshold is exceeded. Workflow failure serves as the
+# minimum alerting channel.
+#
+# Thresholds (overridable via workflow env or repository variables):
+#   OUTBOX_PENDING_AGE_THRESHOLD_SECONDS   default: 300
+#   OUTBOX_CLAIMED_AGE_THRESHOLD_SECONDS   default: 600
+#   OUTBOX_DEAD_LETTER_THRESHOLD           default: 0
+#
+# Alerting:
+#   When this workflow fails, GitHub sends a notification to
+#   watchers of the repository. To route alerts to enterprise
+#   channels (WeCom, email), configure GitHub Actions failure
+#   notifications or add a post-failure step that calls the
+#   enterprise alert webhook. The script itself only exits
+#   with a non-zero code — it does not send alerts directly.
+#
+# Secrets (same as dispatch workflow):
+#   KZQ_PRODUCTION_BASE_URL  — HTTPS base URL of the production site
+#   OUTBOX_DISPATCH_SECRET   — Bearer secret (>= 16 chars)
+# ============================================================
+name: Outbox Status Monitor
+
+on:
+  schedule:
+    # Every 5 minutes. More frequent than dispatch because stale
+    # deliveries must be detected quickly. GitHub Actions may delay
+    # or skip runs under load — the route's stale-claim recovery
+    # (default 300s) provides the actual safety net.
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+    inputs:
+      pending_age_threshold:
+        description: Max pending age in seconds (default 300)
+        required: false
+        default: "300"
+        type: string
+      claimed_age_threshold:
+        description: Max claimed age in seconds (default 600)
+        required: false
+        default: "600"
+        type: string
+      dead_letter_threshold:
+        description: Max dead letter count (default 0)
+        required: false
+        default: "0"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: outbox-status-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      OUTBOX_DISPATCH_SECRET: ${{ secrets.OUTBOX_DISPATCH_SECRET }}
+      BASE_URL: ${{ secrets.KZQ_PRODUCTION_BASE_URL }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "20"
+
+      - name: Run outbox status check
+        env:
+          OUTBOX_PENDING_AGE_THRESHOLD_SECONDS: ${{ inputs.pending_age_threshold || '300' }}
+          OUTBOX_CLAIMED_AGE_THRESHOLD_SECONDS: ${{ inputs.claimed_age_threshold || '600' }}
+          OUTBOX_DEAD_LETTER_THRESHOLD: ${{ inputs.dead_letter_threshold || '0' }}
+        run: |
+          # Fail early if secrets are missing.
+          if [ -z "$OUTBOX_DISPATCH_SECRET" ]; then
+            echo "::error::OUTBOX_DISPATCH_SECRET is not configured"
+            exit 1
+          fi
+          if [ -z "$BASE_URL" ]; then
+            echo "::error::KZQ_PRODUCTION_BASE_URL is not configured"
+            exit 1
+          fi
+
+          # Build the status URL and host allowlist from BASE_URL.
+          export OUTBOX_DISPATCH_URL="${BASE_URL%/}/api/internal/outbox/status"
+          export OUTBOX_DISPATCH_ALLOWED_HOSTS=$(printf '%s' "$BASE_URL" | sed -E 's|^https?://||; s|/.*$||; s|:.*$||')
+
+          # Run the status check script. Exit codes:
+          #   0 — all thresholds passed
+          #   1 — invalid arguments
+          #   2 — HTTP/network error
+          #   3 — route returned non-200 or malformed response
+          #   4 — one or more thresholds exceeded
+          # Any non-zero exit code fails the workflow step and
+          # triggers GitHub's failure notification to watchers.
+          node scripts/check-outbox-status.mjs

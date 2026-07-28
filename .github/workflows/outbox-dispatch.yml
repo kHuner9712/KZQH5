@@ -1,0 +1,112 @@
+# ============================================================
+# Outbox Dispatch Scheduler (Phase 2 Task 1)
+#
+# Periodically invokes the canonical Outbox Dispatcher HTTP route
+# (POST /api/internal/outbox/dispatch) via scripts/dispatch-inquiry-outbox.mjs.
+#
+# The route is the single source of truth for delivery state machine:
+#   - claim_inquiry_outbox_deliveries (FOR UPDATE SKIP LOCKED)
+#   - per-provider adapter invocation (Resend email / WeCom webhook)
+#   - mark_delivery_sent / fail_delivery_event
+#   - stale-claim recovery
+#
+# Why GitHub Actions cron (not EdgeOne Cron):
+#   The repository does not have a verifiable EdgeOne Cron integration.
+#   GitHub Actions cron is the default portable scheduler. It has a
+#   latency floor of ~5-10 minutes (GitHub does not guarantee exact
+#   cron timing under load). For higher-frequency dispatch, connect
+#   an external scheduler to POST /api/internal/outbox/dispatch
+#   directly with the OUTBOX_DISPATCH_SECRET bearer token.
+#
+# Concurrency:
+#   The `concurrency` group ensures only one dispatch run per ref at a
+#   time. Combined with the route's FOR UPDATE SKIP LOCKED, this
+#   prevents duplicate concurrent sends. If a scheduled run is skipped
+#   because a previous run is still in progress, the route's
+#   stale-claim recovery (default 300s) ensures no deliveries are lost.
+#
+# Secrets (GitHub Environment or Repository Secrets):
+#   KZQ_PRODUCTION_BASE_URL  — HTTPS base URL of the production site
+#                              (e.g. https://www.example.com)
+#   OUTBOX_DISPATCH_SECRET   — Bearer secret (>= 16 chars) matching the
+#                              route's OUTBOX_DISPATCH_SECRET env var.
+#
+# No secrets are printed in logs. The dispatch script reads them from
+# environment variables and sends them only via the Authorization header.
+# ============================================================
+name: Outbox Dispatch
+
+on:
+  schedule:
+    # Every 10 minutes. GitHub Actions cron has a minimum granularity
+    # of 5 minutes but does not guarantee exact timing. Under load,
+    # runs may be delayed or skipped. The route's stale-claim recovery
+    # ensures no deliveries are lost if a run is skipped.
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+    inputs:
+      batch_size:
+        description: Batch size (1-50, default 10)
+        required: false
+        default: "10"
+        type: string
+
+# Minimal permissions — this workflow only calls an HTTP endpoint.
+permissions:
+  contents: read
+
+# Prevent concurrent dispatch runs for the same ref. If a run is in
+# progress, the next scheduled run is skipped (not queued). This is
+# the correct behavior: the route uses FOR UPDATE SKIP LOCKED, so a
+# concurrent run would simply claim 0 rows and waste resources.
+concurrency:
+  group: outbox-dispatch-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      # Secrets are passed via environment variables, never via CLI args.
+      # The dispatch script reads them from env and sends them only
+      # via the Authorization header to the validated URL.
+      OUTBOX_DISPATCH_SECRET: ${{ secrets.OUTBOX_DISPATCH_SECRET }}
+      BASE_URL: ${{ secrets.KZQ_PRODUCTION_BASE_URL }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "20"
+
+      - name: Run outbox dispatch
+        run: |
+          # Fail early if secrets are missing.
+          if [ -z "$OUTBOX_DISPATCH_SECRET" ]; then
+            echo "::error::OUTBOX_DISPATCH_SECRET is not configured"
+            exit 1
+          fi
+          if [ -z "$BASE_URL" ]; then
+            echo "::error::KZQ_PRODUCTION_BASE_URL is not configured"
+            exit 1
+          fi
+
+          # Build the dispatch URL and host allowlist from BASE_URL.
+          # The dispatch script validates the URL strictly (https, exact
+          # pathname, no query/hash, host in allowlist or loopback).
+          export OUTBOX_DISPATCH_URL="${BASE_URL%/}/api/internal/outbox/dispatch"
+          export OUTBOX_DISPATCH_ALLOWED_HOSTS=$(printf '%s' "$BASE_URL" | sed -E 's|^https?://||; s|/.*$||; s|:.*$||')
+
+          # Run the dispatch script. Exit codes:
+          #   0 — success (may include 0 deliveries)
+          #   1 — invalid arguments (missing/invalid URL, missing secret)
+          #   2 — HTTP/network error
+          #   3 — route returned non-200 (auth failure, server error, timeout)
+          # Any non-zero exit code fails the workflow step.
+          BATCH_SIZE="${{ inputs.batch_size || '10' }}"
+          node scripts/dispatch-inquiry-outbox.mjs --batch-size "$BATCH_SIZE"

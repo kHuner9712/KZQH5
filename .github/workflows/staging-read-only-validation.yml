@@ -1,0 +1,199 @@
+# ============================================================
+# Staging Read-Only Validation (Phase 2 Task 3)
+#
+# Reusable workflow that performs all read-only staging checks.
+# Can be called by:
+#   - staging-validation.yml (manual dispatch)
+#   - production-deploy-verify.yml (post-deploy smoke)
+#   - Any other workflow that needs staging validation
+#
+# Checks performed:
+#   1. Database readiness (verify_schema_readiness RPC)
+#   2. Supabase smoke (read-only)
+#   3. EdgeOne deployed probe (check:deployed)
+#   4. /api/readiness endpoint
+#   5. CSP Header presence
+#   6. Outbox status (threshold check)
+#   7. Deployed SHA vs expected SHA verification
+#   8. Public E2E
+#   9. Admin real-login E2E
+#
+# Write tests are NOT included here — they require explicit
+# approval and are in the separately-gated explicitly-enabled-writes
+# job in staging-validation.yml.
+# ============================================================
+name: Staging Read-Only Validation
+
+on:
+  workflow_call:
+    inputs:
+      base_url:
+        description: EdgeOne Staging base URL
+        required: true
+        type: string
+      expected_sha:
+        description: Expected deployed commit SHA (github.sha by default)
+        required: false
+        type: string
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: EdgeOne Staging base URL
+        required: true
+        type: string
+      expected_sha:
+        description: Expected deployed commit SHA (optional)
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  read-only:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: staging
+    env:
+      BASE_URL: ${{ inputs.base_url }}
+      EXPECTED_SHA: ${{ inputs.expected_sha || github.sha }}
+    steps:
+      # actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      # actions/setup-node@v7.0.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+
+      # -------------------------------------------------------
+      # 1. Database readiness
+      # -------------------------------------------------------
+      - name: Read-only Staging database verification
+        run: npm run test:database:staging
+        env:
+          KZQ_STAGING_CONFIRMATION: KZQ-STAGING-ONLY
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+
+      # -------------------------------------------------------
+      # 2. Supabase smoke (read-only)
+      # -------------------------------------------------------
+      - name: Read-only Supabase smoke
+        run: npm run test:smoke
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+
+      # -------------------------------------------------------
+      # 3. EdgeOne deployed probe
+      # -------------------------------------------------------
+      - name: Probe EdgeOne deployment
+        run: npm run check:deployed
+        env:
+          BASE_URL: ${{ inputs.base_url }}
+
+      # -------------------------------------------------------
+      # 4. /api/readiness endpoint
+      # -------------------------------------------------------
+      - name: Verify /api/readiness endpoint
+        run: |
+          RESPONSE=$(curl -s -w "\n%{http_code}" "${BASE_URL}/api/readiness")
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          BODY=$(echo "$RESPONSE" | head -n -1)
+          echo "HTTP status: $HTTP_CODE"
+          echo "Response body: $BODY"
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "::error::/api/readiness returned HTTP $HTTP_CODE"
+            exit 1
+          fi
+          # Check that the response contains "success":true or "ok":true
+          if ! echo "$BODY" | grep -q '"success"[[:space:]]*:[[:space:]]*true'; then
+            if ! echo "$BODY" | grep -q '"ok"[[:space:]]*:[[:space:]]*true'; then
+              echo "::error::/api/readiness did not return success=true or ok=true"
+              exit 1
+            fi
+          fi
+          echo "/api/readiness passed"
+
+      # -------------------------------------------------------
+      # 5. CSP Header presence
+      # -------------------------------------------------------
+      - name: Verify CSP Header
+        run: |
+          HEADERS=$(curl -sI "${BASE_URL}")
+          echo "Response headers:"
+          echo "$HEADERS"
+          if ! echo "$HEADERS" | grep -qi "Content-Security-Policy"; then
+            echo "::error::Content-Security-Policy header is missing"
+            exit 1
+          fi
+          echo "CSP header present"
+          # Verify CSP reporting is wired (report-uri or report-to)
+          if ! echo "$HEADERS" | grep -qi "report-uri\|report-to"; then
+            echo "::error::CSP does not contain report-uri or report-to directive"
+            exit 1
+          fi
+          echo "CSP reporting directive present"
+
+      # -------------------------------------------------------
+      # 6. Outbox status (threshold check)
+      # -------------------------------------------------------
+      - name: Outbox status check
+        run: |
+          if [ -z "$OUTBOX_DISPATCH_SECRET" ]; then
+            echo "::warning::OUTBOX_DISPATCH_SECRET not configured — skipping outbox status check"
+            exit 0
+          fi
+          export OUTBOX_DISPATCH_URL="${BASE_URL%/}/api/internal/outbox/status"
+          export OUTBOX_DISPATCH_ALLOWED_HOSTS=$(printf '%s' "$BASE_URL" | sed -E 's|^https?://||; s|/.*$||; s|:.*$||')
+          node scripts/check-outbox-status.mjs
+        env:
+          OUTBOX_DISPATCH_SECRET: ${{ secrets.OUTBOX_DISPATCH_SECRET }}
+
+      # -------------------------------------------------------
+      # 7. Deployed SHA verification
+      # -------------------------------------------------------
+      - name: Verify deployed SHA matches expected SHA
+        run: |
+          HEALTH_RESPONSE=$(curl -s "${BASE_URL}/api/health")
+          echo "Health response: $HEALTH_RESPONSE"
+          DEPLOYED_SHA=$(echo "$HEALTH_RESPONSE" | grep -oE '"commit"[[:space:]]*:[[:space:]]*"[^"]*"' | grep -oE '[a-f0-9]{7,40}' || echo "")
+          if [ -z "$DEPLOYED_SHA" ]; then
+            echo "::warning::Could not extract deployed SHA from /api/health — skipping SHA verification (EdgeOne may not expose commit SHA)"
+            exit 0
+          fi
+          echo "Deployed SHA:  $DEPLOYED_SHA"
+          echo "Expected SHA:  $EXPECTED_SHA"
+          # Check if deployed SHA starts with expected SHA (or vice versa)
+          if [[ "$DEPLOYED_SHA" == "${EXPECTED_SHA:0:12}"* ]] || [[ "$EXPECTED_SHA" == "${DEPLOYED_SHA:0:12}"* ]]; then
+            echo "SHA verification passed"
+          else
+            echo "::error::Deployed SHA ($DEPLOYED_SHA) does not match expected SHA ($EXPECTED_SHA)"
+            exit 1
+          fi
+
+      # -------------------------------------------------------
+      # 8. Public E2E
+      # -------------------------------------------------------
+      - name: Public deployed E2E
+        run: npx playwright test tests/e2e/staging-public.spec.ts --retries=0
+        env:
+          PLAYWRIGHT_BASE_URL: ${{ inputs.base_url }}
+
+      # -------------------------------------------------------
+      # 9. Admin real-login E2E
+      # -------------------------------------------------------
+      - name: Protected admin deployed E2E
+        run: npx playwright test tests/e2e/staging-admin.spec.ts --workers=1 --retries=0
+        env:
+          PLAYWRIGHT_BASE_URL: ${{ inputs.base_url }}
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          STAGING_ADMIN_EMAIL: ${{ secrets.STAGING_ADMIN_EMAIL }}
+          STAGING_ADMIN_PASSWORD: ${{ secrets.STAGING_ADMIN_PASSWORD }}
