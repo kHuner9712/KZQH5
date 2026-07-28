@@ -179,6 +179,15 @@ const CSP_POLICY = [
   "base-uri 'self'",
   "object-src 'none'",
   "upgrade-insecure-requests",
+  // Phase 1 Task 3: connect CSP reporting so violations actually reach
+  // /api/csp-report. Both directives are included for browser
+  // compatibility:
+  //   - report-to: modern Reporting API (Chrome, Firefox 70+)
+  //   - report-uri: legacy fallback (Safari, older browsers)
+  // The Reporting-Endpoints header (set below in the middleware
+  // function) maps the name "csp-endpoint" to the absolute URL.
+  "report-to csp-endpoint",
+  "report-uri /api/csp-report",
 ].join("; ");
 
 export async function middleware(request: NextRequest) {
@@ -205,6 +214,19 @@ export async function middleware(request: NextRequest) {
       CSP_POLICY,
     );
   }
+
+  // Phase 1 Task 3: Reporting-Endpoints header for the modern Reporting
+  // API. Maps the "csp-endpoint" name referenced by the CSP report-to
+  // directive to an absolute URL. The Reporting API spec requires an
+  // absolute URL, so we construct it from the request origin. No
+  // sensitive tokens are embedded in the URL — it is a plain same-origin
+  // path. Browsers that support Reporting-Endpoints will use this; older
+  // browsers fall back to the legacy report-uri directive in the CSP.
+  const cspReportEndpoint = new URL("/api/csp-report", request.url).toString();
+  response.headers.set(
+    "Reporting-Endpoints",
+    `csp-endpoint="${cspReportEndpoint}"`,
+  );
 
   // HSTS only on HTTPS. On HTTP (localhost/dev), HSTS is ignored by
   // browsers and can cause issues, so we skip it.

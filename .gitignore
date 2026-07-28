@@ -33,7 +33,8 @@ supabase/.temp/
 # 历史游离文件（含真实密钥，禁止提交；详见 docs/CODE_FINALIZATION_REPORT.md）
 /Import .env
 
-# vercel (历史防御性忽略，当前正式部署平台为 EdgeOne)
+# Vercel 已废弃（正式部署平台为 EdgeOne）。
+# 保留 .vercel 忽略仅作为防御性措施，避免本地误执行 `vercel link` 后污染仓库。
 .vercel
 
 # typescript

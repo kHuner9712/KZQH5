@@ -37,12 +37,14 @@ KZQ 品牌对外展示站点 + 后台内容管理系统（CMS）。基于 Next.j
 
 ## 技术栈
 
-- **前端框架**：Next.js 14 App Router
+- **前端框架**：Next.js 15 App Router
+- **UI 运行时**：React 19
 - **语言**：TypeScript
 - **样式**：Tailwind CSS（自定义 graphite / steel / gold 配色）
 - **数据库 / 认证 / 文件存储**：Supabase (PostgreSQL + Auth + Storage)
 - **图标**：lucide-react
-- **部署平台**：EdgeOne（正式前端及 Next.js 服务端运行平台，Node 20）
+- **Node 运行时**：Node.js 20.x
+- **部署平台**：EdgeOne（正式前端及 Next.js 服务端运行平台）
 - **已废弃平台**：Vercel（无法满足中国大陆访问要求，已正式停用，不再用于 Preview 或 Production）
 
 ## 项目结构
@@ -104,22 +106,33 @@ docs/LAUNCH_CHECKLIST.md       # 交付前检查清单
    - `Project URL` → `NEXT_PUBLIC_SUPABASE_URL`
    - `anon public` key → `NEXT_PUBLIC_SUPABASE_ANON_KEY`
    - `service_role` key → `SUPABASE_SERVICE_ROLE_KEY`（仅在服务端使用）
-3. 在 **SQL Editor** 中按顺序执行基础文件，并继续执行尚未折叠的时间戳 migration：
-   - `supabase/schema.sql`
-   - `supabase/policies.sql`
-   - `supabase/seed.sql`（基础种子数据）
-   - `supabase/cms_seed.sql`（CMS 内容 + 产品 GEO 字段）
-   - `supabase/migrations/20260713181111_upgrade_inquiries.sql`
-   - `supabase/migrations/20260714032351_b2b_product_search_and_inquiry_items.sql`
-   - `supabase/migrations/20260714084116_procurement_assets_and_projects.sql`
-   - `supabase/migrations/20260714125149_production_stability_analytics_wechat.sql`
-   - `supabase/migrations/20260714201851_enforce_inquiry_product_integrity.sql`
-   - `supabase/migrations/20260715090000_security_hardening_explicit_grants.sql`
-4. 在 **Storage** 中确认已创建两个 bucket：
+3. 在 **SQL Editor** 中按顺序执行数据库初始化。
+
+#### 数据库初始化（Fresh install vs Incremental upgrade）
+
+数据库迁移清单、执行状态、回滚边界以 `docs/DATABASE_MIGRATION_LEDGER.md` 为唯一事实来源。下文仅说明两种场景的执行边界，**不要**重复维护一份与 Ledger 冲突的文件清单。
+
+**Fresh install（全新 Supabase 项目）**
+
+1. 执行 `supabase/schema.sql`（基础表 + 索引 + 触发器）。
+2. 执行 `supabase/policies.sql`（RLS 策略 + Storage buckets 创建语句）。
+3. 执行 `supabase/seed.sql`（基础种子数据：类目 / 产品 / 证书 / 公司 / 站点设置）。
+4. 执行 `supabase/cms_seed.sql`（CMS 内容 + 产品 GEO 字段）。
+5. 在 **Storage** 中确认已创建两个 bucket：
    - `public-assets`（公开读，管理员写）
    - `private-assets`（预留，前台不可访问）
+6. 按 `docs/DATABASE_MIGRATION_LEDGER.md` 中记录的文件名顺序，执行 `supabase/migrations/` 目录下**全部**尚未折叠进 `schema.sql` / `policies.sql` 的时间戳 migration。文件名按时间戳严格升序排列，**禁止**跳过任何一条或调整顺序。
+7. 执行 `npm run check:release-readiness`（在本地配置好 `.env.local` 后）调用 `verify_schema_readiness()` RPC 自动校验所需表、函数、RLS、权限是否就位。
 
-   `policies.sql` 已包含 bucket 创建与策略语句，正常情况下执行 SQL 后即自动创建。
+**Incremental upgrade（已部署过数据库的项目）**
+
+1. **不要**重跑 `schema.sql` / `policies.sql` / `seed.sql` / `cms_seed.sql` / `cms_upgrade.sql`。这些是历史基础文件，仅用于全新安装；重跑会破坏已发布数据或触发非幂等错误。
+2. 打开 `docs/DATABASE_MIGRATION_LEDGER.md`，对照 "Local / Staging / Production" 列确认每个 migration 在当前环境的执行状态。
+3. 仅执行状态为 `pending` 或 `unknown` 的时间戳 migration，按文件名时间戳升序执行。
+4. 每条 migration 的 "Rollback boundary" 列已说明回滚代价；任何回滚必须以**新 forward-only migration** 形式提交，**严禁** `supabase db reset` 或修改历史 migration 文件。
+5. 执行 `npm run check:release-readiness` 通过 `verify_schema_readiness()` RPC 自动验证当前 schema 契约。
+
+完整顺序、停止点、历史窗口和冻结基线见 `docs/DATABASE_MIGRATION_LEDGER.md` 与 `docs/DATABASE_MIGRATION_RUNBOOK.md`。`cms_upgrade.sql` 不属于全新安装序列，仅用于经人工审计的旧库兼容场景。
 
 ### 2. 创建管理员账号
 
@@ -152,7 +165,7 @@ NEXT_PUBLIC_SITE_URL=http://localhost:3000
 
 > ⚠️ `SUPABASE_SERVICE_ROLE_KEY` 仅在服务端使用，绝不能写入 `NEXT_PUBLIC_*` 前缀变量，也不可提交到 Git。
 
-已部署过数据库的项目只按记录执行尚未应用的时间戳 migration；不要重跑基础 SQL、seed 或历史 migration。`cms_upgrade.sql` 的内容已经折叠进当前 `schema.sql` / `policies.sql`，不属于全新安装序列，只可用于经人工审计的旧库兼容场景。完整顺序和停止点见 `docs/STAGING_SUPABASE_SETUP.md` 与数据库 Runbook。
+数据库初始化与增量升级的完整说明见上方 "Fresh install vs Incremental upgrade" 一节，以及 `docs/DATABASE_MIGRATION_LEDGER.md` 和 `docs/DATABASE_MIGRATION_RUNBOOK.md`。
 
 ### 4. 安装依赖并启动
 

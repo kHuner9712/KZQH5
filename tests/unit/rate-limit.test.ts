@@ -88,6 +88,175 @@ describe("memory rate limiter", () => {
     expect(result.allowed).toBe(true);
     expect(limiter.entryCount()).toBe(1);
   });
+
+  // ============================================================
+  // Review #4 — Phase 1 Task 1: window-expiration reset bug.
+  //
+  // The previous `check()` incremented the existing entry's count
+  // WITHOUT first verifying the entry was still within its window.
+  // When the global cleanup throttle had not yet fired, an expired
+  // entry could continue to accumulate counts, causing legitimate
+  // requests AFTER the window ended to be rate-limited.
+  //
+  // The fix: after reading the existing entry, check whether
+  // `now - firstRequestAt >= windowMs`. If so, treat the request as
+  // the first request of a NEW window: remove the stale entry from
+  // the map + linked list, insert a fresh entry, and return the
+  // correct allowed/remaining/retryAfter values.
+  // ============================================================
+
+  it("resets the window immediately when it has exactly expired", async () => {
+    // Verifies the boundary condition: when now - firstRequestAt === windowMs
+    // exactly, the entry is treated as expired and the window resets.
+    let now = 0;
+    const limiter = new MemoryRateLimiter(2, 10_000, () => now);
+    expect((await limiter.check("k")).allowed).toBe(true); // count=1
+    expect((await limiter.check("k")).allowed).toBe(true); // count=2
+    expect((await limiter.check("k")).allowed).toBe(false); // count=3, over-limit
+
+    // Advance to exactly the window boundary. The entry has expired
+    // (10000 - 0 >= 10000). Whether cleanup runs or not, the next
+    // check("k") MUST return a fresh window with count=1.
+    now = 10_000;
+    const result = await limiter.check("k");
+    expect(result.allowed).toBe(true);
+    expect(result.remaining).toBe(1); // 2 - 1 = 1 (fresh window, count=1)
+    expect(result.retryAfterSeconds).toBe(10); // full window remaining
+  });
+
+  it("resets the window when expired even when cleanup throttle has NOT fired (the core bug)", async () => {
+    // Construct the exact scenario where the bug manifests:
+    //   - windowMs large enough that throttle (windowMs/4) is also large
+    //   - A recent cleanup has advanced lastCleanupAt
+    //   - The entry is expired but the throttle window hasn't elapsed
+    //
+    // windowMs = 10s, throttle = max(2500, 1000) = 2500.
+    let now = 0;
+    const limiter = new MemoryRateLimiter(2, 10_000, () => now);
+    // t=0: over-limit the key.
+    await limiter.check("k"); // count=1, allowed
+    await limiter.check("k"); // count=2, allowed
+    await limiter.check("k"); // count=3, BLOCKED
+
+    // t=8000: a different key forces cleanup to run (8000-0=8000 >= 2500).
+    // lastCleanupAt becomes 8000. The "k" entry is NOT expired
+    // (8000-0=8000 < 10000) so it survives cleanup.
+    now = 8_000;
+    await limiter.check("other");
+
+    // t=10001: "k" IS expired (10001-0 >= 10000) but the cleanup
+    // throttle has NOT fired (10001-8000=2001 < 2500). The previous
+    // implementation would increment the stale entry's count to 4
+    // and return allowed=false — the BUG.
+    now = 10_001;
+    const result = await limiter.check("k");
+    expect(result.allowed).toBe(true);
+    expect(result.remaining).toBe(1); // fresh window: maximum(2) - 1 = 1
+    expect(result.retryAfterSeconds).toBe(10); // fresh window → full window
+  });
+
+  it("returns correct remaining after reset (fresh window)", async () => {
+    let now = 0;
+    const limiter = new MemoryRateLimiter(5, 10_000, () => now);
+    // Use 3 of 5.
+    await limiter.check("k"); // count=1, remaining=4
+    await limiter.check("k"); // count=2, remaining=3
+    await limiter.check("k"); // count=3, remaining=2
+    // Expire the window. Use a second key to advance lastCleanupAt
+    // close to the expiry so the throttle doesn't fire on the next
+    // "k" check.
+    now = 8_000;
+    await limiter.check("other"); // triggers cleanup (8000>=2500), lastCleanupAt=8000
+    now = 10_001; // "k" expired, throttle not fired (10001-8000=2001<2500)
+    const result = await limiter.check("k");
+    expect(result.allowed).toBe(true);
+    expect(result.remaining).toBe(4); // 5 - 1 = 4 (fresh window)
+  });
+
+  it("returns correct retryAfterSeconds after reset (full window)", async () => {
+    let now = 0;
+    const limiter = new MemoryRateLimiter(1, 10_000, () => now);
+    await limiter.check("k"); // count=1, allowed
+    now = 8_000;
+    await limiter.check("other"); // lastCleanupAt=8000
+    now = 10_001; // "k" expired, throttle not fired
+    const result = await limiter.check("k");
+    expect(result.allowed).toBe(true);
+    // Fresh window: full windowMs remaining → 10s.
+    expect(result.retryAfterSeconds).toBe(10);
+  });
+
+  it("reset does not corrupt entryCount or the linked list", async () => {
+    // Insert several keys, force one to expire mid-list, and verify
+    // that entryCount stays consistent and subsequent capacity
+    // checks still work without crashing or duplicating entries.
+    let now = 0;
+    const limiter = new MemoryRateLimiter(1, 10_000, () => now, 5);
+    // Insert 5 keys at t=0 (capacity reached).
+    await limiter.check("a");
+    await limiter.check("b");
+    await limiter.check("c");
+    await limiter.check("d");
+    await limiter.check("e");
+    expect(limiter.entryCount()).toBe(5);
+
+    // Force a cleanup at t=8000 (doesn't expire any, all at firstRequestAt=0).
+    now = 8_000;
+    await limiter.check("force-cleanup"); // FAIL_SAFE: capacity, rejected
+    // lastCleanupAt is now 8000; "force-cleanup" was NOT inserted.
+    expect(limiter.entryCount()).toBe(5);
+
+    // At t=10001, "c" is expired but cleanup throttle (2500) hasn't fired
+    // (10001-8000=2001 < 2500). Re-checking "c" must reset it, not
+    // duplicate it. entryCount must stay at 5 (c removed + re-inserted).
+    now = 10_001;
+    const result = await limiter.check("c");
+    expect(result.allowed).toBe(true);
+    expect(limiter.entryCount()).toBe(5);
+
+    // The linked list must still be valid. A new key check forces the
+    // capacity tail-walk: a/b/d/e are all expired (firstRequestAt=0,
+    // 10001-0 >= 10000) and get evicted, making room for "new-key".
+    // "c" (firstRequestAt=10001) is live and survives. This proves the
+    // prev/next pointers are intact after the reset.
+    const overflow = await limiter.check("new-key");
+    expect(overflow.allowed).toBe(true);
+    // After evicting 4 expired entries and inserting "new-key":
+    // "c" (live) + "new-key" = 2 entries.
+    expect(limiter.entryCount()).toBe(2);
+
+    // A subsequent capacity fail-safe must still work: fill back up to
+    // 5 with LIVE entries and verify a 6th is rejected.
+    now = 10_002;
+    await limiter.check("p1");
+    await limiter.check("p2");
+    await limiter.check("p3");
+    expect(limiter.entryCount()).toBe(5);
+    const rejected = await limiter.check("p4");
+    expect(rejected.allowed).toBe(false);
+    expect(limiter.entryCount()).toBe(5);
+  });
+
+  it("capacity fail-safe behavior is preserved after a reset", async () => {
+    // Verify that resetting an expired entry doesn't accidentally
+    // bypass the capacity fail-safe. Capacity = 3, maximum = 1.
+    let now = 0;
+    const limiter = new MemoryRateLimiter(1, 1_000, () => now, 3);
+    await limiter.check("a"); // count=1, allowed
+    await limiter.check("b"); // count=1, allowed
+    await limiter.check("c"); // count=1, allowed
+    expect(limiter.entryCount()).toBe(3);
+    // "d" must be rejected (fail-safe) and must NOT evict live entries.
+    expect((await limiter.check("d")).allowed).toBe(false);
+    expect(limiter.entryCount()).toBe(3);
+
+    // Advance past the window AND the cleanup throttle so all entries
+    // are expired and cleanup runs. Now a new key should be admitted.
+    now = 5_001;
+    const result = await limiter.check("d");
+    expect(result.allowed).toBe(true);
+    expect(limiter.entryCount()).toBe(1); // only "d" remains
+  });
 });
 
 describe("ephemeralRateKey — no-IP fallback strategy", () => {
