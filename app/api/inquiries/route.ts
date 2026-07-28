@@ -5,7 +5,7 @@ import { submitInquiry } from "@/lib/services/inquiries/submission";
 import { InquiryProductUnavailableError } from "@/lib/services/inquiries/submission";
 import { validateInquiryInput } from "@/lib/services/inquiries/validation";
 import {
-  ephemeralRateKey,
+  checkRateLimitKeys,
   isSameSiteRequest,
   readJsonBody,
   UUID_PATTERN,
@@ -56,8 +56,7 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const rateKey = ephemeralRateKey(request);
-  const rate = await getInquiryRateLimiter().check(rateKey);
+  const rate = await checkRateLimitKeys(request, getInquiryRateLimiter());
   if (!rate.allowed) {
     return NextResponse.json(
       { success: false, error: messages[earlyLocale].rate },

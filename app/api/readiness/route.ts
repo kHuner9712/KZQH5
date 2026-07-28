@@ -43,7 +43,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { logServerError } from "@/lib/logging/server-log";
 import {
-  ephemeralRateKey,
+  checkRateLimitKeys,
   safeSecretEqualBuffer,
 } from "@/lib/services/http-security";
 import { getReadinessRateLimiter } from "@/lib/services/rate-limit";
@@ -267,9 +267,9 @@ export async function GET(request: NextRequest) {
   // Without rate limiting, an attacker could DOS Supabase by repeatedly
   // hitting readiness (which calls Supabase REST + Storage + a service_role
   // RPC) or use it as an oracle to probe service_role behavior.
-  const rateKey = ephemeralRateKey(request);
+  // Two-layer model: global floor (unknown-IP) + optional HMAC sub-bucket.
   const limiter = getReadinessRateLimiter();
-  const { allowed, retryAfterSeconds } = await limiter.check(rateKey);
+  const { allowed, retryAfterSeconds } = await checkRateLimitKeys(request, limiter);
   if (!allowed) {
     return NextResponse.json(
       { ready: false, error: "RATE_LIMITED" },

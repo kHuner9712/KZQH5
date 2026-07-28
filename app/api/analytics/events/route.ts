@@ -3,7 +3,7 @@ import { recordAnalyticsEvent } from "@/lib/repositories/analytics";
 import { validateAnalyticsEvent } from "@/lib/services/analytics/validation";
 import { getAnalyticsRateLimiter } from "@/lib/services/rate-limit";
 import {
-  ephemeralRateKey,
+  checkRateLimitKeys,
   isSameSiteRequest,
   readJsonBody,
 } from "@/lib/services/http-security";
@@ -37,8 +37,9 @@ export async function POST(request: NextRequest) {
   }
 
   // Rate limit BEFORE reading the body so an attacker cannot exhaust
-  // request-body parsing budget while bypassing the limiter.
-  const rate = await getAnalyticsRateLimiter().check(ephemeralRateKey(request));
+  // request-body parsing budget while bypassing the limiter. Two-layer
+  // model: global floor (unknown-IP) + optional HMAC sub-bucket.
+  const rate = await checkRateLimitKeys(request, getAnalyticsRateLimiter());
   if (!rate.allowed) {
     return NextResponse.json(
       { success: false, error: "Too many events" },

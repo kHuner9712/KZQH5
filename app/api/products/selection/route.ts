@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { isDemoMode } from "@/lib/demo";
 import { getPublicProductSelections } from "@/lib/repositories/products";
 import {
-  ephemeralRateKey,
+  checkRateLimitKeys,
   isSameSiteRequest,
   readJsonBody,
   UUID_PATTERN,
@@ -36,8 +36,9 @@ export async function POST(request: NextRequest) {
   }
 
   // Rate limit BEFORE reading the body so an attacker cannot exhaust
-  // request-body parsing budget while bypassing the limiter.
-  const rate = await getAnalyticsRateLimiter().check(ephemeralRateKey(request));
+  // request-body parsing budget while bypassing the limiter. Two-layer
+  // model: global floor (unknown-IP) + optional HMAC sub-bucket.
+  const rate = await checkRateLimitKeys(request, getAnalyticsRateLimiter());
   if (!rate.allowed) {
     return NextResponse.json(
       { error: "Too many requests" },

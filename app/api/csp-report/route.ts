@@ -35,7 +35,7 @@
 // ============================================================
 
 import { NextResponse, type NextRequest } from "next/server";
-import { ephemeralRateKey } from "@/lib/services/http-security";
+import { checkRateLimitKeys } from "@/lib/services/http-security";
 import { getAnalyticsRateLimiter } from "@/lib/services/rate-limit";
 import { logServerError } from "@/lib/logging/server-log";
 
@@ -164,10 +164,10 @@ export async function POST(request: NextRequest) {
   // --- Rate limit: re-use the analytics limiter (60 / 60s / IP) ---
   // CSP reports are sent automatically by the browser; a malicious
   // page could trigger thousands of violations to flood logs. The
-  // limiter prevents log-flooding from a single source.
-  const rateKey = ephemeralRateKey(request);
+  // limiter prevents log-flooding from a single source. Two-layer
+  // model: global floor (unknown-IP) + optional HMAC sub-bucket.
   const limiter = getAnalyticsRateLimiter();
-  const { allowed, retryAfterSeconds } = await limiter.check(rateKey);
+  const { allowed, retryAfterSeconds } = await checkRateLimitKeys(request, limiter);
   if (!allowed) {
     return new NextResponse(null, {
       status: 429,
