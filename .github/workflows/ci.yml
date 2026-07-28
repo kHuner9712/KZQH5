@@ -12,11 +12,16 @@ permissions:
 # Pinned actions (SHA-pinned for supply-chain security).
 # Update by verifying the new SHA against the upstream release
 # notes and bumping both the SHA and the version comment.
-# SHA verified via GitHub API (refs/tags/<tag>) on 2026-07-24.
+#
+# Review #3 WP6: SHA-to-tag provenance re-verified via GitHub API
+# (repos/<owner>/<repo>/git/refs/tags/<tag>) on 2026-07-29.
+# The previous comments claimed v4.2.2 / v4.4.0 / v4.4.3, but the
+# actual SHAs belonged to v7.0.1 / v7.0.0 / v7.0.1 respectively.
+# Corrected below.
 # ============================================================
-# - actions/checkout@v4.2.2      → 11bd71901bbe5b1630ceea73d27597364c9af683
-# - actions/setup-node@v4.4.0    → 49933ea5288caeca8642d1e84afbd3f7d6820020
-# - actions/upload-artifact@v4.4.3 → b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882
+# - actions/checkout@v7.0.1      → 3d3c42e5aac5ba805825da76410c181273ba90b1
+# - actions/setup-node@v7.0.0    → 820762786026740c76f36085b0efc47a31fe5020
+# - actions/upload-artifact@v7.0.1 → 043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
 
 jobs:
   check:
@@ -30,7 +35,7 @@ jobs:
       # Demo mode never calls Supabase at build time.
       NEXT_PUBLIC_SUPABASE_URL: "https://abcdefghijklmnopqrst.supabase.co"
     steps:
-      # actions/checkout@v4.2.2
+      # actions/checkout@v7.0.1
       # fetch-depth: 0 is required because the migration immutability
       # gate (scripts/check-migration-immutability.mjs) will use
       # `git rev-list` / `git show` to anchor the manifest to a
@@ -42,7 +47,7 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
-      # actions/setup-node@v4.4.0
+      # actions/setup-node@v7.0.0
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: 20
@@ -147,11 +152,11 @@ jobs:
       NEXT_PUBLIC_SITE_INDEXING_ENABLED: "false"
       OUTBOX_DISPATCH_SECRET: "ci-test-outbox-dispatch-secret-not-real"
     steps:
-      # actions/checkout@v4.2.2
+      # actions/checkout@v7.0.1
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
-      # actions/setup-node@v4.4.0
+      # actions/setup-node@v7.0.0
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: 20
@@ -214,6 +219,7 @@ jobs:
           echo "----- end mock-supabase.log -----"
       - name: Upload build artifacts on failure
         if: failure()
+        # actions/upload-artifact@v7.0.1
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: production-build-artifacts
@@ -264,11 +270,11 @@ jobs:
       NEXT_PUBLIC_SITE_INDEXING_ENABLED: "false"
       OUTBOX_DISPATCH_SECRET: "ci-test-outbox-dispatch-secret-not-real"
     steps:
-      # actions/checkout@v4.2.2
+      # actions/checkout@v7.0.1
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
-      # actions/setup-node@v4.4.0
+      # actions/setup-node@v7.0.0
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: 20
@@ -287,13 +293,23 @@ jobs:
         # webpack resolution, env validation in next.config.mjs)
         # from prerender-phase regressions exercised by the
         # `production-build` job above.
-        run: npx next build --experimental-build-mode=compile
+        run: npx next build --experimental-build-mode=compile 2>&1 | tee build-output.log
       - name: Verify compile produced server output
         run: |
           if [ ! -d ".next/server" ]; then
             echo "ERROR: .next/server directory missing — compile did not complete"
             exit 1
           fi
+      # Review #3 WP2: Middleware Edge Runtime compatibility check.
+      # Scans the build output for warnings that indicate a Node.js-only
+      # API (e.g. process.version from @supabase/supabase-js) was bundled
+      # into the middleware. The middleware must use only Web APIs so it
+      # is compatible with the Edge Runtime (which EdgeOne Makers uses by
+      # default for Next.js middleware). If any warning is detected, the
+      # CI job fails. This prevents regressions where a dependency update
+      # silently reintroduces a Node.js-only API into the middleware bundle.
+      - name: Check middleware Edge Runtime compatibility
+        run: node scripts/check-middleware-edge-runtime.mjs build-output.log
       - name: Check for whitespace / conflict markers
         run: git diff --check
 
@@ -318,7 +334,7 @@ jobs:
       DATABASE_TEST_URL: postgresql://postgres:postgres@localhost:5432/kzq_fresh_test
       DATABASE_UPGRADE_TEST_URL: postgresql://postgres:postgres@localhost:5432/kzq_upgrade_test
     steps:
-      # actions/checkout@v4.2.2
+      # actions/checkout@v7.0.1
       # fetch-depth: 0 is required because scripts/verify-database.mjs
       # reads baseline schema/policies/seed files from the legacy commit
       # (LEGACY_BASELINE_COMMIT, default d5c5822) via `git show <sha>:<path>`
@@ -328,7 +344,7 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
-      # actions/setup-node@v4.4.0
+      # actions/setup-node@v7.0.0
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: 20
@@ -373,11 +389,11 @@ jobs:
       # is known. A canonical placeholder satisfies the guard.
       NEXT_PUBLIC_SUPABASE_URL: "https://abcdefghijklmnopqrst.supabase.co"
     steps:
-      # actions/checkout@v4.2.2
+      # actions/checkout@v7.0.1
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
-      # actions/setup-node@v4.4.0
+      # actions/setup-node@v7.0.0
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: 20
@@ -396,6 +412,7 @@ jobs:
           NEXT_PUBLIC_DEMO_MODE: "true"
       - name: Upload Playwright artifacts on failure
         if: failure()
+        # actions/upload-artifact@v7.0.1
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: playwright-report
