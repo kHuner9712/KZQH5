@@ -231,13 +231,13 @@ describe("Public CSP — static Report-Only", () => {
     expect(csp).toContain("https://res.wx.qq.com");
   });
 
-  it("includes Google Fonts CDN", async () => {
+  it("does NOT include Google Fonts CDN (project uses system fonts)", async () => {
     const { middleware } = await import("@/middleware");
     const req = new NextRequest("https://kzq.test/");
     const res = await middleware(req);
     const csp = res.headers.get("Content-Security-Policy-Report-Only")!;
-    expect(csp).toContain("fonts.googleapis.com");
-    expect(csp).toContain("fonts.gstatic.com");
+    expect(csp).not.toContain("fonts.googleapis.com");
+    expect(csp).not.toContain("fonts.gstatic.com");
   });
 
   it("does NOT include a nonce in public CSP", async () => {

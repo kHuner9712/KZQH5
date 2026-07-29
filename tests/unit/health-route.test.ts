@@ -1,4 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { NextRequest } from "next/server";
+
+function mockRequest(): NextRequest {
+  return {
+    headers: new Headers(),
+  } as unknown as NextRequest;
+}
 
 describe("deployment health route", () => {
   afterEach(() => {
@@ -11,7 +18,7 @@ describe("deployment health route", () => {
     vi.stubEnv("GIT_COMMIT_SHA", "51a3073");
     const { GET } = await import("@/app/api/health/route");
 
-    const response = GET();
+    const response = await GET(mockRequest());
     const body = await response.json();
 
     expect(response.status).toBe(200);
@@ -36,7 +43,7 @@ describe("deployment health route", () => {
   it("reports indexingEnabled=false by default", async () => {
     vi.stubEnv("NEXT_PUBLIC_SITE_INDEXING_ENABLED", "");
     const { GET } = await import("@/app/api/health/route");
-    const response = GET();
+    const response = await GET(mockRequest());
     const body = await response.json();
     expect(body.indexingEnabled).toBe(false);
   });
@@ -44,7 +51,7 @@ describe("deployment health route", () => {
   it("reports indexingEnabled=true only when strictly 'true'", async () => {
     vi.stubEnv("NEXT_PUBLIC_SITE_INDEXING_ENABLED", "true");
     const { GET } = await import("@/app/api/health/route");
-    const response = GET();
+    const response = await GET(mockRequest());
     const body = await response.json();
     expect(body.indexingEnabled).toBe(true);
   });
@@ -52,7 +59,7 @@ describe("deployment health route", () => {
   it("does not fuzzy-match 'TRUE' as true", async () => {
     vi.stubEnv("NEXT_PUBLIC_SITE_INDEXING_ENABLED", "TRUE");
     const { GET } = await import("@/app/api/health/route");
-    const response = GET();
+    const response = await GET(mockRequest());
     const body = await response.json();
     expect(body.indexingEnabled).toBe(false);
   });

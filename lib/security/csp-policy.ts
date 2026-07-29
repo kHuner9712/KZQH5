@@ -153,7 +153,7 @@ export function buildAdminCspPolicy(nonce: string): string {
  *   - Retains 'unsafe-inline' for script-src and style-src (ISR compat)
  *   - Retains 'unsafe-eval' (PDF.js / Next.js runtime may need it)
  *   - Allows WeChat JS-SDK (https://res.wx.qq.com)
- *   - Allows Google Fonts CDN (style-src, font-src)
+ *   - No Google Fonts CDN (project uses system fonts only)
  *   - Supabase host is allowed
  *
  * This policy is intentionally permissive to avoid breaking ISR pages.
@@ -164,8 +164,8 @@ export function buildPublicCspPolicy(): string {
   const directives = [
     "default-src 'self'",
     "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://res.wx.qq.com",
-    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-    "font-src 'self' data: https://fonts.gstatic.com",
+    "style-src 'self' 'unsafe-inline'",
+    "font-src 'self' data:",
     `img-src ${imgSrcAllowlist}`,
     `connect-src ${connectSrcAllowlist}`,
     ...COMMON_DIRECTIVES,
