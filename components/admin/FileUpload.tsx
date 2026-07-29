@@ -3,7 +3,7 @@
 import { useRef, useState } from "react";
 import { FileUp, Loader2 } from "lucide-react";
 import {
-  uploadViaServerApi,
+  uploadViaTwoPhase,
   type StorageObjectRef,
 } from "@/lib/services/admin-storage-fetch";
 import type { StoragePurpose } from "@/lib/services/storage-purpose";
@@ -14,7 +14,7 @@ export function FileUpload({
   onUploadedRef,
   label = "上传展示文件",
   accept = "application/pdf,image/jpeg,image/png,image/webp",
-  hint = "PDF/JPG/PNG/WebP，最大 4MB；仅限展示版或水印版。",
+  hint = "PDF/JPG/PNG/WebP，最大 20MB；仅限展示版或水印版。",
 }: {
   /**
    * Storage 用途（必需）。客户端只提交 purpose，服务端决定 bucket /
@@ -48,7 +48,7 @@ export function FileUpload({
     if (!file) return;
     setUploading(true);
     setError("");
-    const result = await uploadViaServerApi(file, purpose);
+    const result = await uploadViaTwoPhase(file, purpose);
     setUploading(false);
     if (!result.ok) {
       setError(result.error);

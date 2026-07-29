@@ -143,13 +143,18 @@ The route-layer 4 MB limit is the **single-stage API contract** that
 clients see. The bucket's higher limit is an internal backend allowance
 for direct-to-Supabase paths that do not traverse EdgeOne.
 
-## Release blocker
+## Two-phase upload (implemented)
 
 Two-stage upload (`/api/admin/storage/upload/authorize` → browser direct to
-Supabase → `/api/admin/storage/upload/finalize`) remains the documented
-release blocker for restoring large-PDF upload support. Design:
-`docs/TWO_PHASE_UPLOAD_DESIGN.md`. Launch Checklist entry:
-`docs/LAUNCH_CHECKLIST.md` (section 6, "发布阻断项 — 两阶段上传未实现").
+Supabase → `/api/admin/storage/upload/finalize`) is **fully implemented**
+(Phase 4 + Phase 5). All admin UI upload components use the two-phase path
+as the primary upload route, bypassing the EdgeOne 6 MB platform limit.
+PDF uploads up to 20 MB and image uploads up to 5 MB are supported.
+Design: `docs/TWO_PHASE_UPLOAD_DESIGN.md`. Launch Checklist entry:
+`docs/LAUNCH_CHECKLIST.md` (section 6, "两阶段上传已实现").
+
+**Deployment prerequisite**: Supabase Storage bucket must have CORS
+configured to allow browser PUT requests.
 
 
 

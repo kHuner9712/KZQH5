@@ -126,7 +126,7 @@
 - [ ] **EdgeOne WAF 限流**: `/api/admin/storage/upload` 设为 20 次/5 分钟/IP（叠加进程内限流）
 - [ ] **EdgeOne WAF 并发限制**: 上传路径并发连接数 ≤ 5/IP（防止单 IP 同时打开多个上传消耗内存）
 - [ ] **Node.js `--max-old-space-size`**: 至少 256MB（容许 5 并发 × 5MB 峰值 + 基础进程内存；此前 512MB 基于 21MB 上限已不再需要）
-- [ ] **发布阻断项 — 两阶段上传未实现**: 当前单阶段上传受 EdgeOne 6MB 平台限制约束，PDF 上限 4MB。超过 4MB 的 PDF 在单阶段路径下不可用。两阶段上传（`/api/admin/storage/upload/authorize` → 浏览器直传 Supabase → `/api/admin/storage/upload/finalize`）设计见 `docs/TWO_PHASE_UPLOAD_DESIGN.md`，是支持大 PDF 上传的正式发布阻断项。
+- [x] **两阶段上传已实现**: 客户端直传 Supabase Storage（`/api/admin/storage/upload/authorize` → 浏览器直传 → `/api/admin/storage/upload/finalize`），绕过 EdgeOne 6MB 平台限制。PDF 上限 20MB，图片上限 5MB。Admin UI 组件（`FileUpload`、`ImageUpload`、项目图片上传）已全部接入两阶段上传路径。**部署前提**: Supabase Storage bucket 必须配置 CORS 允许浏览器 PUT（详见 `docs/TWO_PHASE_UPLOAD_DESIGN.md` 第 4.1 节）。
 - [ ] **匿名分析接口限流生效**（频繁提交返回 429）
 - [ ] **未知 IP 时使用稳定 fallback bucket**（生产 `RATE_LIMIT_FALLBACK_SECRET` ≥ 32 字符已配置；缺失时使用 `fallback:global` 单桶，不产生随机 key）
 - [ ] **`TRUSTED_PROXY_HEADER` 已正确配置**（EdgeOne 设为 `eo-connecting-ip`；未配置或非法值时所有代理 Header 不可信）

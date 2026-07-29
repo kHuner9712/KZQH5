@@ -2,7 +2,7 @@
 
 import { useEffect, useId, useRef, useState } from "react";
 import {
-  uploadViaServerApi,
+  uploadViaTwoPhase,
   deleteViaServerApi,
   enqueueCleanupViaServerApi,
   fetchPrivatePreviewUrl,
@@ -153,8 +153,8 @@ export function ImageUpload({
       setError("请选择图片文件");
       return;
     }
-    if (file.size > 4 * 1024 * 1024) {
-      setError("图片大小不能超过 4MB");
+    if (file.size > 5 * 1024 * 1024) {
+      setError("图片大小不能超过 5MB");
       return;
     }
 
@@ -177,7 +177,7 @@ export function ImageUpload({
 
     setError(null);
     setUploading(true);
-    const result = await uploadViaServerApi(file, purpose);
+    const result = await uploadViaTwoPhase(file, purpose);
     setUploading(false);
 
     if (!result.ok) {

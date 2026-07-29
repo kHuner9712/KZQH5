@@ -77,8 +77,9 @@ export type PublicAssetTopCategory = (typeof PUBLIC_ASSETS_ALLOWED_TOP_CATEGORIE
  *   - PDF：4MB（4194304 字节，此前为 20MB）
  *
  * 此前 4-20MB 范围内的 PDF 在单阶段上传路径下不再可用。两阶段上传
- * (authorize -> 直传 Supabase -> finalize) 作为正式发布阻断项，详见
- * docs/TWO_PHASE_UPLOAD_DESIGN.md 与 docs/LAUNCH_CHECKLIST.md。
+ * (authorize -> 直传 Supabase -> finalize) 已在 Phase 4 + Phase 5 实现，
+ * 所有 admin UI 组件已接入两阶段上传路径。PDF 上限 20MB，图片上限 5MB。
+ * 详见 docs/TWO_PHASE_UPLOAD_DESIGN.md 与 docs/LAUNCH_CHECKLIST.md。
  *
  * SVG、HTML、text/html、application/javascript 及任何可执行内容均不在白名单内，
  * 在 MIME 校验阶段即被拒绝；即便伪造 MIME，Magic Bytes 校验也会拦截。

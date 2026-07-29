@@ -7,7 +7,7 @@ import { ImageUpload } from "@/components/admin/ImageUpload";
 
 // Mock the storage fetch helpers — we never hit the network in this test.
 vi.mock("@/lib/services/admin-storage-fetch", () => ({
-  uploadViaServerApi: vi.fn(),
+  uploadViaTwoPhase: vi.fn(),
   deleteViaServerApi: vi.fn(),
   enqueueCleanupViaServerApi: vi.fn(),
   fetchPrivatePreviewUrl: vi.fn().mockResolvedValue({ ok: false }),
