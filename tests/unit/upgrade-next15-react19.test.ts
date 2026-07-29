@@ -485,7 +485,9 @@ describe("16. Browser Bundle does not contain server-side Secret names", () => {
     vi.stubEnv("NEXT_PUBLIC_SITE_INDEXING_ENABLED", "");
     vi.stubEnv("GIT_COMMIT_SHA", "abc123");
     const { GET } = await import("@/app/api/health/route");
-    const response = GET();
+    const response = await GET({
+      headers: new Headers(),
+    } as never);
     const body = await response.json();
     const bodyStr = JSON.stringify(body);
     // Must not contain any server-side secret env var names

@@ -47,9 +47,9 @@ const config: Config = {
           300: "#4A4F52",
         },
         steel: {
-          DEFAULT: "#1E3A5F",
-          light: "#4A7BA8",
-          dark: "#16293F",
+          DEFAULT: "#A98643",
+          light: "#C5A15A",
+          dark: "#7A5B26",
         },
         gold: {
           DEFAULT: "#C5A15A",

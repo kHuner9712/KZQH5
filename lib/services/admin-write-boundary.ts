@@ -7,6 +7,7 @@ import {
   isAllowedFetchSite,
   readJsonBody,
 } from "@/lib/services/http-security";
+import { getAdminApiRateLimiter } from "@/lib/services/rate-limit";
 
 /**
  * Fixed error codes for admin write endpoints. These are the ONLY strings
@@ -159,6 +160,28 @@ export async function requireAdminWrite<T = unknown>(
     return {
       ok: false,
       response: adminWriteError("ADMIN_WRITE_UNAUTHORIZED", 401),
+    };
+  }
+
+  // Phase 7: Per-admin rate limiting (60 req/60s/admin user).
+  // Checked AFTER auth (so only authenticated admin requests consume
+  // the bucket) but BEFORE RBAC/CSRF/body parsing (so a flood of
+  // requests is rejected early, before expensive processing).
+  const rateLimitKey = `admin:${admin.user.id}`;
+  const rateResult = await getAdminApiRateLimiter().check(rateLimitKey);
+  if (!rateResult.allowed) {
+    return {
+      ok: false,
+      response: NextResponse.json(
+        { error: "ADMIN_WRITE_RATE_LIMITED" },
+        {
+          status: 429,
+          headers: {
+            "Retry-After": String(rateResult.retryAfterSeconds),
+            "Cache-Control": "no-store",
+          },
+        },
+      ),
     };
   }
 

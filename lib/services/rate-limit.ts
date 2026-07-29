@@ -281,3 +281,57 @@ export function getWechatJsSdkRateLimiter(): RateLimiter {
     wechatJsSdkLimiter = new MemoryRateLimiter(20, 60 * 1000);
   return wechatJsSdkLimiter;
 }
+
+// Phase 7: Health endpoint rate limiter.
+// Limit: 30 / 60s / IP. /api/health returns app metadata (name, version,
+// commit SHA, demo flag). While the data is non-sensitive, unthrottled
+// access allows probing and information gathering. The limit is generous
+// for legitimate monitoring (typical: 1 probe / 30s = 2/min) while
+// bounding abuse.
+//
+// Multi-instance caveat applies (see MemoryRateLimiter header).
+let healthLimiter: RateLimiter | null = null;
+
+export function getHealthRateLimiter(): RateLimiter {
+  if (!healthLimiter) healthLimiter = new MemoryRateLimiter(30, 60 * 1000);
+  return healthLimiter;
+}
+
+// Phase 7: Featured projects rate limiter.
+// Limit: 30 / 60s / IP. /api/projects/featured queries the database for
+// featured projects. While the response is CDN-cached (s-maxage=300), a
+// cache miss hits the database. Without rate limiting, an attacker could
+// bypass the CDN cache (e.g. via Vary header manipulation) and DOS the
+// database. The limit is generous for legitimate traffic while bounding
+// abuse.
+//
+// Multi-instance caveat applies (see MemoryRateLimiter header).
+let featuredProjectsLimiter: RateLimiter | null = null;
+
+export function getFeaturedProjectsRateLimiter(): RateLimiter {
+  if (!featuredProjectsLimiter)
+    featuredProjectsLimiter = new MemoryRateLimiter(30, 60 * 1000);
+  return featuredProjectsLimiter;
+}
+
+// Phase 7: Admin API rate limiter (per admin actor).
+// Limit: 60 / 60s / admin user. Admin API routes all go through
+// requireAdminWrite, which checks this limiter using the admin's
+// user.id as the key (NOT IP-based — admin sessions are already
+// authenticated, so per-user is more precise than per-IP).
+//
+// This protects against:
+//   - Brute-force scanning of admin endpoints (even with valid session)
+//   - Runaway admin scripts (e.g. infinite loop in a batch operation)
+//   - Accidental DoS from misbehaving admin UI components
+//
+// The limit is generous (1 req/sec sustained) to not impede normal
+// CMS workflows (editing, searching, paginating) while bounding abuse.
+//
+// Multi-instance caveat applies (see MemoryRateLimiter header).
+let adminApiLimiter: RateLimiter | null = null;
+
+export function getAdminApiRateLimiter(): RateLimiter {
+  if (!adminApiLimiter) adminApiLimiter = new MemoryRateLimiter(60, 60 * 1000);
+  return adminApiLimiter;
+}
