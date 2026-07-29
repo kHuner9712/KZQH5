@@ -115,12 +115,16 @@ describe("Phase 1 Task 3: reporting headers on all routes", () => {
     expect(csp).toContain("report-uri /api/csp-report");
   });
 
-  it("sets reporting headers on admin routes", async () => {
+  it("sets reporting headers on admin routes (enforcing CSP, Phase 3)", async () => {
     const { middleware } = await import("@/middleware");
     const req = new NextRequest("https://kzq.test/admin");
     const res = await middleware(req);
     expect(res.headers.get("Reporting-Endpoints")).toBeTruthy();
-    const csp = res.headers.get("Content-Security-Policy-Report-Only");
+    // Phase 3: admin routes use enforcing Content-Security-Policy
+    // (not Report-Only). The reporting directives are inside the
+    // enforcing CSP header.
+    const csp = res.headers.get("Content-Security-Policy");
+    expect(csp).toBeTruthy();
     expect(csp).toContain("report-to csp-endpoint");
     expect(csp).toContain("report-uri /api/csp-report");
   });

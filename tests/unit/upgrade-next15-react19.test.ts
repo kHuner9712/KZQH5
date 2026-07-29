@@ -289,18 +289,19 @@ describe("8. React 19 test environment configuration", () => {
 
 describe("9. PDF Viewer Worker CSP", () => {
   it("middleware CSP allows blob: worker-src for PDF.js", () => {
-    const source = readFile("middleware.ts");
+    // Phase 3: CSP directives moved to lib/security/csp-policy.ts
+    const source = readFile("lib/security/csp-policy.ts");
     // worker-src must include blob: for PDF.js worker
     expect(source).toMatch(/worker-src\s+'self'\s+blob:/);
   });
 
   it("CSP does not use overly broad worker-src *", () => {
-    const source = readFile("middleware.ts");
+    const source = readFile("lib/security/csp-policy.ts");
     expect(source).not.toMatch(/worker-src\s+\*/);
   });
 
   it("CSP does not include unnecessary unsafe-eval for scripts", () => {
-    const source = readFile("middleware.ts");
+    const source = readFile("lib/security/csp-policy.ts");
     // CSP is Report-Only, and unsafe-eval should only appear if strictly needed
     // Check that it's not using a blanket wildcard
     expect(source).not.toMatch(/script-src\s+\*/);
