@@ -554,13 +554,22 @@ begin
     return jsonb_build_object('ok', false, 'error', 'invalid_batch_limit');
   end if;
 
+  -- PostgreSQL UPDATE does not support LIMIT directly. Use a subquery
+  -- to select the IDs of expired 'authorized' rows (up to p_batch_limit)
+  -- and update only those. FOR UPDATE SKIP LOCKED prevents concurrent
+  -- reapers from picking the same rows.
   update public.temp_uploads
   set
     status = 'failed',
     failure_reason = 'expired_authorized'
-  where status = 'authorized'
-    and expires_at <= now()
-  limit p_batch_limit;
+  where id in (
+    select id from public.temp_uploads
+    where status = 'authorized'
+      and expires_at <= now()
+    order by expires_at
+    limit p_batch_limit
+    for update skip locked
+  );
 
   get diagnostics v_count = row_count;
 
