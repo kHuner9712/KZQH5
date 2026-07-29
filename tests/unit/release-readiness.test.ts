@@ -359,7 +359,7 @@ describe("Phase 1 Task 4: security & operations BLOCK conditions", () => {
     expect(stdout).toContain("BLOCK");
   });
 
-  it("BLOCKs when CSP_ENFORCING=true (nonce-based CSP not yet implemented)", async () => {
+  it("Phase 6 PASSes when CSP_ENFORCING=true (admin routes are nonce-based enforcing)", async () => {
     const { stdout } = await runScript({
       NEXT_PUBLIC_SITE_URL: "https://staging.example.com",
       NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:1",
@@ -368,8 +368,35 @@ describe("Phase 1 Task 4: security & operations BLOCK conditions", () => {
       NEXT_PUBLIC_SITE_INDEXING_ENABLED: "false",
       CSP_ENFORCING: "true",
     });
+    // CSP_ENFORCING=true is now ALLOWED — admin routes are always
+    // nonce-based enforcing; public routes enforce with 'unsafe-inline'
+    // retained for ISR. The check should PASS, not BLOCK.
     expect(stdout).toContain("CSP_ENFORCING");
-    expect(stdout).toContain("BLOCK");
+    // Find the CSP_ENFORCING line and verify it is PASS, not BLOCK.
+    const cspLine = stdout
+      .split("\n")
+      .find((l) => l.includes("CSP_ENFORCING"));
+    expect(cspLine).toBeTruthy();
+    expect(cspLine!.toUpperCase()).toContain("PASS");
+    expect(cspLine!.toUpperCase()).not.toContain("BLOCK");
+  });
+
+  it("Phase 6 PASSes when CSP_ENFORCING is unset (admin enforcing, public Report-Only)", async () => {
+    const { stdout } = await runScript({
+      NEXT_PUBLIC_SITE_URL: "https://staging.example.com",
+      NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:1",
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon-key",
+      NEXT_PUBLIC_DEMO_MODE: "false",
+      NEXT_PUBLIC_SITE_INDEXING_ENABLED: "false",
+      CSP_ENFORCING: "",
+    });
+    expect(stdout).toContain("CSP_ENFORCING");
+    const cspLine = stdout
+      .split("\n")
+      .find((l) => l.includes("CSP_ENFORCING"));
+    expect(cspLine).toBeTruthy();
+    expect(cspLine!.toUpperCase()).toContain("PASS");
+    expect(cspLine!.toUpperCase()).not.toContain("BLOCK");
   });
 });
 
@@ -464,7 +491,7 @@ describe("Phase 1 Task 4: WARN conditions in deployment mode", () => {
     expect(stdout).toContain("WARN");
   });
 
-  it("WARNs about CSP Report-Only in staging mode", async () => {
+  it("WARNs about CSP public Report-Only in staging mode (admin is already enforcing)", async () => {
     const { stdout } = await runScript(
       {
         NEXT_PUBLIC_SITE_URL: "https://staging.example.com",
@@ -479,8 +506,34 @@ describe("Phase 1 Task 4: WARN conditions in deployment mode", () => {
       },
       ["--", "--mode=staging"],
     );
-    expect(stdout).toContain("CSP mode");
+    // Phase 6: label changed from "CSP mode" to "CSP public mode" to
+    // reflect that admin routes are ALWAYS nonce-based enforcing.
+    expect(stdout).toContain("CSP public mode");
     expect(stdout).toContain("Report-Only");
+    expect(stdout).toContain("WARN");
+  });
+
+  it("PASSes CSP public enforcing in staging mode when CSP_ENFORCING=true", async () => {
+    const { stdout } = await runScript(
+      {
+        NEXT_PUBLIC_SITE_URL: "https://staging.example.com",
+        NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:1",
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon-key",
+        NEXT_PUBLIC_DEMO_MODE: "false",
+        NEXT_PUBLIC_SITE_INDEXING_ENABLED: "false",
+        TRUSTED_PROXY_HEADER: "eo-connecting-ip",
+        RATE_LIMIT_FALLBACK_SECRET: "a".repeat(32),
+        OUTBOX_DISPATCH_SECRET: "a".repeat(16),
+        CSP_ENFORCING: "true",
+      },
+      ["--", "--mode=staging"],
+    );
+    expect(stdout).toContain("CSP public mode");
+    const cspPublicLine = stdout
+      .split("\n")
+      .find((l) => l.includes("CSP public mode"));
+    expect(cspPublicLine).toBeTruthy();
+    expect(cspPublicLine!.toUpperCase()).toContain("PASS");
   });
 
   it("WARNs about WAF verification in staging mode", async () => {

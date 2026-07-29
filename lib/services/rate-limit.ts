@@ -246,3 +246,38 @@ export function getReadinessRateLimiter(): RateLimiter {
     readinessLimiter = new MemoryRateLimiter(12, 60 * 1000);
   return readinessLimiter;
 }
+
+// Phase 6: OG image generation rate limiter.
+// Limit: 30 / 60s / IP. /api/og renders a 1200×630 PNG via Satori +
+// resvg (CPU-intensive). Without rate limiting, an attacker could
+// DOS the server by requesting many distinct titles (each triggers a
+// fresh render since the title is in the query string). The limit is
+// generous enough to support legitimate social-sharing crawlers
+// (WeChat, Twitter, LinkedIn fetch once per share) and browser
+// prefetch, while bounding CPU abuse.
+//
+// Multi-instance caveat applies (see MemoryRateLimiter header).
+let ogLimiter: RateLimiter | null = null;
+
+export function getOgRateLimiter(): RateLimiter {
+  if (!ogLimiter) ogLimiter = new MemoryRateLimiter(30, 60 * 1000);
+  return ogLimiter;
+}
+
+// Phase 6: WeChat JS-SDK config rate limiter.
+// Limit: 20 / 60s / IP. /api/wechat/jssdk calls the WeChat backend
+// API (which has its own quota) to fetch access_token + jsapi_ticket,
+// then signs a config. Without rate limiting, an attacker could
+// exhaust the WeChat API quota (which is shared across ALL users of
+// the app) by repeatedly hitting this endpoint. The limit is generous
+// enough for legitimate page loads (one fetch per page that needs
+// JS-SDK) while bounding quota abuse.
+//
+// Multi-instance caveat applies (see MemoryRateLimiter header).
+let wechatJsSdkLimiter: RateLimiter | null = null;
+
+export function getWechatJsSdkRateLimiter(): RateLimiter {
+  if (!wechatJsSdkLimiter)
+    wechatJsSdkLimiter = new MemoryRateLimiter(20, 60 * 1000);
+  return wechatJsSdkLimiter;
+}

@@ -56,8 +56,9 @@ export const runtime = "nodejs";
 // per-MIME 限制在 storage-upload 内执行（图片和 PDF 均 4MB）。
 //
 // 这意味着此前可上传的 4-20MB PDF 在单阶段上传路径下不再可用。
-// 两阶段上传（authorize -> 直传 Supabase -> finalize）作为正式发布阻断项
-// 列在 docs/LAUNCH_CHECKLIST.md 和 docs/TWO_PHASE_UPLOAD_DESIGN.md。
+// 两阶段上传（authorize -> 直传 Supabase -> finalize）已在 Phase 4 + Phase 5
+// 实现，所有 admin UI 组件已接入两阶段上传路径。此单阶段路由保留为 fallback。
+// 详见 docs/LAUNCH_CHECKLIST.md 和 docs/TWO_PHASE_UPLOAD_DESIGN.md。
 const MAX_REQUEST_BYTES = 5 * 1024 * 1024;
 
 // 实际文件字节二次校验上限：multipart 解码后 FILE 字段的最大字节数。

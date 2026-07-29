@@ -470,20 +470,39 @@ function checkSecurityAndOperations() {
     }
   }
 
-  // --- CSP_ENFORCING without nonce-based CSP ---
-  // Phase 1 Task 3 connected CSP reporting but did NOT implement
-  // nonce-based CSP. The current CSP policy still uses 'unsafe-inline'
-  // for script-src and style-src. Enforcing with 'unsafe-inline' defeats
-  // the purpose of CSP, so we BLOCK if CSP_ENFORCING=true is set before
-  // nonce-based CSP is implemented (Phase 3).
+  // --- CSP_ENFORCING ---
+  // Phase 3 (cherry-picked into Phase 6) split CSP by route:
+  //   - Admin routes (/admin/**, /api/admin/**): ALWAYS nonce-based
+  //     enforcing CSP. No 'unsafe-inline', no 'unsafe-eval'. This is
+  //     safe regardless of CSP_ENFORCING because admin pages are
+  //     force-dynamic (per-request nonce does not break ISR).
+  //   - Public routes: Report-Only by default. CSP_ENFORCING=true
+  //     switches them to enforcing. Public CSP still retains
+  //     'unsafe-inline' for script-src/style-src to preserve ISR
+  //     compatibility (static CSP, no per-request nonce).
+  //
+  // The original Phase 1 BLOCK ("nonce-based CSP not yet implemented")
+  // is no longer valid — admin routes are nonce-based enforcing.
+  //
+  // CSP_ENFORCING=true is now ALLOWED because:
+  //   1. Admin routes are already nonce-based enforcing (unconditionally).
+  //   2. Public routes with CSP_ENFORCING=true still have 'unsafe-inline'
+  //      for script-src, but the OTHER directives (img-src allowlist,
+  //      connect-src allowlist, frame-ancestors 'none', object-src
+  //      'none', etc.) ARE enforced and provide meaningful protection
+  //      against image/data exfiltration, clickjacking, and plugin
+  //      content. The operator explicitly opts into this tradeoff.
   const cspEnforcing = process.env.CSP_ENFORCING === "true";
   if (cspEnforcing) {
-    block(
+    pass(
       "env: CSP_ENFORCING",
-      "true — nonce-based CSP not yet implemented; enforcing with 'unsafe-inline' is not safe. Keep Report-Only until Phase 3 CSP hardening is complete.",
+      "true — admin routes use nonce-based enforcing (unconditional); public routes enforce with 'unsafe-inline' retained for ISR compatibility",
     );
   } else {
-    pass("env: CSP_ENFORCING", "false / unset (Report-Only mode)");
+    pass(
+      "env: CSP_ENFORCING",
+      "false / unset — admin routes use nonce-based enforcing; public routes use Report-Only (observation period)",
+    );
   }
 
   // --- WARN conditions (deployment mode only) ---
@@ -512,11 +531,16 @@ function checkSecurityAndOperations() {
       pass("env: notification providers", "at least one configured");
     }
 
-    // CSP still Report-Only
+    // CSP mode for public routes
     if (!cspEnforcing) {
       warn(
-        "env: CSP mode",
-        "Report-Only — enforcing not yet enabled (observation period)",
+        "env: CSP public mode",
+        "Report-Only — public routes not yet enforcing (admin routes are already nonce-based enforcing). Set CSP_ENFORCING=true after observation period to enforce img-src/connect-src/frame-ancestors directives on public routes.",
+      );
+    } else {
+      pass(
+        "env: CSP public mode",
+        "enforcing — public routes enforce img-src/connect-src/frame-ancestors directives (script-src retains 'unsafe-inline' for ISR)",
       );
     }
 

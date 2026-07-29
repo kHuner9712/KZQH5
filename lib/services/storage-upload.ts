@@ -77,8 +77,9 @@ export type PublicAssetTopCategory = (typeof PUBLIC_ASSETS_ALLOWED_TOP_CATEGORIE
  *   - PDF：4MB（4194304 字节，此前为 20MB）
  *
  * 此前 4-20MB 范围内的 PDF 在单阶段上传路径下不再可用。两阶段上传
- * (authorize -> 直传 Supabase -> finalize) 作为正式发布阻断项，详见
- * docs/TWO_PHASE_UPLOAD_DESIGN.md 与 docs/LAUNCH_CHECKLIST.md。
+ * (authorize -> 直传 Supabase -> finalize) 已在 Phase 4 + Phase 5 实现，
+ * 所有 admin UI 组件已接入两阶段上传路径。PDF 上限 20MB，图片上限 5MB。
+ * 详见 docs/TWO_PHASE_UPLOAD_DESIGN.md 与 docs/LAUNCH_CHECKLIST.md。
  *
  * SVG、HTML、text/html、application/javascript 及任何可执行内容均不在白名单内，
  * 在 MIME 校验阶段即被拒绝；即便伪造 MIME，Magic Bytes 校验也会拦截。
@@ -195,7 +196,7 @@ function validateUploadFile(input: {
  * 客户端无法提供完整 Storage Path —— 仅提供 category（白名单校验）。
  * category 不参与 sanitize（已是枚举白名单）；ext 仅允许字母数字与点号。
  */
-function generatePrivateStoragePath(
+export function generatePrivateStoragePath(
   category: PrivateAssetCategory,
   ext: string,
 ): string {
@@ -535,7 +536,7 @@ function isAllowedPublicTopCategory(folder: string): boolean {
  * 与 private-assets 不同，folder 允许多段子目录（历史行为），但必须通过
  * sanitizeStoragePath 防 path traversal，且顶层分类必须命中白名单。
  */
-function generatePublicStoragePath(
+export function generatePublicStoragePath(
   folder: string,
   ext: string,
 ): string | null {

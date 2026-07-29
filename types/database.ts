@@ -1232,6 +1232,49 @@ export type Database = {
         };
         Returns: unknown;
       };
+      // Phase 4: Two-phase upload temp_uploads lifecycle RPCs.
+      // See migration 20260729020000_temp_uploads_two_phase_upload.sql.
+      authorize_temp_upload: {
+        Args: {
+          p_purpose: string;
+          p_filename: string;
+          p_mime_type: string;
+          p_size: number;
+          p_final_bucket: string;
+          p_final_category: string;
+          p_actor_id?: string | null;
+          p_actor_role?: string | null;
+        };
+        Returns: unknown;
+      };
+      claim_temp_upload_for_finalize: {
+        Args: { p_token: string };
+        Returns: unknown;
+      };
+      complete_temp_upload_finalize: {
+        Args: {
+          p_token: string;
+          p_final_object_path: string;
+          p_final_bucket?: string | null;
+        };
+        Returns: unknown;
+      };
+      fail_temp_upload_finalize: {
+        Args: {
+          p_token: string;
+          p_reason: string;
+          p_outcome?: string;
+        };
+        Returns: unknown;
+      };
+      recover_stale_temp_uploads: {
+        Args: { p_stale_threshold_seconds?: number };
+        Returns: unknown;
+      };
+      reap_expired_temp_uploads: {
+        Args: { p_batch_limit?: number };
+        Returns: unknown;
+      };
     };
     Enums: Record<string, never>;
   };

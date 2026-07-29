@@ -289,3 +289,235 @@ export async function enqueueCleanupViaServerApi(input: {
     return { ok: false, error: "入队失败" };
   }
 }
+
+// ============================================================
+// 两阶段大文件上传（Phase 4）
+// ------------------------------------------------------------
+// 客户端直传 Supabase Storage，绕过 EdgeOne 6MB 平台请求体限制。
+//
+// 流程：
+//   1. requestUploadAuthorization(file, purpose)
+//      → POST /api/admin/storage/upload/authorize
+//      → 返回 { uploadToken, signedUrl, headers, expiresAt }
+//   2. uploadDirectToStorage(signedUrl, file, headers)
+//      → PUT 直传到 Supabase Storage（跨域请求）
+//   3. finalizeUpload(uploadToken)
+//      → POST /api/admin/storage/upload/finalize
+//      → 返回 StorageObjectRef
+//
+// 优势：
+//   - 绕过 EdgeOne 6MB 平台限制，支持最大 20MB PDF
+//   - 服务端不缓冲文件字节，降低内存压力
+//   - 服务端仍执行 Magic Bytes / MIME / 大小验证（finalize 阶段）
+//
+// 前提条件（部署侧）：
+//   - Supabase Storage bucket 必须配置 CORS 允许浏览器 PUT
+//   - 详见 docs/TWO_PHASE_UPLOAD_DESIGN.md 第 4.1 节
+// ============================================================
+
+/** /authorize 响应体。 */
+interface AuthorizeResponse {
+  uploadToken?: unknown;
+  signedUrl?: unknown;
+  expiresAt?: unknown;
+  method?: unknown;
+  headers?: unknown;
+}
+
+/** /finalize 响应体。 */
+interface FinalizeResponse {
+  bucket?: unknown;
+  path?: unknown;
+  publicUrl?: unknown;
+  mimeType?: unknown;
+  size?: unknown;
+}
+
+/**
+ * Phase 1: 请求上传授权。
+ *
+ * 客户端提交 purpose + filename + mimeType + size，服务端验证后
+ * 返回短期签名上传 URL（指向 private-assets/temp/{token}/{filename}）。
+ *
+ * @param file     浏览器 File 对象
+ * @param purpose  Storage 用途
+ */
+export async function requestUploadAuthorization(
+  file: File,
+  purpose: StoragePurpose,
+): Promise<
+  | { ok: true; uploadToken: string; signedUrl: string; headers: Record<string, string> }
+  | { ok: false; error: string }
+> {
+  try {
+    const res = await fetch("/api/admin/storage/upload/authorize", {
+      method: "POST",
+      body: JSON.stringify({
+        purpose,
+        filename: file.name,
+        mimeType: file.type,
+        size: file.size,
+      }),
+      headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
+    });
+
+    if (!res.ok) {
+      return { ok: false, error: "上传授权失败" };
+    }
+
+    const json = (await res.json()) as AuthorizeResponse;
+
+    if (
+      typeof json.uploadToken !== "string" ||
+      typeof json.signedUrl !== "string"
+    ) {
+      return { ok: false, error: "上传授权失败" };
+    }
+
+    const headers =
+      typeof json.headers === "object" && json.headers !== null
+        ? (json.headers as Record<string, string>)
+        : {};
+
+    return {
+      ok: true,
+      uploadToken: json.uploadToken,
+      signedUrl: json.signedUrl,
+      headers,
+    };
+  } catch {
+    return { ok: false, error: "上传授权失败" };
+  }
+}
+
+/**
+ * Phase 2: 直传文件到 Supabase Storage。
+ *
+ * 使用签名上传 URL 直接 PUT 文件到 Supabase Storage，不经过
+ * 应用服务器，绕过 EdgeOne 6MB 平台限制。
+ *
+ * 需要 Supabase Storage bucket 配置 CORS 允许浏览器 PUT。
+ *
+ * @param signedUrl  /authorize 返回的签名上传 URL
+ * @param file       浏览器 File 对象
+ * @param headers    /authorize 返回的请求头
+ */
+export async function uploadDirectToStorage(
+  signedUrl: string,
+  file: File,
+  headers: Record<string, string>,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    // 直接 PUT 到 Supabase Storage（跨域请求）
+    const res = await fetch(signedUrl, {
+      method: "PUT",
+      body: file,
+      headers: {
+        ...headers,
+        "Content-Type": file.type,
+      },
+      // 不携带 credentials —— 签名 URL 自带认证
+      credentials: "omit",
+      mode: "cors",
+    });
+
+    if (!res.ok) {
+      return { ok: false, error: "直传失败" };
+    }
+
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "直传失败" };
+  }
+}
+
+/**
+ * Phase 3: 确认上传完成。
+ *
+ * 通知服务端验证已上传的对象（HEAD + Magic Bytes），并将其从
+ * temp/ 移动到最终路径。返回完整的 StorageObjectRef。
+ *
+ * @param uploadToken  /authorize 返回的 uploadToken
+ */
+export async function finalizeUpload(
+  uploadToken: string,
+): Promise<{ ok: true; data: StorageObjectRef } | { ok: false; error: string }> {
+  try {
+    const res = await fetch("/api/admin/storage/upload/finalize", {
+      method: "POST",
+      body: JSON.stringify({ uploadToken }),
+      headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
+    });
+
+    if (!res.ok) {
+      return { ok: false, error: "上传确认失败" };
+    }
+
+    const json = (await res.json()) as FinalizeResponse;
+
+    if (
+      typeof json.path !== "string" ||
+      !isBucket(json.bucket)
+    ) {
+      return { ok: false, error: "上传确认失败" };
+    }
+
+    const path = json.path;
+    const bucket = json.bucket;
+
+    const publicUrl =
+      typeof json.publicUrl === "string"
+        ? json.publicUrl
+        : bucket === PUBLIC_ASSETS_BUCKET
+          ? buildPublicAssetsUrl(path)
+          : null;
+
+    return {
+      ok: true,
+      data: {
+        bucket,
+        path,
+        mimeType:
+          typeof json.mimeType === "string" ? json.mimeType : "",
+        size: typeof json.size === "number" ? json.size : 0,
+        publicUrl,
+        previewUrl: null,
+      },
+    };
+  } catch {
+    return { ok: false, error: "上传确认失败" };
+  }
+}
+
+/**
+ * 两阶段上传完整流程（authorize → direct PUT → finalize）。
+ *
+ * 这是客户端调用的推荐入口。内部依次调用：
+ *   1. requestUploadAuthorization
+ *   2. uploadDirectToStorage
+ *   3. finalizeUpload
+ *
+ * 任何一步失败都会立即返回错误。若 Phase 2（直传）成功但
+ * Phase 3（finalize）失败，temp 对象会留在 private-assets/temp/
+ * 下，由 cleanup dispatcher 自动清理。
+ *
+ * @param file     浏览器 File 对象
+ * @param purpose  Storage 用途
+ */
+export async function uploadViaTwoPhase(
+  file: File,
+  purpose: StoragePurpose,
+): Promise<{ ok: true; data: StorageObjectRef } | { ok: false; error: string }> {
+  // Phase 1: authorize
+  const auth = await requestUploadAuthorization(file, purpose);
+  if (!auth.ok) return auth;
+
+  // Phase 2: direct upload to Storage
+  const upload = await uploadDirectToStorage(auth.signedUrl, file, auth.headers);
+  if (!upload.ok) return upload;
+
+  // Phase 3: finalize
+  return finalizeUpload(auth.uploadToken);
+}

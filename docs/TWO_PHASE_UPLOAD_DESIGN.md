@@ -1,16 +1,24 @@
-# Two-Phase Upload Design (Working Document)
+# Two-Phase Upload Design (Implemented)
 
-> **Status**: Working design document. **Not yet implemented.
-> RELEASE BLOCKER** (Review #2 WP7).
+> **Status**: **Implemented** (Phase 4 + Phase 5).
 >
-> The single-phase upload route (`POST /api/admin/storage/upload`)
-> is constrained by the EdgeOne Cloud Functions 6 MB request body
-> platform limit. Review #2 WP7 lowered the application-layer
-> limits to `MAX_REQUEST_BYTES=5MB` / `MAX_FILE_BYTES=4.5MB` /
-> per-MIME 4 MB so the route no longer claims support for 20 MB PDFs.
-> PDFs larger than 4 MB **cannot be uploaded** through the current
-> single-phase path. Implementing this two-phase protocol is the
-> documented release blocker for restoring large-PDF upload support.
+> The two-phase upload protocol is fully implemented and wired into
+> all admin UI upload components (`FileUpload`, `ImageUpload`, project
+> image upload). The single-phase route (`POST /api/admin/storage/upload`)
+> remains as a fallback but is no longer the primary upload path.
+>
+> **Phase 4** delivered the database layer (`temp_uploads` table + 6
+> lifecycle RPCs), server-side services (`authorizeTempUpload` /
+> `finalizeTempUpload`), API routes (`/authorize` + `/finalize`), and
+> the client orchestrator (`uploadViaTwoPhase`).
+>
+> **Phase 5** wired `uploadViaTwoPhase` into all admin upload components,
+> replacing `uploadViaServerApi` as the primary upload path.
+>
+> **Deployment prerequisite**: Supabase Storage bucket must have CORS
+> configured to allow browser PUT requests (see Section 4.1 below).
+>
+> **Size limits**: PDF 20 MB, images (JPEG/PNG/WebP) 5 MB.
 >
 > **Hardening level achieved by WP-D**: Resource consumption at the
 > route boundary is bounded, but the **in-memory exhaustion risk is not

@@ -8,7 +8,7 @@ import { FormActions, Modal } from "@/components/admin/Modal";
 import { useToast } from "@/components/admin/Toast";
 import { Button } from "@/components/ui/Button";
 import { Input, Textarea } from "@/components/ui/Input";
-import { uploadViaServerApi } from "@/lib/services/admin-storage-fetch";
+import { uploadViaTwoPhase } from "@/lib/services/admin-storage-fetch";
 import {
   deleteProjectApi,
   getProjectEditorApi,
@@ -149,7 +149,7 @@ function ProjectModal({ initial, products, onClose, onSaved }: { initial: Projec
   }, [initial, show]);
   function update<K extends keyof typeof form>(key: K, value: typeof form[K]) { setForm((current) => ({ ...current, [key]: value })); }
   function moveImage(index: number, direction: -1 | 1) { const target = index + direction; if (target < 0 || target >= images.length) return; setImages((current) => { const next = [...current]; [next[index], next[target]] = [next[target], next[index]]; return next; }); }
-  async function uploadImages(files: FileList | null) { if (!files?.length) return; setUploading(true); for (const file of Array.from(files).slice(0, 12)) { const result = await uploadViaServerApi(file, "project-image"); if (result.ok && result.data.publicUrl) setImages((current) => [...current, { id: `tmp-${Date.now()}-${current.length}`, image_url: result.data.publicUrl!, alt_cn: null, alt_en: null, sort_order: current.length }]); else show(result.ok ? "图片上传失败" : result.error, "error"); } setUploading(false); }
+  async function uploadImages(files: FileList | null) { if (!files?.length) return; setUploading(true); for (const file of Array.from(files).slice(0, 12)) { const result = await uploadViaTwoPhase(file, "project-image"); if (result.ok && result.data.publicUrl) setImages((current) => [...current, { id: `tmp-${Date.now()}-${current.length}`, image_url: result.data.publicUrl!, alt_cn: null, alt_en: null, sort_order: current.length }]); else show(result.ok ? "图片上传失败" : result.error, "error"); } setUploading(false); }
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     if (!form.title_cn.trim() || !form.slug.trim() || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(form.slug)) { show("请填写中文标题和有效 slug", "error"); return; }
