@@ -40,9 +40,9 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: Pr
   let summary;
   try {
     summary = await getAnalyticsSummary(admin.client, range.start, range.end);
-  } catch (error) {
-    console.error("Analytics summary failed:", error instanceof Error ? error.message : "unknown error");
-    return <div className="rounded-2xl bg-white p-8 text-center ring-1 ring-gray-100" role="alert"><h1 className="text-lg font-semibold text-graphite">统计暂时不可用</h1><p className="mt-2 text-sm text-gray-500">请确认已执行最新 migration，或稍后重试。</p><Link href="/admin/analytics" className="mt-5 inline-flex h-11 items-center rounded-lg bg-steel px-5 text-sm text-white">重试</Link></div>;
+  } catch {
+    console.warn("ANALYTICS_SUMMARY_FAILED");
+    return <div className="rounded-2xl bg-white p-8 text-center ring-1 ring-gray-100" role="alert"><h1 className="text-lg font-semibold text-graphite">统计暂时不可用</h1><p className="mt-2 text-sm text-gray-500">请确认已执行最新 migration，或稍后重试。</p><Link href="/admin/analytics" prefetch={false} className="mt-5 inline-flex h-11 items-center rounded-lg bg-steel px-5 text-sm text-white">重试</Link></div>;
   }
   const cards = [
     { label: "页面浏览", value: summary.page_views, icon: Eye },

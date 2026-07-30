@@ -14,13 +14,14 @@ import { isDemoMode } from "@/lib/demo";
 import {
   adminWriteError,
   requireAdminWrite,
+  requireAdminRead,
 } from "@/lib/services/admin-write-boundary";
 import type { AdminWriteErrorCode } from "@/lib/services/admin-write-boundary";
-import { getVerifiedAdmin } from "@/lib/services/admin-auth";
 import {
   getHomepageContent,
   saveHomepageContent,
 } from "@/lib/services/admin-content-write";
+import { validateHomeFeatureArray } from "@/lib/validation/jsonb-fields";
 
 const MAX_BODY = 256 * 1024;
 
@@ -45,17 +46,17 @@ function statusForCode(code: AdminWriteErrorCode): number {
   }
 }
 
-export async function GET() {
-  const admin = await getVerifiedAdmin();
-  if (!admin.ok) {
-    return adminWriteError("ADMIN_WRITE_UNAUTHORIZED", 401);
-  }
+export async function GET(request: NextRequest) {
+  // Phase 9: requireAdminRead enforces auth + global/per-admin rate limit +
+  // RBAC(minimum editor) + CSRF (isSameSiteRequest for GET).
+  const guard = await requireAdminRead(request, { minimumRole: "editor" });
+  if (!guard.ok) return guard.response;
 
   if (isDemoMode()) {
     return NextResponse.json({ success: true, demo: true, content: null });
   }
 
-  const result = await getHomepageContent(admin.client);
+  const result = await getHomepageContent(guard.client);
   if (!result.ok) {
     return adminWriteError(result.code, statusForCode(result.code));
   }
@@ -98,6 +99,15 @@ export async function POST(request: NextRequest) {
     });
   }
 
+  const featuresCnResult = validateHomeFeatureArray("features_cn", p.features_cn, 20);
+  if (!featuresCnResult.ok) {
+    return adminWriteError("ADMIN_WRITE_BAD_REQUEST", 400);
+  }
+  const featuresEnResult = validateHomeFeatureArray("features_en", p.features_en, 20);
+  if (!featuresEnResult.ok) {
+    return adminWriteError("ADMIN_WRITE_BAD_REQUEST", 400);
+  }
+
   const result = await saveHomepageContent(
     guard.client,
     {
@@ -119,8 +129,8 @@ export async function POST(request: NextRequest) {
         feature_section_title_en: stringOrNull(p.feature_section_title_en),
         feature_section_subtitle_cn: stringOrNull(p.feature_section_subtitle_cn),
         feature_section_subtitle_en: stringOrNull(p.feature_section_subtitle_en),
-        features_cn: p.features_cn,
-        features_en: p.features_en,
+        features_cn: featuresCnResult.value,
+        features_en: featuresEnResult.value,
         category_section_title_cn: stringOrNull(p.category_section_title_cn),
         category_section_subtitle_cn: stringOrNull(p.category_section_subtitle_cn),
         featured_products_title_cn: stringOrNull(p.featured_products_title_cn),

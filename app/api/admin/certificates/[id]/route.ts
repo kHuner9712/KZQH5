@@ -14,6 +14,7 @@ import {
   requireAdminWrite,
 } from "@/lib/services/admin-write-boundary";
 import type { AdminWriteErrorCode } from "@/lib/services/admin-write-boundary";
+import { UUID_PATTERN } from "@/lib/services/http-security";
 import {
   deleteCertificate,
   updateCertificateMetadata,
@@ -24,6 +25,10 @@ import type {
 } from "@/types/database";
 
 const MAX_BODY = 256 * 1024;
+
+// Phase 8: Admin API routes must be dynamic to ensure middleware runs and
+// CSP nonce / Cache-Control headers are injected on every request.
+export const dynamic = "force-dynamic";
 
 function statusForCode(code: AdminWriteErrorCode): number {
   switch (code) {
@@ -72,6 +77,11 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
+  // Phase 8: validate path param BEFORE requireAdminWrite so malformed
+  // inputs get 400 instead of being forwarded to the RPC layer.
+  if (!UUID_PATTERN.test(id)) {
+    return adminWriteError("ADMIN_WRITE_BAD_REQUEST", 400);
+  }
 
   const guard = await requireAdminWrite<Record<string, unknown>>(request, {
     maxBytes: MAX_BODY,
@@ -107,6 +117,19 @@ export async function PATCH(
     return adminWriteError("ADMIN_WRITE_BAD_REQUEST", 400);
   }
 
+  // Phase 8: is_published is intentionally NOT accepted here. Publish state
+  // transitions MUST go through the dedicated /publish and /unpublish
+  // endpoints, which perform the two-phase Storage copy (private → public)
+  // and enqueue cleanup of the old public object. Letting PATCH flip
+  // is_published directly would leave the DB marked published while the
+  // public-assets bucket has no corresponding object (front-end 404), or
+  // leave public objects orphaned when un-publishing (storage leak).
+  // This enforces the hard constraint: "Storage object refs must transition
+  // through 'active' → 'pending_delete' → 'deleted' states".
+  if (typeof p.is_published !== "undefined") {
+    return adminWriteError("ADMIN_WRITE_BAD_REQUEST", 400);
+  }
+
   const payload = {
     name_cn: typeof p.name_cn === "string" ? p.name_cn : undefined,
     name_en: typeof p.name_en === "string" ? p.name_en : undefined,
@@ -117,7 +140,6 @@ export async function PATCH(
     applicable_scope_en:
       typeof p.applicable_scope_en === "string" ? p.applicable_scope_en : undefined,
     sort_order: typeof p.sort_order === "number" ? p.sort_order : undefined,
-    is_published: typeof p.is_published === "boolean" ? p.is_published : undefined,
   };
 
   if (isDemoMode()) {
@@ -170,6 +192,9 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
+  if (!UUID_PATTERN.test(id)) {
+    return adminWriteError("ADMIN_WRITE_BAD_REQUEST", 400);
+  }
 
   const guard = await requireAdminWrite<Record<string, unknown>>(request, {
     maxBytes: MAX_BODY,

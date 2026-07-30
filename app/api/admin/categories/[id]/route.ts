@@ -23,8 +23,13 @@ import {
   saveCategory,
 } from "@/lib/services/admin-content-write";
 import type { Category } from "@/types/database";
+import { UUID_PATTERN } from "@/lib/services/http-security";
 
 const MAX_BODY = 64 * 1024;
+
+// Phase 8: Admin API routes must be dynamic to ensure middleware runs and
+// CSP nonce / Cache-Control headers are injected on every request.
+export const dynamic = "force-dynamic";
 
 function statusForCode(code: AdminWriteErrorCode): number {
   switch (code) {
@@ -61,6 +66,11 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
+  // Phase 8: validate path param BEFORE requireAdminWrite so malformed
+  // inputs get 400 instead of being forwarded to the RPC layer.
+  if (!UUID_PATTERN.test(id)) {
+    return adminWriteError("ADMIN_WRITE_BAD_REQUEST", 400);
+  }
 
   const guard = await requireAdminWrite<Record<string, unknown>>(request, {
     maxBytes: MAX_BODY,
@@ -136,6 +146,11 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
+  // Phase 8: validate path param BEFORE requireAdminWrite so malformed
+  // inputs get 400 instead of being forwarded to the RPC layer.
+  if (!UUID_PATTERN.test(id)) {
+    return adminWriteError("ADMIN_WRITE_BAD_REQUEST", 400);
+  }
 
   const guard = await requireAdminWrite<Record<string, unknown>>(request, {
     maxBytes: MAX_BODY,

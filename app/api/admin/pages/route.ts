@@ -13,13 +13,14 @@ import { isDemoMode } from "@/lib/demo";
 import {
   adminWriteError,
   requireAdminWrite,
+  requireAdminRead,
 } from "@/lib/services/admin-write-boundary";
 import type { AdminWriteErrorCode } from "@/lib/services/admin-write-boundary";
-import { getVerifiedAdmin } from "@/lib/services/admin-auth";
 import {
   listPageContent,
   savePageContent,
 } from "@/lib/services/admin-content-write";
+import { validatePageSectionArray } from "@/lib/validation/jsonb-fields";
 
 const MAX_BODY = 256 * 1024;
 
@@ -44,17 +45,17 @@ function statusForCode(code: AdminWriteErrorCode): number {
   }
 }
 
-export async function GET() {
-  const admin = await getVerifiedAdmin();
-  if (!admin.ok) {
-    return adminWriteError("ADMIN_WRITE_UNAUTHORIZED", 401);
-  }
+export async function GET(request: NextRequest) {
+  // Phase 9: requireAdminRead enforces auth + global/per-admin rate limit +
+  // RBAC(minimum editor) + CSRF (isSameSiteRequest for GET).
+  const guard = await requireAdminRead(request, { minimumRole: "editor" });
+  if (!guard.ok) return guard.response;
 
   if (isDemoMode()) {
     return NextResponse.json({ success: true, demo: true, pages: [] });
   }
 
-  const result = await listPageContent(admin.client);
+  const result = await listPageContent(guard.client);
   if (!result.ok) {
     return adminWriteError(result.code, statusForCode(result.code));
   }
@@ -97,6 +98,15 @@ export async function POST(request: NextRequest) {
     });
   }
 
+  const sectionsCnResult = validatePageSectionArray("sections_cn", p.sections_cn, 50);
+  if (!sectionsCnResult.ok) {
+    return adminWriteError("ADMIN_WRITE_BAD_REQUEST", 400);
+  }
+  const sectionsEnResult = validatePageSectionArray("sections_en", p.sections_en, 50);
+  if (!sectionsEnResult.ok) {
+    return adminWriteError("ADMIN_WRITE_BAD_REQUEST", 400);
+  }
+
   const result = await savePageContent(
     guard.client,
     {
@@ -109,8 +119,8 @@ export async function POST(request: NextRequest) {
         subtitle_en: stringOrNull(p.subtitle_en),
         description_cn: stringOrNull(p.description_cn),
         description_en: stringOrNull(p.description_en),
-        sections_cn: p.sections_cn,
-        sections_en: p.sections_en,
+        sections_cn: sectionsCnResult.value,
+        sections_en: sectionsEnResult.value,
         seo_title_cn: stringOrNull(p.seo_title_cn),
         seo_title_en: stringOrNull(p.seo_title_en),
         seo_description_cn: stringOrNull(p.seo_description_cn),

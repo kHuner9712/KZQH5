@@ -19,13 +19,13 @@ import { isDemoMode } from "@/lib/demo";
 import {
   adminWriteError,
   requireAdminWrite,
+  requireAdminRead,
 } from "@/lib/services/admin-write-boundary";
 import type { AdminWriteErrorCode } from "@/lib/services/admin-write-boundary";
 import {
   listAllCertificates,
   saveCertificateDraft,
 } from "@/lib/services/admin-certificate-write";
-import { getVerifiedAdmin } from "@/lib/services/admin-auth";
 import type {
   ProductAssetAccessLevel,
   ProductAssetSourceType,
@@ -69,11 +69,11 @@ const VALID_SOURCE_TYPES: readonly ProductAssetSourceType[] = [
  * The admin UI MUST call this route instead of reading certificates
  * via the Browser Supabase client. Uses service_role.
  */
-export async function GET() {
-  const admin = await getVerifiedAdmin();
-  if (!admin.ok) {
-    return adminWriteError("ADMIN_WRITE_UNAUTHORIZED", 401);
-  }
+export async function GET(request: NextRequest) {
+  // Phase 9: requireAdminRead enforces auth + global/per-admin rate limit +
+  // RBAC(minimum editor) + CSRF (isSameSiteRequest for GET).
+  const guard = await requireAdminRead(request, { minimumRole: "editor" });
+  if (!guard.ok) return guard.response;
 
   if (isDemoMode()) {
     return NextResponse.json({
@@ -83,7 +83,7 @@ export async function GET() {
     });
   }
 
-  const result = await listAllCertificates(admin.client);
+  const result = await listAllCertificates(guard.client);
   if (!result.ok) {
     return adminWriteError(result.code, statusForCode(result.code));
   }

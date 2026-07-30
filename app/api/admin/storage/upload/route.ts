@@ -104,7 +104,7 @@ export async function POST(request: NextRequest) {
   const rate = await getStorageUploadRateLimiter().check(rateKey);
   if (!rate.allowed) {
     return NextResponse.json(
-      { error: "Too many requests" },
+      { error: "ADMIN_WRITE_RATE_LIMITED" },
       {
         status: 429,
         headers: {

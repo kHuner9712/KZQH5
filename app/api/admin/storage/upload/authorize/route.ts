@@ -45,19 +45,10 @@ const ALLOWED_FIELDS = new Set([
 ]);
 
 export async function POST(request: NextRequest) {
-  // Demo mode: return a fake authorization so the UI can be tested
-  // without a real Supabase backend.
-  if (isDemoMode()) {
-    return NextResponse.json({
-      uploadToken: crypto.randomUUID(),
-      signedUrl: "https://demo.supabase.co/storage/v1/object/upload/private-assets/temp/demo/placeholder",
-      expiresAt: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
-      method: "PUT",
-      headers: { "Content-Type": "application/octet-stream" },
-    });
-  }
-
-  // Unified boundary: auth + RBAC(admin) + same-origin + Content-Length
+  // Unified boundary FIRST: auth + RBAC(admin) + same-origin + Content-Length.
+  // Demo mode MUST come after the security boundary so that even demo
+  // requests are authenticated, role-checked, CSRF-checked, and rate-limited.
+  // The hard constraint: "Demo mode branch must be after requireAdminWrite".
   const guard = await requireAdminWrite<{
     purpose: unknown;
     filename: unknown;
@@ -70,12 +61,13 @@ export async function POST(request: NextRequest) {
   });
   if (!guard.ok) return guard.response;
 
-  // Rate limit per admin actor
+  // Rate limit per admin actor (checked before the demo branch so demo
+  // traffic is also bounded by the per-admin upload limiter).
   const rateKey = `admin-upload-authorize:${guard.user.id}`;
   const rate = await getStorageUploadRateLimiter().check(rateKey);
   if (!rate.allowed) {
     return NextResponse.json(
-      { error: "Too many requests" },
+      { error: "ADMIN_WRITE_RATE_LIMITED" },
       {
         status: 429,
         headers: {
@@ -84,6 +76,19 @@ export async function POST(request: NextRequest) {
         },
       },
     );
+  }
+
+  // Demo mode: return a fake authorization so the UI can be tested
+  // without a real Supabase backend. Now placed AFTER auth + RBAC + CSRF +
+  // rate limiting, so demo requests still pass the full security boundary.
+  if (isDemoMode()) {
+    return NextResponse.json({
+      uploadToken: crypto.randomUUID(),
+      signedUrl: "https://demo.supabase.co/storage/v1/object/upload/private-assets/temp/demo/placeholder",
+      expiresAt: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+      method: "PUT",
+      headers: { "Content-Type": "application/octet-stream" },
+    });
   }
 
   const body = guard.body;

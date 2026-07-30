@@ -293,7 +293,7 @@ export async function finalizeTempUpload(
       await enqueueStorageCleanup({
         bucket: PRIVATE_ASSETS_BUCKET,
         objectPath: tempObjectPath,
-        reason: "form_cancelled",
+        reason: "orphan_detected",
       });
       return { ok: false, code: "SIZE_MISMATCH" };
     }
@@ -306,6 +306,11 @@ export async function finalizeTempUpload(
 
   if (rangeError || !rangeData) {
     await failFinalize(client, input.uploadToken, "range_download_failed");
+    await enqueueStorageCleanup({
+      bucket: PRIVATE_ASSETS_BUCKET,
+      objectPath: tempObjectPath,
+      reason: "orphan_detected",
+    });
     return { ok: false, code: "RANGE_DOWNLOAD_FAILED" };
   }
 
@@ -317,12 +322,22 @@ export async function finalizeTempUpload(
     });
     if (!response.ok) {
       await failFinalize(client, input.uploadToken, "magic_bytes_fetch_failed");
+      await enqueueStorageCleanup({
+        bucket: PRIVATE_ASSETS_BUCKET,
+        objectPath: tempObjectPath,
+        reason: "orphan_detected",
+      });
       return { ok: false, code: "MAGIC_BYTES_FETCH_FAILED" };
     }
     const buffer = await response.arrayBuffer();
     magicBytes = new Uint8Array(buffer);
   } catch {
     await failFinalize(client, input.uploadToken, "magic_bytes_fetch_exception");
+    await enqueueStorageCleanup({
+      bucket: PRIVATE_ASSETS_BUCKET,
+      objectPath: tempObjectPath,
+      reason: "orphan_detected",
+    });
     return { ok: false, code: "MAGIC_BYTES_FETCH_FAILED" };
   }
 
@@ -338,7 +353,7 @@ export async function finalizeTempUpload(
     await enqueueStorageCleanup({
       bucket: PRIVATE_ASSETS_BUCKET,
       objectPath: tempObjectPath,
-      reason: "form_cancelled",
+      reason: "orphan_detected",
     });
     return { ok: false, code: "MAGIC_BYTES_MISMATCH" };
   }
@@ -355,6 +370,11 @@ export async function finalizeTempUpload(
     const publicPath = generatePublicStoragePath(finalCategory, ext);
     if (!publicPath) {
       await failFinalize(client, input.uploadToken, "path_generation_failed");
+      await enqueueStorageCleanup({
+        bucket: PRIVATE_ASSETS_BUCKET,
+        objectPath: tempObjectPath,
+        reason: "orphan_detected",
+      });
       return { ok: false, code: "PATH_GENERATION_FAILED" };
     }
     finalObjectPath = publicPath;
@@ -367,6 +387,11 @@ export async function finalizeTempUpload(
 
   if (copyError) {
     await failFinalize(client, input.uploadToken, `copy_failed:${copyError.message}`);
+    await enqueueStorageCleanup({
+      bucket: PRIVATE_ASSETS_BUCKET,
+      objectPath: tempObjectPath,
+      reason: "orphan_detected",
+    });
     return { ok: false, code: "COPY_FAILED" };
   }
 
@@ -381,6 +406,11 @@ export async function finalizeTempUpload(
     if (downloadError || !downloadData) {
       await client.storage.from(PRIVATE_ASSETS_BUCKET).remove([finalObjectPath]);
       await failFinalize(client, input.uploadToken, "cross_bucket_download_failed");
+      await enqueueStorageCleanup({
+        bucket: PRIVATE_ASSETS_BUCKET,
+        objectPath: tempObjectPath,
+        reason: "orphan_detected",
+      });
       return { ok: false, code: "CROSS_BUCKET_MOVE_FAILED" };
     }
 
@@ -395,6 +425,11 @@ export async function finalizeTempUpload(
     if (publicUploadError) {
       await client.storage.from(PRIVATE_ASSETS_BUCKET).remove([finalObjectPath]);
       await failFinalize(client, input.uploadToken, "cross_bucket_upload_failed");
+      await enqueueStorageCleanup({
+        bucket: PRIVATE_ASSETS_BUCKET,
+        objectPath: tempObjectPath,
+        reason: "orphan_detected",
+      });
       return { ok: false, code: "CROSS_BUCKET_MOVE_FAILED" };
     }
 
@@ -435,9 +470,12 @@ export async function finalizeTempUpload(
 
   if (completeError) {
     // The object was moved successfully but the RPC failed. The
-    // stale recovery RPC will eventually mark it as failed, but
-    // the object is already in place. Return success with the
-    // final path so the caller can proceed.
+    // stale recovery RPC (recover_stale_temp_uploads) will eventually
+    // mark the row as failed, but the object is already in place.
+    // Return success with the final path so the caller can proceed.
+    // Log a fixed code — never the Supabase error payload — so
+    // operators can detect stuck rows via server logs.
+    console.warn("TEMP_UPLOAD_COMPLETE_RPC_FAILED");
   }
 
   // 10. Return the final result

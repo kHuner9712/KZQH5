@@ -213,6 +213,7 @@ function QuickLink({ href, label, desc }: { href: string; label: string; desc: s
   return (
     <Link
       href={href}
+      prefetch={false}
       className="group rounded-2xl bg-white p-5 shadow-sm ring-1 ring-gray-100 transition hover:shadow-md"
     >
       <div className="flex items-center justify-between">

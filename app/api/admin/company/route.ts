@@ -18,10 +18,11 @@ import { isDemoMode } from "@/lib/demo";
 import {
   adminWriteError,
   requireAdminWrite,
+  requireAdminRead,
 } from "@/lib/services/admin-write-boundary";
 import type { AdminWriteErrorCode } from "@/lib/services/admin-write-boundary";
-import { getVerifiedAdmin } from "@/lib/services/admin-auth";
 import { getCompanyProfile, saveCompanyProfile } from "@/lib/services/admin-content-write";
+import { validateAdvantageArray } from "@/lib/validation/jsonb-fields";
 
 const MAX_BODY = 256 * 1024;
 
@@ -46,17 +47,17 @@ function statusForCode(code: AdminWriteErrorCode): number {
   }
 }
 
-export async function GET() {
-  const admin = await getVerifiedAdmin();
-  if (!admin.ok) {
-    return adminWriteError("ADMIN_WRITE_UNAUTHORIZED", 401);
-  }
+export async function GET(request: NextRequest) {
+  // Phase 9: requireAdminRead enforces auth + global/per-admin rate limit +
+  // RBAC(minimum editor) + CSRF (isSameSiteRequest for GET).
+  const guard = await requireAdminRead(request, { minimumRole: "editor" });
+  if (!guard.ok) return guard.response;
 
   if (isDemoMode()) {
     return NextResponse.json({ success: true, demo: true, profile: null });
   }
 
-  const result = await getCompanyProfile(admin.client);
+  const result = await getCompanyProfile(guard.client);
   if (!result.ok) {
     return adminWriteError(result.code, statusForCode(result.code));
   }
@@ -100,6 +101,15 @@ export async function POST(request: NextRequest) {
     });
   }
 
+  const advantagesCnResult = validateAdvantageArray("advantages_cn", p.advantages_cn, 20);
+  if (!advantagesCnResult.ok) {
+    return adminWriteError("ADMIN_WRITE_BAD_REQUEST", 400);
+  }
+  const advantagesEnResult = validateAdvantageArray("advantages_en", p.advantages_en, 20);
+  if (!advantagesEnResult.ok) {
+    return adminWriteError("ADMIN_WRITE_BAD_REQUEST", 400);
+  }
+
   const result = await saveCompanyProfile(
     guard.client,
     {
@@ -109,8 +119,8 @@ export async function POST(request: NextRequest) {
         title_en: stringOrNull(p.title_en),
         description_cn: stringOrNull(p.description_cn),
         description_en: stringOrNull(p.description_en),
-        advantages_cn: p.advantages_cn,
-        advantages_en: p.advantages_en,
+        advantages_cn: advantagesCnResult.value,
+        advantages_en: advantagesEnResult.value,
         phone: stringOrNull(p.phone),
         wechat: stringOrNull(p.wechat),
         email: stringOrNull(p.email),

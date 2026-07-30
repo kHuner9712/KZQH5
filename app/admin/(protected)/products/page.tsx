@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import Link from "next/link";
-import { createBrowserSupabaseClient } from "@/lib/supabase/client";
 import {
+  listProductsApi,
+  getProductForCopyApi,
   bulkUpdateProductsApi,
   deleteProductsApi,
   saveProduct,
@@ -11,8 +12,7 @@ import {
 import { useToast } from "@/components/admin/Toast";
 import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/admin/Modal";
-import { normalizeSearchTerm } from "@/lib/utils";
-import type { Product, Category, Subcategory, ProductImage } from "@/types/database";
+import type { Product, Category, Subcategory } from "@/types/database";
 import {
   Plus,
   Pencil,
@@ -31,13 +31,13 @@ type StatusFilter = "all" | "published" | "draft" | "featured";
 type SortKey = "default" | "updated" | "name";
 
 export default function AdminProductsPage() {
-  const supabase = createBrowserSupabaseClient();
   const { show } = useToast();
 
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Record<string, Category>>({});
-  const [subcategories, setSubcategories] = useState<Subcategory[]>([]);
+  const [allSubcategories, setAllSubcategories] = useState<Subcategory[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [filterCat, setFilterCat] = useState("");
   const [filterSub, setFilterSub] = useState("");
@@ -52,72 +52,40 @@ export default function AdminProductsPage() {
   const [bulkCatOpen, setBulkCatOpen] = useState(false);
   const [bulkCat, setBulkCat] = useState("");
   const [bulkSub, setBulkSub] = useState("");
-  const [bulkSubs, setBulkSubs] = useState<Subcategory[]>([]);
   const [bulkSaving, setBulkSaving] = useState(false);
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
-  // 读取列表（带分页 + 筛选 + 排序）
+  // 读取列表（带分页 + 筛选 + 排序）。
+  // 通过 service_role API 绕过 RLS，这样草稿产品（is_published=false）
+  // 也能被管理员看到。直接用 anon 客户端会被 RLS 过滤掉草稿。
   const load = useCallback(async () => {
     setLoading(true);
-    let query = supabase.from("products").select("*");
-
-    if (filterStatus === "published") query = query.eq("is_published", true);
-    else if (filterStatus === "draft") query = query.eq("is_published", false);
-    else if (filterStatus === "featured") query = query.eq("is_featured", true);
-
-    if (filterCat) query = query.eq("category_id", filterCat);
-    if (filterSub) query = query.eq("subcategory_id", filterSub);
-
-    const safeSearch = normalizeSearchTerm(search);
-    if (safeSearch) {
-      query = query.or(
-        `name_cn.ilike.%${safeSearch}%,name_en.ilike.%${safeSearch}%,slug.ilike.%${safeSearch}%`
-      );
+    setError(null);
+    const result = await listProductsApi({
+      page,
+      pageSize,
+      status: filterStatus,
+      categoryId: filterCat || undefined,
+      subcategoryId: filterSub || undefined,
+      search: search || undefined,
+      sort,
+    });
+    if (!result.ok) {
+      setError(result.code || "ADMIN_WRITE_FAILED");
+      setProducts([]);
+      setTotal(0);
+      setLoading(false);
+      return;
     }
-
-    if (sort === "updated") {
-      query = query.order("updated_at", { ascending: false });
-    } else if (sort === "name") {
-      query = query.order("name_cn", { ascending: true });
-    } else {
-      query = query
-        .order("sort_order", { ascending: true })
-        .order("created_at", { ascending: false });
-    }
-
-    const from = (page - 1) * pageSize;
-    const to = page * pageSize - 1;
-    query = query.range(from, to);
-
-    // count 查询（head）需应用相同筛选条件
-    let countQuery = supabase
-      .from("products")
-      .select("id", { count: "exact", head: true });
-    if (filterStatus === "published") countQuery = countQuery.eq("is_published", true);
-    else if (filterStatus === "draft") countQuery = countQuery.eq("is_published", false);
-    else if (filterStatus === "featured") countQuery = countQuery.eq("is_featured", true);
-    if (filterCat) countQuery = countQuery.eq("category_id", filterCat);
-    if (filterSub) countQuery = countQuery.eq("subcategory_id", filterSub);
-    if (safeSearch) {
-      countQuery = countQuery.or(
-        `name_cn.ilike.%${safeSearch}%,name_en.ilike.%${safeSearch}%,slug.ilike.%${safeSearch}%`
-      );
-    }
-
-    const [listRes, countRes, catsRes] = await Promise.all([
-      query,
-      countQuery,
-      supabase.from("categories").select("*").order("sort_order"),
-    ]);
-
-    setProducts((listRes.data as Product[] | null) || []);
-    setTotal(countRes.count || 0);
+    setProducts(result.data.products);
+    setTotal(result.data.total);
     const map: Record<string, Category> = {};
-    ((catsRes.data as Category[] | null) || []).forEach((c) => (map[c.id] = c));
+    result.data.categories.forEach((c) => (map[c.id] = c));
     setCategories(map);
+    setAllSubcategories(result.data.subcategories);
     setLoading(false);
-  }, [supabase, search, filterCat, filterSub, filterStatus, sort, page, pageSize]);
+  }, [search, filterCat, filterSub, filterStatus, sort, page, pageSize]);
 
   useEffect(() => {
     const t = setTimeout(load, 250);
@@ -136,50 +104,26 @@ export default function AdminProductsPage() {
     }
   }, [loading, page, totalPages]);
 
-  // 加载筛选栏的二级类目（filterCat 变化时）
-  useEffect(() => {
-    if (!filterCat) {
-      setSubcategories([]);
-      setFilterSub("");
-      return;
-    }
-    let cancelled = false;
-    (async () => {
-      const { data: subs } = await supabase
-        .from("subcategories")
-        .select("*")
-        .eq("category_id", filterCat)
-        .order("sort_order", { ascending: true });
-      if (cancelled) return;
-      setSubcategories((subs as Subcategory[] | null) || []);
-      setFilterSub("");
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [supabase, filterCat]);
+  // 筛选栏二级类目：从全量 subcategories 按一级类目客户端过滤
+  const subcategories = useMemo(
+    () =>
+      filterCat
+        ? allSubcategories.filter((s) => s.category_id === filterCat)
+        : [],
+    [allSubcategories, filterCat],
+  );
 
-  // 批量改类目 modal：加载二级类目
+  // 一级类目变化时重置二级筛选
   useEffect(() => {
-    if (!bulkCat) {
-      setBulkSubs([]);
-      setBulkSub("");
-      return;
-    }
-    let cancelled = false;
-    (async () => {
-      const { data: subs } = await supabase
-        .from("subcategories")
-        .select("*")
-        .eq("category_id", bulkCat)
-        .order("sort_order", { ascending: true });
-      if (cancelled) return;
-      setBulkSubs((subs as Subcategory[] | null) || []);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [supabase, bulkCat]);
+    setFilterSub("");
+  }, [filterCat]);
+
+  // 批量改类目 modal：二级类目同样从全量列表按一级类目过滤
+  const bulkSubs = useMemo(
+    () =>
+      bulkCat ? allSubcategories.filter((s) => s.category_id === bulkCat) : [],
+    [allSubcategories, bulkCat],
+  );
 
   // 选中操作
   function toggleSelect(id: string) {
@@ -252,19 +196,14 @@ export default function AdminProductsPage() {
   }
 
   async function handleCopy(p: Product) {
-    const [{ data: full }, { data: imgs }] = await Promise.all([
-      supabase.from("products").select("*").eq("id", p.id).single(),
-      supabase
-        .from("product_images")
-        .select("*")
-        .eq("product_id", p.id)
-        .order("sort_order", { ascending: true }),
-    ]);
-    if (!full) {
+    // 通过 service_role API 读取完整产品 + 图片（草稿也能复制）。
+    const result = await getProductForCopyApi(p.id);
+    if (!result.ok || !result.data.product) {
       show("读取产品失败", "error");
       return;
     }
-    const src = full as Product;
+    const src = result.data.product;
+    const imgList = result.data.images;
     const newPayload: Record<string, unknown> = { ...src };
     delete newPayload.id;
     delete newPayload.created_at;
@@ -279,8 +218,7 @@ export default function AdminProductsPage() {
     newPayload.is_featured = false;
 
     // Phase 2: copy via the transactional API (product + images atomically).
-    const imgList = (imgs as ProductImage[] | null) || [];
-    const result = await saveProduct({
+    const saveResult = await saveProduct({
       product: newPayload,
       images: imgList.map((img, i) => ({
         image_url: img.image_url || "",
@@ -289,7 +227,7 @@ export default function AdminProductsPage() {
         sort_order: i,
       })),
     });
-    if (!result.ok) {
+    if (!saveResult.ok) {
       show("复制失败，请稍后重试", "error");
       return;
     }
@@ -358,10 +296,12 @@ export default function AdminProductsPage() {
           <h1 className="text-xl font-bold text-graphite">产品管理</h1>
           <p className="mt-1 text-sm text-gray-500">维护产品信息、图片、发布状态</p>
         </div>
-        <Link href="/admin/products/new">
-          <Button>
-            <Plus className="h-4 w-4" /> 新增产品
-          </Button>
+        <Link
+          href="/admin/products/new"
+          prefetch={false}
+          className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-steel px-5 text-sm font-medium text-white shadow-sm transition hover:bg-steel-dark focus-visible:ring-2 focus-visible:ring-gold focus-visible:ring-offset-2"
+        >
+          <Plus className="h-4 w-4" /> 新增产品
         </Link>
       </div>
 
@@ -439,7 +379,14 @@ export default function AdminProductsPage() {
       </div>
 
       {/* 列表 */}
-      {loading ? (
+      {error ? (
+        <div className="rounded-2xl bg-white p-10 text-center shadow-sm ring-1 ring-gray-100">
+          <p className="text-sm text-red-500">产品列表加载失败</p>
+          <Button variant="secondary" onClick={() => load()} className="mt-3">
+            重试
+          </Button>
+        </div>
+      ) : loading ? (
         <div className="flex h-40 items-center justify-center text-gray-400">
           <Loader2 className="h-5 w-5 animate-spin" />
         </div>
@@ -537,13 +484,14 @@ export default function AdminProductsPage() {
                         </td>
                         <td className="px-4 py-3">
                           <div className="flex items-center justify-end gap-1">
-                            <Link href={`/products/${p.slug}`} target="_blank">
-                              <button
-                                className="rounded-md p-1.5 text-gray-500 hover:bg-gray-100"
-                                aria-label="预览"
-                              >
-                                <ExternalLink className="h-3.5 w-3.5" />
-                              </button>
+                            <Link
+                              href={`/products/${p.slug}`}
+                              target="_blank"
+                              prefetch={false}
+                              className="rounded-md p-1.5 text-gray-500 hover:bg-gray-100"
+                              aria-label="预览"
+                            >
+                              <ExternalLink className="h-3.5 w-3.5" />
                             </Link>
                             <button
                               onClick={() => handleCopy(p)}
@@ -569,13 +517,13 @@ export default function AdminProductsPage() {
                             >
                               {p.is_published ? "下架" : "发布"}
                             </button>
-                            <Link href={`/admin/products/${p.id}/edit`}>
-                              <button
-                                className="rounded-md p-1.5 text-gray-500 hover:bg-gray-100"
-                                aria-label="编辑"
-                              >
-                                <Pencil className="h-3.5 w-3.5" />
-                              </button>
+                            <Link
+                              href={`/admin/products/${p.id}/edit`}
+                              prefetch={false}
+                              className="rounded-md p-1.5 text-gray-500 hover:bg-gray-100"
+                              aria-label="编辑"
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
                             </Link>
                             <button
                               onClick={() => handleDelete(p)}
@@ -662,10 +610,12 @@ export default function AdminProductsPage() {
                         >
                           {p.is_published ? "下架" : "发布"}
                         </button>
-                        <Link href={`/admin/products/${p.id}/edit`} className="flex-1">
-                          <button className="flex w-full items-center justify-center gap-1 rounded-md border border-gray-200 py-1.5 text-xs text-graphite">
-                            <Pencil className="h-3 w-3" /> 编辑
-                          </button>
+                        <Link
+                          href={`/admin/products/${p.id}/edit`}
+                          prefetch={false}
+                          className="flex flex-1 items-center justify-center gap-1 rounded-md border border-gray-200 py-1.5 text-xs text-graphite"
+                        >
+                          <Pencil className="h-3 w-3" /> 编辑
                         </Link>
                         <button
                           onClick={() => handleCopy(p)}

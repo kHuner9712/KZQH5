@@ -52,6 +52,72 @@ async function adminFetch<T>(
   }
 }
 
+export interface ProductListResponse {
+  success: true;
+  products: import("@/types/database").Product[];
+  total: number;
+  categories: import("@/types/database").Category[];
+  subcategories: import("@/types/database").Subcategory[];
+  demo?: boolean;
+}
+
+/**
+ * List products (paged/filtered) via the trusted server API.
+ *
+ * The admin UI MUST call this instead of reading products via the Browser
+ * Supabase client. The anon client is RLS-filtered to published rows, so
+ * drafts (is_published=false) would be invisible. The server uses
+ * service_role to bypass RLS and returns drafts as well.
+ *
+ * The response also includes all categories + subcategories so the UI can
+ * populate the filter bar and the bulk-change-category modal without
+ * extra round-trips.
+ */
+export function listProductsApi(params: {
+  page: number;
+  pageSize: number;
+  status: "all" | "published" | "draft" | "featured";
+  categoryId?: string;
+  subcategoryId?: string;
+  search?: string;
+  sort?: "default" | "updated" | "name";
+}): Promise<AdminFetchResult<ProductListResponse>> {
+  const qs = new URLSearchParams();
+  qs.set("page", String(params.page));
+  qs.set("pageSize", String(params.pageSize));
+  qs.set("status", params.status);
+  if (params.categoryId) qs.set("categoryId", params.categoryId);
+  if (params.subcategoryId) qs.set("subcategoryId", params.subcategoryId);
+  if (params.search) qs.set("search", params.search);
+  if (params.sort) qs.set("sort", params.sort);
+  return adminFetch<ProductListResponse>(
+    `/api/admin/products?${qs.toString()}`,
+    "GET",
+  );
+}
+
+export interface ProductForCopyResponse {
+  success: true;
+  product: import("@/types/database").Product | null;
+  images: import("@/types/database").ProductImage[];
+  demo?: boolean;
+}
+
+/**
+ * Fetch a single product + its images via the trusted server API.
+ *
+ * Used by the admin "copy product" flow. service_role bypasses RLS so a
+ * draft product can be copied (the anon client would 404/empty on drafts).
+ */
+export function getProductForCopyApi(
+  id: string,
+): Promise<AdminFetchResult<ProductForCopyResponse>> {
+  return adminFetch<ProductForCopyResponse>(
+    `/api/admin/products/${id}`,
+    "GET",
+  );
+}
+
 export interface ProductSaveResponse {
   success: true;
   id: string;
