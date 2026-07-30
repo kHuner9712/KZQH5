@@ -13,9 +13,9 @@ import { isDemoMode } from "@/lib/demo";
 import {
   adminWriteError,
   requireAdminWrite,
+  requireAdminRead,
 } from "@/lib/services/admin-write-boundary";
 import type { AdminWriteErrorCode } from "@/lib/services/admin-write-boundary";
-import { getVerifiedAdmin } from "@/lib/services/admin-auth";
 import {
   listPageContent,
   savePageContent,
@@ -44,17 +44,17 @@ function statusForCode(code: AdminWriteErrorCode): number {
   }
 }
 
-export async function GET() {
-  const admin = await getVerifiedAdmin();
-  if (!admin.ok) {
-    return adminWriteError("ADMIN_WRITE_UNAUTHORIZED", 401);
-  }
+export async function GET(request: NextRequest) {
+  // Phase 9: requireAdminRead enforces auth + global/per-admin rate limit +
+  // RBAC(minimum editor) + CSRF (isSameSiteRequest for GET).
+  const guard = await requireAdminRead(request, { minimumRole: "editor" });
+  if (!guard.ok) return guard.response;
 
   if (isDemoMode()) {
     return NextResponse.json({ success: true, demo: true, pages: [] });
   }
 
-  const result = await listPageContent(admin.client);
+  const result = await listPageContent(guard.client);
   if (!result.ok) {
     return adminWriteError(result.code, statusForCode(result.code));
   }

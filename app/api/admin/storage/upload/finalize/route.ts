@@ -48,18 +48,10 @@ export const runtime = "nodejs";
 const ALLOWED_FIELDS = new Set(["uploadToken"]);
 
 export async function POST(request: NextRequest) {
-  // Demo mode: return a fake finalize result
-  if (isDemoMode()) {
-    return NextResponse.json({
-      bucket: "public-assets",
-      path: "products/demo-placeholder.jpg",
-      publicUrl: "https://demo.supabase.co/storage/v1/object/public/public-assets/products/demo-placeholder.jpg",
-      mimeType: "image/jpeg",
-      size: 0,
-    });
-  }
-
-  // Unified boundary: auth + RBAC(admin) + same-origin + Content-Length
+  // Unified boundary FIRST: auth + RBAC(admin) + same-origin + Content-Length.
+  // Demo mode MUST come after the security boundary so that even demo
+  // requests are authenticated, role-checked, CSRF-checked, and rate-limited.
+  // The hard constraint: "Demo mode branch must be after requireAdminWrite".
   const guard = await requireAdminWrite<{
     uploadToken: unknown;
   }>(request, {
@@ -69,12 +61,13 @@ export async function POST(request: NextRequest) {
   });
   if (!guard.ok) return guard.response;
 
-  // Rate limit per admin actor
+  // Rate limit per admin actor (checked before the demo branch so demo
+  // traffic is also bounded by the per-admin upload limiter).
   const rateKey = `admin-upload-finalize:${guard.user.id}`;
   const rate = await getStorageUploadRateLimiter().check(rateKey);
   if (!rate.allowed) {
     return NextResponse.json(
-      { error: "Too many requests" },
+      { error: "ADMIN_WRITE_RATE_LIMITED" },
       {
         status: 429,
         headers: {
@@ -83,6 +76,18 @@ export async function POST(request: NextRequest) {
         },
       },
     );
+  }
+
+  // Demo mode: return a fake finalize result. Now placed AFTER auth + RBAC +
+  // CSRF + rate limiting, so demo requests still pass the full security boundary.
+  if (isDemoMode()) {
+    return NextResponse.json({
+      bucket: "public-assets",
+      path: "products/demo-placeholder.jpg",
+      publicUrl: "https://demo.supabase.co/storage/v1/object/public/public-assets/products/demo-placeholder.jpg",
+      mimeType: "image/jpeg",
+      size: 0,
+    });
   }
 
   const body = guard.body;

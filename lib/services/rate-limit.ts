@@ -335,3 +335,56 @@ export function getAdminApiRateLimiter(): RateLimiter {
   if (!adminApiLimiter) adminApiLimiter = new MemoryRateLimiter(60, 60 * 1000);
   return adminApiLimiter;
 }
+
+// ============================================================
+// Phase 8: Global fallback rate-limit bucket
+// ------------------------------------------------------------
+// Hard constraint: "Rate limiting must enforce global fallback bucket
+// for unknown clients, with HMAC Secret configuration not bypassing
+// global bucket".
+//
+// The per-key limiters above (per-IP, per-admin-user) are insufficient
+// when an attacker can forge or rotate keys. The global bucket is a
+// SINGLE shared counter that caps the total throughput of ALL clients
+// combined, regardless of how many distinct keys they present. It is
+// the security floor: no attacker can bypass it by rotating headers.
+//
+// `requireAdminWrite` checks the global bucket FIRST (before the
+// per-admin bucket), so a flood of admin requests is capped at the
+// global level even before per-user accounting kicks in. Public
+// endpoints (inquiries, analytics, etc.) that use `ephemeralRateKeySet`
+// already get a `fallback:global` key via `http-security.ts`; this
+// limiter provides the matching in-memory counter for admin endpoints
+// which authenticate by session cookie rather than IP.
+//
+// Limit: 1000 / 60s global. Generous enough for legitimate admin
+// traffic across all admin users, while bounding a compromised or
+// runaway admin client. Multi-instance caveat applies (see
+// MemoryRateLimiter header) — EdgeOne WAF provides the cross-instance
+// floor in production.
+// ============================================================
+let globalLimiter: RateLimiter | null = null;
+
+export function getGlobalRateLimiter(): RateLimiter {
+  if (!globalLimiter) globalLimiter = new MemoryRateLimiter(1000, 60 * 1000);
+  return globalLimiter;
+}
+
+/**
+ * Phase 8: Inquiry export rate limiter (per admin actor).
+ *
+ * Limit: 5 exports / 60s / admin user. CSV export loops in batches of
+ * 500 rows up to MAX_EXPORT_ROWS (10000), so each export is up to 20
+ * DB queries. Without a dedicated limiter, a malicious admin could
+ * hammer the endpoint and starve the database. The shared admin API
+ * limiter (60/min) is too generous for this heavy operation.
+ *
+ * Multi-instance caveat applies (see MemoryRateLimiter header).
+ */
+let inquiryExportLimiter: RateLimiter | null = null;
+
+export function getInquiryExportRateLimiter(): RateLimiter {
+  if (!inquiryExportLimiter)
+    inquiryExportLimiter = new MemoryRateLimiter(5, 60 * 1000);
+  return inquiryExportLimiter;
+}

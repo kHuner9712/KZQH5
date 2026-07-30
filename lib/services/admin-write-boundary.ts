@@ -5,9 +5,10 @@ import { getVerifiedAdmin } from "@/lib/services/admin-auth";
 import {
   isSameOrigin,
   isAllowedFetchSite,
+  isSameSiteRequest,
   readJsonBody,
 } from "@/lib/services/http-security";
-import { getAdminApiRateLimiter } from "@/lib/services/rate-limit";
+import { getAdminApiRateLimiter, getGlobalRateLimiter } from "@/lib/services/rate-limit";
 
 /**
  * Fixed error codes for admin write endpoints. These are the ONLY strings
@@ -160,6 +161,32 @@ export async function requireAdminWrite<T = unknown>(
     return {
       ok: false,
       response: adminWriteError("ADMIN_WRITE_UNAUTHORIZED", 401),
+    };
+  }
+
+  // Phase 8: Global fallback rate-limit bucket (1000 req/60s shared).
+  // Checked FIRST, before the per-admin bucket. This is the security
+  // floor required by the hard constraint: "Rate limiting must enforce
+  // global fallback bucket for unknown clients". A single shared counter
+  // caps the total throughput of ALL admin clients combined, so an
+  // attacker who compromises multiple admin sessions (or forges many
+  // distinct user ids) cannot bypass the limit by spreading requests
+  // across keys. The per-admin bucket below adds per-user fairness on
+  // top of this global floor.
+  const globalResult = await getGlobalRateLimiter().check("admin:global");
+  if (!globalResult.allowed) {
+    return {
+      ok: false,
+      response: NextResponse.json(
+        { error: "ADMIN_WRITE_RATE_LIMITED" },
+        {
+          status: 429,
+          headers: {
+            "Retry-After": String(globalResult.retryAfterSeconds),
+            "Cache-Control": "no-store",
+          },
+        },
+      ),
     };
   }
 
@@ -338,4 +365,158 @@ function pickFailureCode(err: unknown): AdminWriteErrorCode {
     }
   }
   return "ADMIN_WRITE_FAILED";
+}
+
+// ============================================================
+// Phase 9: requireAdminRead — read-side companion to requireAdminWrite
+// ------------------------------------------------------------
+// Background: GET admin endpoints (list/detail views) historically
+// only called getVerifiedAdmin(), which checks session + profile
+// existence but DOES NOT enforce RBAC, rate limiting, or CSRF. This
+// created two gaps flagged in the admin security review:
+//   H1: GET endpoints bypass the global + per-admin rate-limit buckets
+//       (a hijacked session could enumerate all inquiries PII at full
+//       speed with no application-layer throttle).
+//   M1: GET endpoints have inconsistent RBAC — role=NULL/unknown admins
+//       could read inquiry PII, site settings, etc., while the export
+//       endpoint correctly required "admin" role.
+//
+// requireAdminRead closes both gaps by reusing the same auth + global
+// bucket + per-admin bucket + RBAC pipeline as requireAdminWrite, but
+// with a GET-appropriate CSRF policy:
+//   - isSameSiteRequest (not isSameOrigin): allows missing Origin so
+//     that same-origin <a href> GET navigations work (browsers do not
+//     send Origin on simple GET navigations), but still rejects
+//     cross-site / same-site Sec-Fetch-Site values.
+//   - No body parsing, no Content-Type enforcement, no Content-Length
+//     cap (GET requests have no body).
+//
+// This mirrors the manual pattern already used in
+// app/api/admin/inquiries/export/route.ts (the only GET endpoint that
+// previously did this correctly), now centralized for all GET admin
+// endpoints.
+// ============================================================
+
+export type RequireAdminReadResult =
+  | ({ ok: true } & VerifiedAdmin)
+  | { ok: false; response: NextResponse };
+
+/**
+ * Options for requireAdminRead.
+ */
+export interface RequireAdminReadOptions {
+  /**
+   * Minimum admin role required to perform the read.
+   *   - "editor"     : default — most read endpoints (catalog browsing,
+   *                    analytics, dashboard). Editors can read anything
+   *                    except inquiry PII.
+   *   - "admin"      : required for sensitive reads (inquiry list with
+   *                    customer PII, inquiry export, admin user lists).
+   *   - "super_admin": reserved for admin user management reads.
+   * Defaults to "editor" — deny-by-default for unknown/null roles.
+   */
+  minimumRole?: AdminWriteRole;
+}
+
+/**
+ * Centralized pre-flight check for admin READ endpoints (GET list/detail).
+ *
+ * Pipeline (mirrors requireAdminWrite minus body parsing):
+ *   1. Verify the admin session + profile (service_role client).
+ *   2. Global fallback rate-limit bucket (1000 req/60s shared).
+ *   3. Per-admin rate limiting (60 req/60s/admin user).
+ *   4. RBAC: enforce the minimum required admin role (deny-by-default).
+ *   5. CSRF defense: isSameSiteRequest (allows missing Origin for GET
+ *      navigations, rejects cross-site Sec-Fetch-Site).
+ *
+ * On any failure returns a ready-to-send {@link NextResponse} carrying
+ * only a fixed error code (no database error text).
+ *
+ * Usage:
+ *   // Default (minimum editor):
+ *   const guard = await requireAdminRead(request);
+ *   if (!guard.ok) return guard.response;
+ *   // Sensitive (minimum admin — inquiry PII):
+ *   const guard = await requireAdminRead(request, { minimumRole: "admin" });
+ *   if (!guard.ok) return guard.response;
+ */
+export async function requireAdminRead(
+  request: NextRequest,
+  options?: RequireAdminReadOptions,
+): Promise<RequireAdminReadResult> {
+  const admin = await getVerifiedAdmin();
+  if (!admin.ok) {
+    return {
+      ok: false,
+      response: adminWriteError("ADMIN_WRITE_UNAUTHORIZED", 401),
+    };
+  }
+
+  // Global fallback rate-limit bucket (same floor as writes).
+  const globalResult = await getGlobalRateLimiter().check("admin:global");
+  if (!globalResult.allowed) {
+    return {
+      ok: false,
+      response: NextResponse.json(
+        { error: "ADMIN_WRITE_RATE_LIMITED" },
+        {
+          status: 429,
+          headers: {
+            "Retry-After": String(globalResult.retryAfterSeconds),
+            "Cache-Control": "no-store",
+          },
+        },
+      ),
+    };
+  }
+
+  // Per-admin rate limiting (60 req/60s/admin user).
+  const rateLimitKey = `admin:${admin.user.id}`;
+  const rateResult = await getAdminApiRateLimiter().check(rateLimitKey);
+  if (!rateResult.allowed) {
+    return {
+      ok: false,
+      response: NextResponse.json(
+        { error: "ADMIN_WRITE_RATE_LIMITED" },
+        {
+          status: 429,
+          headers: {
+            "Retry-After": String(rateResult.retryAfterSeconds),
+            "Cache-Control": "no-store",
+          },
+        },
+      ),
+    };
+  }
+
+  // RBAC: enforce the minimum required role.
+  // Defaults to "editor" for reads (most catalog reads are safe for editors).
+  // Sensitive reads (inquiry PII, export) must pass { minimumRole: "admin" }.
+  // Unknown / null roles are ALWAYS denied (deny-by-default).
+  const minimumRole: AdminWriteRole = options?.minimumRole ?? "editor";
+  if (!hasAdminRole(admin.profile, minimumRole)) {
+    return {
+      ok: false,
+      response: adminRoleDenied(minimumRole),
+    };
+  }
+
+  // CSRF defense for GET reads: isSameSiteRequest allows missing Origin
+  // (so same-origin <a href> navigations work — browsers don't send Origin
+  // on simple GET navigations), but still rejects cross-site / same-site
+  // Sec-Fetch-Site values. This is the read-only variant of the write-side
+  // isSameOrigin + isAllowedFetchSite check.
+  if (!isSameSiteRequest(request)) {
+    return {
+      ok: false,
+      response: adminWriteError("ADMIN_WRITE_FORBIDDEN_ORIGIN", 403),
+    };
+  }
+
+  return {
+    ok: true,
+    client: admin.client,
+    user: admin.user,
+    profile: admin.profile,
+  };
 }

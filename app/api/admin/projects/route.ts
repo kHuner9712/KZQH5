@@ -22,7 +22,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { revalidatePath } from "next/cache";
 import { isDemoMode } from "@/lib/demo";
-import { requireAdminWrite, adminWriteError } from "@/lib/services/admin-write-boundary";
+import { requireAdminWrite, requireAdminRead, adminWriteError } from "@/lib/services/admin-write-boundary";
 import {
   listAllProductsForProjectPicker,
   listAllProjects,
@@ -38,16 +38,11 @@ function failStatus(code: "ADMIN_WRITE_BAD_REQUEST" | "ADMIN_WRITE_CONFLICT" | "
   return 500;
 }
 
-export async function GET() {
-  // GET also requires admin verification — but uses getVerifiedAdmin
-  // directly since requireAdminWrite is for write operations.
-  // We reuse the same boundary by sending a no-op POST-like check.
-  // Simpler: use the same admin auth path inline.
-  const { getVerifiedAdmin } = await import("@/lib/services/admin-auth");
-  const admin = await getVerifiedAdmin();
-  if (!admin.ok) {
-    return adminWriteError("ADMIN_WRITE_UNAUTHORIZED", 401);
-  }
+export async function GET(request: NextRequest) {
+  // Phase 9: requireAdminRead enforces auth + global/per-admin rate limit +
+  // RBAC(minimum editor) + CSRF (isSameSiteRequest for GET).
+  const guard = await requireAdminRead(request, { minimumRole: "editor" });
+  if (!guard.ok) return guard.response;
 
   if (isDemoMode()) {
     return NextResponse.json({
@@ -59,8 +54,8 @@ export async function GET() {
   }
 
   const [projectsResult, productsResult] = await Promise.all([
-    listAllProjects(admin.client),
-    listAllProductsForProjectPicker(admin.client),
+    listAllProjects(guard.client),
+    listAllProductsForProjectPicker(guard.client),
   ]);
   if (!projectsResult.ok) {
     return adminWriteError(projectsResult.code, failStatus(projectsResult.code));

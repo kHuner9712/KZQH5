@@ -2,33 +2,37 @@ import { NextRequest, NextResponse } from "next/server";
 import { revalidatePath } from "next/cache";
 import { isDemoMode } from "@/lib/demo";
 import { listInquiries } from "@/lib/repositories/inquiries";
-import { getVerifiedAdmin } from "@/lib/services/admin-auth";
 import { inquiryFiltersFromSearchParams } from "@/lib/services/inquiries/admin-filters";
 import {
+  adminWriteError,
   requireAdminWrite,
+  requireAdminRead,
 } from "@/lib/services/admin-write-boundary";
 import { UUID_PATTERN } from "@/lib/services/http-security";
 import type { InquiryStatus } from "@/types/database";
 
 const validStatuses = new Set<InquiryStatus>(["new", "contacted", "closed"]);
 
+export const dynamic = "force-dynamic";
+
 export async function GET(request: NextRequest) {
-  const admin = await getVerifiedAdmin();
-  if (!admin.ok) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  // Phase 9: requireAdminRead enforces auth + global/per-admin rate limit +
+  // RBAC(minimum admin — inquiry PII) + CSRF (isSameSiteRequest for GET).
+  // Closes the H1/M1 gaps where GET endpoints previously bypassed both
+  // rate limiting and RBAC.
+  const guard = await requireAdminRead(request, { minimumRole: "admin" });
+  if (!guard.ok) return guard.response;
+
   try {
     const result = await listInquiries(
-      admin.client,
+      guard.client,
       inquiryFiltersFromSearchParams(request.nextUrl.searchParams),
     );
     return NextResponse.json(result);
-  } catch (error) {
-    console.error(
-      "Admin inquiry list failed:",
-      error instanceof Error ? error.message : "unknown error",
-    );
-    return NextResponse.json({ error: "读取询盘失败" }, { status: 500 });
+  } catch {
+    // Log only the fixed code — never the Supabase error payload.
+    console.warn("INQUIRY_LIST_FAILED");
+    return adminWriteError("ADMIN_WRITE_FAILED", 500);
   }
 }
 
@@ -59,27 +63,24 @@ export async function PATCH(request: NextRequest) {
 
   const body = guard.body;
   if (!body.id || !UUID_PATTERN.test(body.id)) {
-    return NextResponse.json({ error: "询盘 ID 无效" }, { status: 400 });
+    return adminWriteError("ADMIN_WRITE_BAD_REQUEST", 400);
   }
   if (body.status && !validStatuses.has(body.status)) {
-    return NextResponse.json({ error: "状态无效" }, { status: 400 });
+    return adminWriteError("ADMIN_WRITE_BAD_REQUEST", 400);
   }
 
-  // Phase 3: expected_updated_at is REQUIRED for inquiry updates (optimistic
-  // locking). The caller MUST prove they saw a recent version before modifying.
-  // Missing => 400. Invalid => 400. Stale => 409 (from RPC).
+  // Phase 3: expected_updated_at 为必填字段 (REQUIRED) for inquiry updates
+  // (optimistic locking). The caller MUST prove they saw a recent version
+  // before modifying. Missing => 400. Invalid => 400. Stale => 409 (from RPC).
   if (body.expected_updated_at == null || body.expected_updated_at === "") {
-    return NextResponse.json(
-      { error: "expected_updated_at 为必填字段" },
-      { status: 400 },
-    );
+    return adminWriteError("ADMIN_WRITE_BAD_REQUEST", 400);
   }
   if (typeof body.expected_updated_at !== "string") {
-    return NextResponse.json({ error: "expected_updated_at 格式不正确" }, { status: 400 });
+    return adminWriteError("ADMIN_WRITE_BAD_REQUEST", 400);
   }
   const ts = body.expected_updated_at.trim();
   if (Number.isNaN(Date.parse(ts))) {
-    return NextResponse.json({ error: "expected_updated_at 格式不正确" }, { status: 400 });
+    return adminWriteError("ADMIN_WRITE_BAD_REQUEST", 400);
   }
   const expectedUpdatedAt: string = ts;
 
@@ -101,7 +102,7 @@ export async function PATCH(request: NextRequest) {
     patch.assignee = body.assignee.trim().slice(0, 200) || null;
 
   if (Object.keys(patch).length === 0) {
-    return NextResponse.json({ error: "没有可更新的字段" }, { status: 400 });
+    return adminWriteError("ADMIN_WRITE_BAD_REQUEST", 400);
   }
 
   if (isDemoMode()) {
@@ -127,36 +128,35 @@ export async function PATCH(request: NextRequest) {
     if (error) {
       const errorCode = error.code;
       if (errorCode === "40P01" || errorCode === "40001" || errorCode === "23505") {
-        return NextResponse.json(
-          { error: "该询盘已被其他人更新，请刷新后重试" },
-          { status: 409 },
-        );
+        return adminWriteError("ADMIN_WRITE_CONFLICT", 409, {
+          logCode: "INQUIRY_UPDATE_CONFLICT",
+        });
       }
       if (errorCode === "P0002") {
-        return NextResponse.json({ error: "询盘不存在" }, { status: 404 });
+        // Not found — 404 is semantically correct. Use BAD_REQUEST code
+        // (AdminWriteErrorCode has no NOT_FOUND) with a log code so the
+        // server log distinguishes it from a validation 400.
+        return adminWriteError("ADMIN_WRITE_BAD_REQUEST", 404, {
+          logCode: "INQUIRY_NOT_FOUND",
+        });
       }
-      console.error(
-        "Admin inquiry update failed:",
-        "code:" + (errorCode ?? "unknown"),
-      );
-      return NextResponse.json({ error: "更新询盘失败" }, { status: 500 });
+      // Log ONLY the fixed code — never the Supabase error payload.
+      console.warn("INQUIRY_UPDATE_FAILED");
+      return adminWriteError("ADMIN_WRITE_FAILED", 500);
     }
 
     revalidatePath("/admin");
     revalidatePath("/admin/inquiries");
     return NextResponse.json({ success: true, inquiry: data });
-  } catch (error) {
-    const errorCode = (error as Error & { code?: string }).code;
+  } catch (err) {
+    const errorCode = (err as Error & { code?: string }).code;
     if (errorCode === "40P01" || errorCode === "40001" || errorCode === "23505") {
-      return NextResponse.json(
-        { error: "该询盘已被其他人更新，请刷新后重试" },
-        { status: 409 },
-      );
+      return adminWriteError("ADMIN_WRITE_CONFLICT", 409, {
+        logCode: "INQUIRY_UPDATE_CONFLICT",
+      });
     }
-    console.error(
-      "Admin inquiry update failed:",
-      error instanceof Error ? error.message : "unknown error",
-    );
-    return NextResponse.json({ error: "更新询盘失败" }, { status: 500 });
+    // Log ONLY the fixed code — never the error message or stack.
+    console.warn("INQUIRY_UPDATE_FAILED");
+    return adminWriteError("ADMIN_WRITE_FAILED", 500);
   }
 }
