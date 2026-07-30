@@ -134,25 +134,36 @@ export function createAdminDashboardQueries(
 ): AdminDashboardQueries {
   return {
     async getSnapshot() {
-      let result: { data: unknown; error: unknown };
-
+      // Try the snapshot RPC first. If it is not deployed (schema error)
+      // or permission-denied, fall back to direct table count queries.
+      // This handles databases where migrations were not fully applied.
       try {
-        result = await client.rpc("get_admin_dashboard_snapshot");
+        const result = await client.rpc("get_admin_dashboard_snapshot");
+        const { data, error } = result;
+        if (!error) {
+          return parseDashboardSnapshot(data);
+        }
+        // If the error is NOT a schema/permission issue, treat as a real
+        // failure. Schema/permission errors (RPC not deployed, or
+        // execute privilege missing) fall through to the fallback.
+        const cause = classifyAdminDataError(error);
+        if (cause !== "schema" && cause !== "permission") {
+          throw new DashboardSnapshotError(cause);
+        }
       } catch (err) {
-        // Network/abort/client throw. Classify by code/name only; never
-        // propagate the original error object.
-        throw new DashboardSnapshotError(classifyAdminDataError(err));
+        // If this is already a DashboardSnapshotError from above, re-throw.
+        if (err instanceof DashboardSnapshotError) throw err;
+        // Network/abort/client throw — classify and check if fallback is
+        // appropriate. Connection errors should NOT fall back.
+        const cause = classifyAdminDataError(err);
+        if (cause !== "schema" && cause !== "permission") {
+          throw new DashboardSnapshotError(cause);
+        }
       }
 
-      const { data, error } = result;
-
-      if (error) {
-        // Supabase returned an error object. Classify by code/name only.
-        // The original error object is intentionally dropped.
-        throw new DashboardSnapshotError(classifyAdminDataError(error));
-      }
-
-      return parseDashboardSnapshot(data);
+      // Fallback: direct table count queries using service_role (bypasses
+      // RLS). Used when the snapshot RPC is not deployed to the database.
+      return getSnapshotViaDirectQueries(client);
     },
 
     async recentInquiries() {
@@ -168,6 +179,60 @@ export function createAdminDashboardQueries(
       }
       return data as Inquiry[];
     },
+  };
+}
+
+/**
+ * Fallback snapshot implementation using direct table count queries.
+ * Used when the get_admin_dashboard_snapshot RPC is not deployed.
+ *
+ * Uses { count: "exact", head: true } to avoid transferring row data —
+ * only the count is needed. service_role bypasses RLS, so this returns
+ * true totals even on tables with restrictive policies.
+ */
+async function getSnapshotViaDirectQueries(
+  client: DashboardClient,
+): Promise<DashboardSnapshotCounts> {
+  const [products, publishedProducts, certificates, inquiries, unreadInquiries] =
+    await Promise.all([
+      client.from("products").select("*", { count: "exact", head: true }),
+      client
+        .from("products")
+        .select("*", { count: "exact", head: true })
+        .eq("is_published", true),
+      client.from("certificates").select("*", { count: "exact", head: true }),
+      client.from("inquiries").select("*", { count: "exact", head: true }),
+      client
+        .from("inquiries")
+        .select("*", { count: "exact", head: true })
+        .eq("is_read", false),
+    ]);
+
+  const errors = [products, publishedProducts, certificates, inquiries, unreadInquiries]
+    .filter((r) => r.error);
+  if (errors.length > 0) {
+    throw new DashboardSnapshotError(
+      classifyAdminDataError(errors[0].error),
+    );
+  }
+
+  const counts = [
+    products.count,
+    publishedProducts.count,
+    certificates.count,
+    inquiries.count,
+    unreadInquiries.count,
+  ];
+  if (counts.some((c) => c === null)) {
+    throw new DashboardSnapshotError("count-unavailable");
+  }
+
+  return {
+    totalProducts: counts[0] as number,
+    publishedProducts: counts[1] as number,
+    totalCertificates: counts[2] as number,
+    totalInquiries: counts[3] as number,
+    unreadInquiries: counts[4] as number,
   };
 }
 

@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { unstable_noStore as noStore } from "next/cache";
-import { createServerSupabaseClient } from "@/lib/supabase/server";
+import { getVerifiedAdmin } from "@/lib/services/admin-auth";
 import { createAdminDashboardQueries } from "@/lib/repositories/admin-dashboard";
 import { loadAdminDashboard } from "@/lib/services/admin-dashboard";
 import { formatDate } from "@/lib/utils";
@@ -18,9 +18,39 @@ export const dynamic = "force-dynamic";
 
 export default async function AdminDashboard() {
   noStore();
-  const supabase = await createServerSupabaseClient();
+
+  // Use getVerifiedAdmin to obtain the service_role client. The dashboard
+  // RPCs (get_admin_dashboard_snapshot, count_unread_inquiries) only grant
+  // execute to service_role — using the anon/RLS-bound client causes
+  // permission-denied errors on deployments where the RPCs exist.
+  // getVerifiedAdmin also re-verifies the admin session, so we redirect
+  // to login on auth failure instead of showing a generic error.
+  const admin = await getVerifiedAdmin();
+
+  if (!admin.ok) {
+    // Auth/session failure — the protected layout already handles this,
+    // but defensively show the error state if we reach here.
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-xl font-bold text-graphite">Dashboard</h1>
+          <p className="mt-1 text-sm text-gray-500">KZQ 产品展示站数据概览</p>
+        </div>
+        <div
+          role="alert"
+          className="rounded-xl border border-red-200 bg-red-50 px-5 py-8 text-center"
+        >
+          <p className="font-medium text-red-800">数据读取失败</p>
+          <p className="mt-1 text-sm text-red-700">
+            请稍后刷新页面；如问题持续，请联系管理员检查服务端日志。
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   const result = await loadAdminDashboard(
-    createAdminDashboardQueries(supabase),
+    createAdminDashboardQueries(admin.client),
   );
 
   if (!result.ok) {
