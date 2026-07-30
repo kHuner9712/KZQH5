@@ -189,6 +189,57 @@ describe("authorizeTempUpload", () => {
     expect(result.headers).toEqual({ "Content-Type": "image/jpeg" });
   });
 
+  // ============================================================
+  // KZQ-P0-002: Signed upload URL lifecycle model.
+  //
+  // The DB `expires_at` (5 min) is the BUSINESS authorization window
+  // for the temp_uploads row, NOT the Supabase signed-upload-URL TTL.
+  // `createSignedUploadUrl` does not accept a TTL argument; the
+  // capability URL lifetime is server-controlled (default 1h). The
+  // `expiresAt` field returned to the caller must reflect the DB row's
+  // business window, and the constant must be named to reflect that
+  // it is an authorization window, not a signed-URL TTL.
+  // ============================================================
+  it("returns expiresAt as the business authorization window, not the signed-URL TTL", async () => {
+    const { authorizeTempUpload, TEMP_UPLOAD_AUTHORIZATION_WINDOW_SECONDS } =
+      await import("@/lib/services/two-phase-upload");
+
+    // The constant must represent the 5-minute business window.
+    expect(TEMP_UPLOAD_AUTHORIZATION_WINDOW_SECONDS).toBe(300);
+
+    const token = "abc12345-1234-1234-1234-123456789abc";
+    const businessWindowExpiresAt = "2026-07-29T12:05:00Z";
+    mockRpc.mockResolvedValueOnce({
+      data: {
+        ok: true,
+        row: {
+          id: token,
+          object_path: `temp/${token}/test.jpg`,
+          expires_at: businessWindowExpiresAt,
+        },
+      },
+      error: null,
+    });
+
+    mockCreateSignedUploadUrl.mockResolvedValueOnce({
+      data: { signedUrl: "https://supabase.co/storage/v1/object/upload/private-assets/temp/test.jpg" },
+      error: null,
+    });
+
+    const result = await authorizeTempUpload({
+      purpose: "product-image",
+      filename: "test.jpg",
+      mimeType: "image/jpeg",
+      size: 1024,
+    });
+
+    expect(result.ok).toBe(true);
+    // expiresAt must equal the DB row's business authorization window
+    // deadline, NOT a derived signed-URL TTL. The signed URL's actual
+    // capability lifetime is server-controlled and not exposed here.
+    expect(result.expiresAt).toBe(businessWindowExpiresAt);
+  });
+
   it("marks row as failed when signed URL generation fails", async () => {
     const { authorizeTempUpload } = await import("@/lib/services/two-phase-upload");
 

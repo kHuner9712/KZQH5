@@ -3,7 +3,7 @@
  *   POST /api/admin/storage/upload/authorize
  *
  * Validates purpose + MIME + size, inserts a temp_uploads row,
- * and returns a short-TTL signed upload URL pointing to
+ * and returns a signed upload URL pointing to
  * private-assets/temp/{token}/{filename}.
  *
  * The client then PUTs the file directly to Supabase Storage
@@ -15,7 +15,10 @@
  *   - body: "json" mode (small JSON request, ~256 bytes)
  *   - Rate limited per admin actor
  *   - All validation BEFORE the signed URL is issued
- *   - Signed URL has 5-minute TTL
+ *   - temp_uploads row has a 5-minute BUSINESS authorization window
+ *     (TEMP_UPLOAD_AUTHORIZATION_WINDOW_SECONDS). The signed-upload-URL
+ *     capability TTL is server-controlled (default 1h) and NOT
+ *     configurable via the SDK — see lib/services/two-phase-upload.ts.
  *   - Temp object path is server-generated
  *
  * Request body (JSON):
@@ -81,6 +84,11 @@ export async function POST(request: NextRequest) {
   // Demo mode: return a fake authorization so the UI can be tested
   // without a real Supabase backend. Now placed AFTER auth + RBAC + CSRF +
   // rate limiting, so demo requests still pass the full security boundary.
+  //
+  // `expiresAt` is the BUSINESS authorization window deadline (matches
+  // TEMP_UPLOAD_AUTHORIZATION_WINDOW_SECONDS), NOT the Supabase signed-
+  // URL capability TTL. See lib/services/two-phase-upload.ts constant
+  // docblock for the three-distinct-lifetimes breakdown.
   if (isDemoMode()) {
     return NextResponse.json({
       uploadToken: crypto.randomUUID(),
