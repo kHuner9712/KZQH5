@@ -2,14 +2,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 
 // ============================================================
-// Phase 3 Task 1: Per-route CSP policy splitting tests
+// Per-route CSP policy splitting tests
 //
 // Verifies that:
 //   1. isAdminRoute() correctly classifies admin vs public routes.
-//   2. Admin routes receive nonce-based Report-Only CSP:
+//   2. Admin routes receive STATIC Report-Only CSP:
 //      - Content-Security-Policy-Report-Only header
-//      - script-src uses 'nonce-<nonce>' (no 'unsafe-inline')
-//      - style-src uses 'nonce-<nonce>' (no 'unsafe-inline')
+//      - 'unsafe-inline' in script-src and style-src (Next.js internal
+//        inline scripts need it)
 //      - No 'unsafe-eval'
 //      - No Google Fonts CDN
 //      - No WeChat JS-SDK
@@ -18,16 +18,12 @@ import { NextRequest } from "next/server";
 //      - 'unsafe-inline' in script-src and style-src (ISR compat)
 //      - WeChat JS-SDK allowed
 //      - Google Fonts CDN allowed
-//      - No per-request nonce
-//   4. Nonce is unique per request (never reused).
-//   5. Nonce is a valid UUID format.
-//   6. x-nonce request header is forwarded for admin routes.
-//   7. x-nonce request header is NOT set for public routes.
-//   8. ISR contract: public CSP is identical across requests
-//      (no per-request variation).
-//   9. CSP_ENFORCING=true switches public CSP to enforcing mode.
-//  10. Common directives present in both policies.
-//  11. Supabase host is resolved from env and included in CSP.
+//   4. ISR contract: both admin and public CSP are identical across
+//      requests (no per-request variation).
+//   5. CSP_ENFORCING=true switches public CSP to enforcing mode
+//      (admin stays Report-Only).
+//   6. Common directives present in both policies.
+//   7. Supabase host is resolved from env and included in CSP.
 // ============================================================
 
 const TEST_SUPABASE_URL = "https://abcdefghijklmnopqrst.supabase.co";
@@ -108,16 +104,16 @@ describe("isAdminRoute — route classification", () => {
 });
 
 // ============================================================
-// 2. Admin CSP — nonce-based Report-Only
+// 2. Admin CSP — static Report-Only with 'unsafe-inline'
 // ============================================================
-describe("Admin CSP — nonce-based Report-Only", () => {
+describe("Admin CSP — static Report-Only with 'unsafe-inline'", () => {
   it("sets Content-Security-Policy-Report-Only on /admin", async () => {
     const { middleware } = await import("@/middleware");
     const req = new NextRequest("https://kzq.test/admin");
     const res = await middleware(req);
     const csp = res.headers.get("Content-Security-Policy-Report-Only");
     expect(csp).toBeTruthy();
-    // Phase 9: Admin uses Report-Only (not enforcing).
+    // Admin uses Report-Only (not enforcing).
     expect(res.headers.get("Content-Security-Policy")).toBeNull();
   });
 
@@ -129,22 +125,24 @@ describe("Admin CSP — nonce-based Report-Only", () => {
     expect(res.headers.get("Content-Security-Policy")).toBeNull();
   });
 
-  it("includes 'nonce-' in script-src (no 'unsafe-inline')", async () => {
+  it("includes 'unsafe-inline' in script-src (Next.js internal scripts need it)", async () => {
     const { middleware } = await import("@/middleware");
     const req = new NextRequest("https://kzq.test/admin");
     const res = await middleware(req);
     const csp = res.headers.get("Content-Security-Policy-Report-Only")!;
-    expect(csp).toMatch(/script-src[^;]*'nonce-[^']+'/);
-    expect(csp).not.toMatch(/script-src[^;]*'unsafe-inline'/);
+    expect(csp).toMatch(/script-src[^;]*'unsafe-inline'/);
+    // No nonce — nonce-based CSP is incompatible with Next.js internal
+    // inline scripts (RSC payload, hydration data) which do not accept
+    // a nonce attribute.
+    expect(csp).not.toMatch(/'nonce-/);
   });
 
-  it("includes 'nonce-' in style-src (no 'unsafe-inline')", async () => {
+  it("includes 'unsafe-inline' in style-src", async () => {
     const { middleware } = await import("@/middleware");
     const req = new NextRequest("https://kzq.test/admin");
     const res = await middleware(req);
     const csp = res.headers.get("Content-Security-Policy-Report-Only")!;
-    expect(csp).toMatch(/style-src[^;]*'nonce-[^']+'/);
-    expect(csp).not.toMatch(/style-src[^;]*'unsafe-inline'/);
+    expect(csp).toMatch(/style-src[^;]*'unsafe-inline'/);
   });
 
   it("does NOT include 'unsafe-eval' in admin CSP", async () => {
@@ -185,7 +183,7 @@ describe("Admin CSP — nonce-based Report-Only", () => {
     expect(csp).toContain("abcdefghijklmnopqrst.supabase.co");
   });
 
-  it("sets Cache-Control: no-store on admin routes (prevent CDN caching nonce mismatch)", async () => {
+  it("sets Cache-Control: no-store on admin routes (prevent CDN caching)", async () => {
     const { middleware } = await import("@/middleware");
     const req = new NextRequest("https://kzq.test/admin");
     const res = await middleware(req);
@@ -268,94 +266,22 @@ describe("Public CSP — static Report-Only", () => {
 });
 
 // ============================================================
-// 4. Nonce uniqueness and format
+// 4. ISR contract — both admin and public CSP are static
 // ============================================================
-describe("Nonce — uniqueness and format", () => {
-  it("generateNonce returns a valid UUID format", async () => {
-    const { generateNonce } = await importCspPolicy();
-    const nonce = generateNonce();
-    // UUID v4 format: 8-4-4-4-12 hex chars
-    expect(nonce).toMatch(
-      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
-    );
-  });
-
-  it("generateNonce produces unique values across calls", async () => {
-    const { generateNonce } = await importCspPolicy();
-    const nonces = new Set<string>();
-    for (let i = 0; i < 100; i++) {
-      nonces.add(generateNonce());
-    }
-    expect(nonces.size).toBe(100);
-  });
-
-  it("middleware produces different nonces on consecutive admin requests", async () => {
+describe("ISR contract — CSP is static (no per-request variation)", () => {
+  it("produces identical admin CSP across requests", async () => {
     const { middleware } = await import("@/middleware");
     const req1 = new NextRequest("https://kzq.test/admin");
     const req2 = new NextRequest("https://kzq.test/admin");
     const res1 = await middleware(req1);
     const res2 = await middleware(req2);
-    const csp1 = res1.headers.get("Content-Security-Policy-Report-Only")!;
-    const csp2 = res2.headers.get("Content-Security-Policy-Report-Only")!;
-    const nonce1 = csp1.match(/'nonce-([^']+)'/)?.[1];
-    const nonce2 = csp2.match(/'nonce-([^']+)'/)?.[1];
-    expect(nonce1).toBeTruthy();
-    expect(nonce2).toBeTruthy();
-    expect(nonce1).not.toBe(nonce2);
-  });
-});
-
-// ============================================================
-// 5. x-nonce request header forwarding
-// ============================================================
-describe("x-nonce request header forwarding", () => {
-  it("forwards x-nonce header for admin routes", async () => {
-    const { middleware } = await import("@/middleware");
-    const req = new NextRequest("https://kzq.test/admin");
-    const res = await middleware(req);
-    // NextResponse.next({ request: { headers } }) communicates the
-    // modified request headers to Next.js via the
-    // x-middleware-override-headers response header. Each forwarded
-    // header appears as x-middleware-request-<name>.
-    const overrideHeader = res.headers.get("x-middleware-override-headers");
-    expect(overrideHeader).toBeTruthy();
-    expect(overrideHeader!.toLowerCase()).toContain("x-nonce");
-    const forwardedNonce = res.headers.get("x-middleware-request-x-nonce");
-    expect(forwardedNonce).toBeTruthy();
-    // The nonce should be a valid UUID
-    expect(forwardedNonce).toMatch(
-      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
-    );
+    const csp1 = res1.headers.get("Content-Security-Policy-Report-Only");
+    const csp2 = res2.headers.get("Content-Security-Policy-Report-Only");
+    // Admin CSP must be deterministic — no per-request nonce or
+    // random value. (Previous nonce-based approach broke this.)
+    expect(csp1).toBe(csp2);
   });
 
-  it("does NOT set x-nonce header for public routes", async () => {
-    const { middleware } = await import("@/middleware");
-    const req = new NextRequest("https://kzq.test/products");
-    const res = await middleware(req);
-    // Public routes do not create a modified request — the
-    // x-middleware-override-headers header should not list x-nonce.
-    const overrideHeader = res.headers.get("x-middleware-override-headers");
-    if (overrideHeader) {
-      expect(overrideHeader.toLowerCase()).not.toContain("x-nonce");
-    }
-    expect(res.headers.get("x-middleware-request-x-nonce")).toBeNull();
-  });
-
-  it("forwards x-nonce for /api/admin subpaths", async () => {
-    const { middleware } = await import("@/middleware");
-    const req = new NextRequest("https://kzq.test/api/admin/products");
-    const res = await middleware(req);
-    const overrideHeader = res.headers.get("x-middleware-override-headers");
-    expect(overrideHeader).toBeTruthy();
-    expect(overrideHeader!.toLowerCase()).toContain("x-nonce");
-    expect(res.headers.get("x-middleware-request-x-nonce")).toBeTruthy();
-  });
-});
-
-// ============================================================
-// 6. ISR contract — public CSP is static
-// ============================================================
-describe("ISR contract — public CSP is static", () => {
   it("produces identical CSP for the same public route across requests", async () => {
     const { middleware } = await import("@/middleware");
     const req1 = new NextRequest("https://kzq.test/products");
@@ -394,7 +320,7 @@ describe("ISR contract — public CSP is static", () => {
 });
 
 // ============================================================
-// 7. CSP_ENFORCING flag — public route mode switch
+// 5. CSP_ENFORCING flag — public route mode switch
 // ============================================================
 describe("CSP_ENFORCING flag — public route mode switch", () => {
   it("defaults to Report-Only on public routes when CSP_ENFORCING is unset", async () => {
@@ -436,7 +362,7 @@ describe("CSP_ENFORCING flag — public route mode switch", () => {
 });
 
 // ============================================================
-// 8. Common directives — present in both policies
+// 6. Common directives — present in both policies
 // ============================================================
 describe("Common directives — present in both admin and public policies", () => {
   it("includes frame-ancestors 'none' in admin CSP", async () => {
@@ -519,7 +445,7 @@ describe("Common directives — present in both admin and public policies", () =
 });
 
 // ============================================================
-// 9. Supabase host resolution
+// 7. Supabase host resolution
 // ============================================================
 describe("Supabase host resolution", () => {
   it("includes the canonical Supabase host when URL is set", async () => {
@@ -527,8 +453,7 @@ describe("Supabase host resolution", () => {
     // canonical Supabase project ref pattern.
     vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://zyxwvutsrqponmlkjiha.supabase.co");
     const { buildAdminCspPolicy, buildPublicCspPolicy } = await importCspPolicy();
-    const nonce = "test-nonce";
-    const adminCsp = buildAdminCspPolicy(nonce);
+    const adminCsp = buildAdminCspPolicy();
     const publicCsp = buildPublicCspPolicy();
     expect(adminCsp).toContain("zyxwvutsrqponmlkjiha.supabase.co");
     expect(publicCsp).toContain("zyxwvutsrqponmlkjiha.supabase.co");
@@ -553,7 +478,7 @@ describe("Supabase host resolution", () => {
 });
 
 // ============================================================
-// 10. CSP_REPORT_PATH constant
+// 8. CSP_REPORT_PATH constant
 // ============================================================
 describe("CSP_REPORT_PATH constant", () => {
   it("is /api/csp-report", async () => {
