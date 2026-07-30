@@ -74,6 +74,19 @@ export async function middleware(request: NextRequest) {
     // Admin CSP: nonce-based, enforcing (no Report-Only for admin).
     const adminCsp = buildAdminCspPolicy(nonce);
     response.headers.set("Content-Security-Policy", adminCsp);
+
+    // Admin pages use per-request nonces in CSP. The HTML body contains
+    // inline scripts tagged with that nonce. If a CDN (EdgeOne) caches
+    // the HTML, a subsequent request gets a DIFFERENT nonce in the CSP
+    // header but the OLD nonce in the cached HTML scripts — CSP blocks
+    // all inline scripts and the page cannot hydrate (black screen).
+    // Prevent caching entirely on admin routes.
+    response.headers.set(
+      "Cache-Control",
+      "private, no-cache, no-store, must-revalidate, max-age=0",
+    );
+    response.headers.set("Expires", "0");
+    response.headers.set("Pragma", "no-cache");
   } else {
     response = NextResponse.next();
 
