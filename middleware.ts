@@ -71,9 +71,15 @@ export async function middleware(request: NextRequest) {
       },
     });
 
-    // Admin CSP: nonce-based, enforcing (no Report-Only for admin).
+    // Admin CSP: nonce-based, Report-Only.
+    // Phase 9: Switched from enforcing to Report-Only because enforcing
+    // mode caused black screen issues on certain deployments (EdgeOne)
+    // when Next.js runtime or third-party libraries triggered CSP
+    // violations that blocked JS execution. Report-Only still collects
+    // violations via /api/csp-report, but does NOT block execution —
+    // the page remains functional while we identify and fix violations.
     const adminCsp = buildAdminCspPolicy(nonce);
-    response.headers.set("Content-Security-Policy", adminCsp);
+    response.headers.set("Content-Security-Policy-Report-Only", adminCsp);
 
     // Admin pages use per-request nonces in CSP. The HTML body contains
     // inline scripts tagged with that nonce. If a CDN (EdgeOne) caches
