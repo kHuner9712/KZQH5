@@ -18,6 +18,7 @@ import {
 } from "@/lib/services/admin-write-boundary";
 import type { AdminWriteErrorCode } from "@/lib/services/admin-write-boundary";
 import { getSiteSettings, saveSiteSettings } from "@/lib/services/admin-content-write";
+import { validateNavItemArray } from "@/lib/validation/jsonb-fields";
 import type { NavItem } from "@/types/database";
 
 const MAX_BODY = 256 * 1024;
@@ -91,13 +92,12 @@ export async function POST(request: NextRequest) {
       ? p.default_language
       : "zh";
 
-  // Validate navigation_json is an array of NavItem-shaped objects
-  if (p.navigation_json != null && !Array.isArray(p.navigation_json)) {
+  // Validate navigation_json structure: each item must have label + href.
+  const navResult = validateNavItemArray("navigation_json", p.navigation_json, 50);
+  if (!navResult.ok) {
     return adminWriteError("ADMIN_WRITE_BAD_REQUEST", 400);
   }
-  const navItems: NavItem[] = Array.isArray(p.navigation_json)
-    ? (p.navigation_json as NavItem[])
-    : [];
+  const navItems: NavItem[] = (navResult.value as NavItem[] | null) ?? [];
 
   const id = typeof body.id === "string" && body.id.length > 0 ? body.id : null;
   const expectedUpdatedAt =

@@ -21,6 +21,7 @@ import {
   getHomepageContent,
   saveHomepageContent,
 } from "@/lib/services/admin-content-write";
+import { validateHomeFeatureArray } from "@/lib/validation/jsonb-fields";
 
 const MAX_BODY = 256 * 1024;
 
@@ -98,6 +99,15 @@ export async function POST(request: NextRequest) {
     });
   }
 
+  const featuresCnResult = validateHomeFeatureArray("features_cn", p.features_cn, 20);
+  if (!featuresCnResult.ok) {
+    return adminWriteError("ADMIN_WRITE_BAD_REQUEST", 400);
+  }
+  const featuresEnResult = validateHomeFeatureArray("features_en", p.features_en, 20);
+  if (!featuresEnResult.ok) {
+    return adminWriteError("ADMIN_WRITE_BAD_REQUEST", 400);
+  }
+
   const result = await saveHomepageContent(
     guard.client,
     {
@@ -119,8 +129,8 @@ export async function POST(request: NextRequest) {
         feature_section_title_en: stringOrNull(p.feature_section_title_en),
         feature_section_subtitle_cn: stringOrNull(p.feature_section_subtitle_cn),
         feature_section_subtitle_en: stringOrNull(p.feature_section_subtitle_en),
-        features_cn: p.features_cn,
-        features_en: p.features_en,
+        features_cn: featuresCnResult.value,
+        features_en: featuresEnResult.value,
         category_section_title_cn: stringOrNull(p.category_section_title_cn),
         category_section_subtitle_cn: stringOrNull(p.category_section_subtitle_cn),
         featured_products_title_cn: stringOrNull(p.featured_products_title_cn),

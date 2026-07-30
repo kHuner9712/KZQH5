@@ -22,6 +22,7 @@ import {
 } from "@/lib/services/admin-write-boundary";
 import type { AdminWriteErrorCode } from "@/lib/services/admin-write-boundary";
 import { getCompanyProfile, saveCompanyProfile } from "@/lib/services/admin-content-write";
+import { validateAdvantageArray } from "@/lib/validation/jsonb-fields";
 
 const MAX_BODY = 256 * 1024;
 
@@ -100,6 +101,15 @@ export async function POST(request: NextRequest) {
     });
   }
 
+  const advantagesCnResult = validateAdvantageArray("advantages_cn", p.advantages_cn, 20);
+  if (!advantagesCnResult.ok) {
+    return adminWriteError("ADMIN_WRITE_BAD_REQUEST", 400);
+  }
+  const advantagesEnResult = validateAdvantageArray("advantages_en", p.advantages_en, 20);
+  if (!advantagesEnResult.ok) {
+    return adminWriteError("ADMIN_WRITE_BAD_REQUEST", 400);
+  }
+
   const result = await saveCompanyProfile(
     guard.client,
     {
@@ -109,8 +119,8 @@ export async function POST(request: NextRequest) {
         title_en: stringOrNull(p.title_en),
         description_cn: stringOrNull(p.description_cn),
         description_en: stringOrNull(p.description_en),
-        advantages_cn: p.advantages_cn,
-        advantages_en: p.advantages_en,
+        advantages_cn: advantagesCnResult.value,
+        advantages_en: advantagesEnResult.value,
         phone: stringOrNull(p.phone),
         wechat: stringOrNull(p.wechat),
         email: stringOrNull(p.email),

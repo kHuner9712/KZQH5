@@ -8,6 +8,7 @@ export default function NewProductPage() {
       <div>
         <Link
           href="/admin/products"
+          prefetch={false}
           className="inline-flex items-center gap-1 text-xs text-gray-500 hover:text-steel"
         >
           <ChevronLeft className="h-3.5 w-3.5" /> 返回产品列表

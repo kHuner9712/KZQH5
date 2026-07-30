@@ -89,6 +89,7 @@ export function AdminShell({ children, email, unreadCount = 0 }: { children: Rea
             <Link
               href="/"
               target="_blank"
+              prefetch={false}
               className="hidden items-center gap-1 rounded-md px-2.5 py-1.5 text-xs text-gray-500 hover:bg-gray-100 sm:flex"
             >
               <ExternalLink className="h-3.5 w-3.5" /> 查看前台
@@ -157,6 +158,7 @@ function SidebarNav({
           <Link
             key={item.href}
             href={item.href}
+            prefetch={false}
             className={cn(
               "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition",
               active
