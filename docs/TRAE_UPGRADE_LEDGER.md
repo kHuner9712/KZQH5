@@ -1,61 +1,111 @@
 # KZQH5 Upgrade Ledger
 
+This ledger is the single source of truth for the staged upgrade program defined
+in the project upgrade brief. Each row is verified against the current code on
+`main` before status is assigned. Status assignments must not be trusted
+blindly — re-verify against real code before starting any task.
+
 ## Current Baseline
 
 - Repository: https://github.com/kHuner9712/KZQH5
-- Base branch: main
-- Audited commit: c544e5a
-- Node version: 20.x
-- Next.js version: 15.5.21
-- Supabase client version: 2.109.0
-- Last updated: 2026-08-01 (KZQ-P0-001 completed)
+- Base branch: `main`
+- Audited commit: `c544e5a309fe45dbd5e25179a9ee062fda0be212` (PR #42 security hardening)
+- Node version (engines): `20.x` (local runtime v24.15.0 used for tooling only)
+- Next.js version: `15.5.21`
+- Supabase client version: `@supabase/supabase-js 2.109.0`, `@supabase/ssr 0.12.0`
+- Last updated: 2026-07-31 (KZQ-P0-002 completed)
 
 ## Status Values
 
-- pending
-- in_progress
-- blocked
-- completed
-- superseded
+- `pending` — problem verified to still exist; not yet started
+- `in_progress` — partially addressed; remaining work required
+- `blocked` — cannot proceed without external decision/input
+- `completed` — verified resolved in current code
+- `superseded` — resolved by a different merged change; no longer applicable
 
-## Audit Notes (2026-08-01)
+## Verification Method
 
-Verified against real code on branch `trae/p0-001-finalize-rpc-strict-parsing`
-(created from `origin/main` at commit `c544e5a`).
-
-P0 upload tasks are NOT complete. The previous session incorrectly skipped to
-KZQ-P1-020. Per the priority rule (P0 → P1 → P2 → Framework), P0 must be
-completed first. KZQ-P0-001 is selected as the highest-priority incomplete task.
+Every status in this ledger was assigned by auditing the real code at the
+audited commit above, not by trusting prior conversation history. Evidence
+column records the file and line where the decision was made.
 
 ## Task Table
 
 | ID | Priority | Workstream | Task | Status | Branch | Commit | Acceptance | Notes |
 |----|----------|------------|------|--------|--------|--------|------------|-------|
-| KZQ-P0-001 | P0 | Epic A | Strictly parse finalize RPC business return value | completed | trae/p0-001-finalize-rpc-strict-parsing | (see git log) | npm run typecheck ✓; npm run lint ✓; npx vitest run tests/unit/two-phase-upload-service.test.ts ✓ (21 tests passed) | complete_temp_upload_finalize RPC now strictly parses ok field; compensation deletes moved object on failure; fixed error code COMPLETE_RPC_FAILED; 8 new tests added. |
-| KZQ-P0-002 | P0 | Epic A | Correct signed upload URL lifecycle model | pending | - | - | - | SIGNED_UPLOAD_URL_TTL_SECONDS defined but never used; docs conflate DB expires_at with signed URL TTL. |
-| KZQ-P0-003 | P0 | Epic A | Bind upload token to authorizing admin | pending | - | - | - | claim_temp_upload_for_finalize accepts no actor; FinalizeUploadInput.actorId/actorRole declared but silently discarded. Requires forward-only migration. |
-| KZQ-P0-004 | P0 | Epic A | Final extension from verified MIME | pending | - | - | - | Two-phase path uses getExtensionFromFilename (user filename), not centralized MIME→ext mapping. Single-stage path is correct. |
-| KZQ-P0-005 | P0 | Epic A | Unify single-stage and two-phase Storage Saga | pending | - | - | - | Workstream: split into atomic sub-tasks. Path gen + cleanup enqueue shared; validation, audit, compensation, ref registration divergent. |
-| KZQ-P0-010 | P0 | Epic B | Production schema fallback explicit | pending | - | - | - | ALLOW_SCHEMA_COMPATIBILITY_FALLBACK does not exist; fallback is unconditional and silent (fail-open). |
-| KZQ-P0-011 | P0 | Epic B | Strengthen release readiness DB contract | pending | - | - | - | Partial: RPC-based verifier exists. Missing: migration ledger state, RLS enabled, policies, table-level grants/revokes, RPC param/return contracts. |
-| KZQ-P1-001 | P1 | Epic C | Clean CSP implementation vs doc conflict | pending | - | - | - | Not yet audited in detail. |
-| KZQ-P1-002 | P1 | Epic C | Admin CSP switch to Enforcing | pending | - | - | - | Blocked by KZQ-P1-001 and CSP violation audit. |
-| KZQ-P1-003 | P1 | Epic C | Remove public CSP unsafe-eval | pending | - | - | - | Not yet audited in detail. |
-| KZQ-P1-004 | P1 | Epic C | Auth cookie and XSS risk assessment | pending | - | - | - | Not yet audited in detail. |
-| KZQ-P1-010 | P1 | Epic D | Pre-auth coarse rate limiting | pending | - | - | - | Not yet audited in detail. |
-| KZQ-P1-011 | P1 | Epic D | Production distributed rate limiting | pending | - | - | - | Not yet audited in detail. |
-| KZQ-P1-012 | P1 | Epic D | Strict canonical origin validation | pending | - | - | - | Not yet audited in detail. |
-| KZQ-P1-013 | P1 | Epic D | HSTS and CSP Reporting Endpoint external protocol | pending | - | - | - | Not yet audited in detail. |
-| KZQ-P1-020 | P1 | Epic E | Admin login error message standardization | pending | - | - | - | LoginForm.tsx leaks raw Supabase errors. Will be done after P0. |
-| KZQ-P1-021 | P1 | Epic E | Admin login brute-force protection | pending | - | - | - | Not yet audited in detail. |
-| KZQ-P1-022 | P1 | Epic E | Admin MFA / AAL2 | pending | - | - | - | Workstream: split into 6 atomic sub-tasks. |
-| KZQ-P2-001 | P2 | Epic F | Admin auth request-level dedup | pending | - | - | - | Not yet audited in detail. |
-| KZQ-P2-002 | P2 | Epic F | Dashboard query convergence | pending | - | - | - | Not yet audited in detail. |
-| KZQ-P2-003 | P2 | Epic F | Unified media domain config validation | pending | - | - | - | Not yet audited in detail. |
-| KZQ-UPG-001 | Framework | Epic G | Node 20 → Node 22 | pending | - | - | - | Blocked by P0 and core P1 completion. |
-| KZQ-UPG-002 | Framework | Epic G | ESLint Flat Config migration | pending | - | - | - | Blocked by P0 and core P1 completion. |
-| KZQ-UPG-003 | Framework | Epic G | PDF.js and Turbopack compatibility | pending | - | - | - | Blocked by P0 and core P1 completion. |
-| KZQ-UPG-004 | Framework | Epic G | Next.js 16 upgrade | pending | - | - | - | Blocked by UPG-001, UPG-002, UPG-003. |
-| KZQ-P2-010 | P2 | Epic H | Clean up superseded draft PRs | pending | - | - | - | Check PR #31, #32, #33. |
-| KZQ-P2-011 | P2 | Epic H | Remove deprecated Vercel integration | pending | - | - | - | Not yet audited in detail. |
-| KZQ-P2-012 | P2 | Epic H | Security supply chain hardening | pending | - | - | - | Workstream: split into independent sub-tasks (CodeQL, secret scanning, Dependabot, SBOM, license audit, Actions permissions). |
+| KZQ-P0-001 | P0 | Epic A 两阶段上传 | Verify `complete_temp_upload_finalize` RPC business return value (`ok` field) | completed | `trae/p0-001-finalize-rpc-return-value` | (this commit) | `npm run typecheck && npm run lint && npx vitest run tests/unit/two-phase-upload-service.test.ts` → PASS (21/21) | Fixed `lib/services/two-phase-upload.ts:461-525`: now destructures `data`, validates `ok===true`, handles transport error/null/malformed/`ok:false`; RPC failure now compensates by deleting moved final object, enqueues cleanup if compensation fails, calls failFinalize, returns `FINALIZE_RPC_FAILED`; never returns success on RPC failure. Added 8 tests covering all 9 required scenarios. `mapErrorCode` updated to map `FINALIZE_RPC_FAILED`→500 |
+| KZQ-P0-002 | P0 | Epic A 两阶段上传 | Correct signed upload URL lifecycle model (DB expiry vs Supabase capability TTL) | completed | `trae/p0-002-signed-url-lifecycle` | (this commit) | `npm run typecheck && npm run lint && npx vitest run tests/unit/two-phase-upload-service.test.ts tests/unit/two-phase-upload-client.test.ts tests/unit/migration-temp-uploads-safety.test.ts` → PASS (28+20=48) | Renamed `SIGNED_UPLOAD_URL_TTL_SECONDS`→`TEMP_UPLOAD_AUTHORIZATION_WINDOW_SECONDS` in `lib/services/two-phase-upload.ts:85`; added docblock distinguishing 3 lifetimes (business window 5min / signed-URL capability TTL server-controlled 1h / cleanup protection period); updated `docs/TWO_PHASE_UPLOAD_DESIGN.md:97-108` and Future Work section :248-261 documenting cleanup dispatcher MUST wait for both windows before deleting temp objects; fixed stale "5-minute TTL" comment in `app/api/admin/storage/upload/authorize/route.ts:18`; added test verifying `expiresAt` is the business window deadline. No migration needed — cleanup dispatcher not yet implemented; protection-period guard documented for future implementation |
+| KZQ-P0-003 | P0 | Epic A 两阶段上传 | Bind upload token to authorizing admin (verify actor_id on finalize) | pending | — | — | `npm run test:database` | `supabase/migrations/20260729020000_temp_uploads_two_phase_upload.sql:235-301` `claim_temp_upload_for_finalize`/`complete_temp_upload_finalize` accept only token; never verify `actor_id`; requires new forward-only migration |
+| KZQ-P0-004 | P0 | Epic A 两阶段上传 | Final extension from verified MIME, not original filename | pending | — | — | `npx vitest run tests/unit/two-phase-upload.test.ts` | `lib/services/two-phase-upload.ts:362` `getExtensionFromFilename(row.declared_filename)`; no shared MIME→ext map; single-stage `storage-upload.ts:189` has consistency check + `MIME_DEFAULT_EXT` fallback but two-stage skips it |
+| KZQ-P0-005 | P0 | Epic A 两阶段上传 | Unify single-stage and two-stage storage saga (workstream — split into atomic sub-tasks) | pending | — | — | per sub-task | `two-phase-upload.ts` uses `claim_temp_upload_for_finalize`/`complete_temp_upload_finalize` + `verifyMagicBytes`; `storage-upload.ts` uses `recordStorageAuditStarted`/`completeStorageAudit` + `validateUploadFile`; only `generatePrivateStoragePath` + `enqueueStorageCleanup` shared. Must split before execution |
+| KZQ-P0-010 | P0 | Epic B 数据库版本 | Production schema fallback explicit (`ALLOW_SCHEMA_COMPATIBILITY_FALLBACK`) | pending | — | — | `npm run typecheck && npm run lint && npx vitest run tests/unit/release-readiness.test.ts` | `lib/repositories/inquiries.ts:206-222` and `lib/repositories/admin-dashboard.ts:137-159` silently fall back to direct table queries when RPC undeployed (added by PR #41); no env gate, no operator signal |
+| KZQ-P0-011 | P0 | Epic B 数据库 | Strengthen release readiness DB contract | pending | — | — | `npm run check:release-readiness && npx vitest run tests/unit/release-readiness.test.ts` | `scripts/check-release-readiness.mjs:588-604` checks RPC existence + anon/authenticated grants via `verify_schema_readiness()`; MISSING: RPC param/return signature contracts, explicit RLS/policy/revoke verification, service-role function privileges, migration ledger SHA-256 consistency (only checks files present at :737-760) |
+| KZQ-P1-001 | P1 | Epic C 后台 CSP | Clean up CSP implementation vs docs conflict (fix source of truth, do not switch mode) | pending | — | — | `npx vitest run tests/unit/release-readiness.test.ts` | `scripts/check-release-readiness.mjs:321-327` stale comment lists `CSP still Report-Only` as blocker, but implemented gate at :487-495 allows `CSP_ENFORCING=true`; comment contradicts logic |
+| KZQ-P1-002 | P1 | Epic C 后台 CSP | Switch admin CSP to Enforcing | pending | — | — | `npm run typecheck && npm run lint && npm run test:e2e:demo` | `middleware.ts:65` admin routes unconditionally emit `Content-Security-Policy-Report-Only`; enforcing header never emitted; `check-release-readiness.mjs:475` confirms "Admin routes: ALWAYS Report-Only". Precondition: CSP violation audit not yet done |
+| KZQ-P1-003 | P1 | Epic C 后台 CSP | Remove unnecessary `unsafe-eval` in public CSP | pending | — | — | `npx vitest run tests/unit/csp-policy.test.ts && npm run test:e2e:demo` | `lib/security/csp-policy.ts:165` public CSP still has `'unsafe-eval'` in script-src; inline comment at :154 admits it is retained speculatively ("may need it") without proven requirement |
+| KZQ-P1-004 | P1 | Epic C 后台 CSP | Auth cookie & XSS risk assessment (workstream — split into atomic sub-tasks) | pending | — | — | per sub-task | `lib/supabase/middleware-session.ts:128` `httpOnly:false` (matches @supabase/ssr defaults); CSP Report-Only default (`middleware.ts:86`); `dangerouslySetInnerHTML` used in 5 places for JSON-LD; no Trusted Types. Must split before execution |
+| KZQ-P1-010 | P1 | Epic D 限流与 Origin | Pre-auth coarse rate limiting | pending | — | — | `npx vitest run tests/unit/admin-write-boundary.test.ts` | `lib/security/admin-write-boundary.ts:159` `getVerifiedAdmin()` (runs `auth.getUser()` at `admin-auth.ts:66` + profile query at :100) runs BEFORE global rate limit at `:176` and per-admin limit at `:198`; unauthenticated attackers consume no quota |
+| KZQ-P1-011 | P1 | Epic D 限流与 Origin | Production distributed rate limiting boundary | pending | — | — | `npm run check:release-readiness && npx vitest run tests/unit/rate-limit.test.ts` | `lib/services/rate-limit.ts:58-190` only `MemoryRateLimiter`; all factories return memory instances; no Redis/KV/Postgres RPC; header comment defers to EdgeOne WAF which is not code-verified |
+| KZQ-P1-012 | P1 | Epic D 限流与 Origin | Strict canonical origin validation (`CANONICAL_APP_ORIGIN`) | pending | — | — | `npx vitest run tests/unit/http-security.test.ts` | `lib/security/http-security.ts:251-298` `isSameOrigin` compares Origin against `x-forwarded-host`/`host`; NO `CANONICAL_APP_ORIGIN` env var exists; port-mismatch bug IS handled (:292-297) but no canonical allowlist |
+| KZQ-P1-013 | P1 | Epic D 限流与 Origin | HSTS & CSP reporting endpoint external protocol | pending | — | — | `npx vitest run tests/unit/middleware.test.ts` | `middleware.ts:113-118` HSTS set on HTTPS only (good); `:106` `new URL(CSP_REPORT_PATH, request.url)` derives Reporting-Endpoints from forwarded host, NOT canonical origin — can produce `http://` URLs |
+| KZQ-P1-020 | P1 | Epic E 管理员身份 | Admin login error standardization | pending | — | — | `npx vitest run tests/unit/login-form.test.ts` (to be added) | `components/admin/LoginForm.tsx:46` `setError(signInError.message \|\| "登录失败…")` leaks raw Supabase error to UI; `:53` leaks exception `err.message`; login is client-side only (no server route to standardize) |
+| KZQ-P1-021 | P1 | Epic E 管理员身份 | Admin login brute force protection | pending | — | — | `npm run check:release-readiness` | No server-side login API route; login via client-side `supabase.auth.signInWithPassword` in `LoginForm.tsx:40`; no dedicated login rate-limit bucket in `rate-limit.ts`; no captcha |
+| KZQ-P1-022 | P1 | Epic E 管理员身份 | Admin MFA / AAL2 (workstream — split into 6 atomic sub-tasks) | pending | — | — | per sub-task | Grep for `mfa\|aal2\|totp\|enrolled_factors\|authenticator-assurance` found 0 real matches; MFA completely absent. Must split: 1) audit, 2) enrollment, 3) challenge, 4) server guard, 5) step-up, 6) E2E+docs |
+| KZQ-P2-001 | P2 | Epic F 性能结构 | Admin verify request-level dedup | pending | — | — | `npx vitest run tests/unit/admin-auth.test.ts` (to be added) | `app/admin/(protected)/layout.tsx:31` + `app/admin/(protected)/page.tsx:28` both call `getVerifiedAdmin()`; `admin-auth.ts` has no React `cache()` or request-scoped memoization; `auth.getUser()` + `admin_profiles` query run multiple times per request |
+| KZQ-P2-002 | P2 | Epic F 性能结构 | Dashboard query convergence | in_progress | — | — | `npx vitest run tests/unit/admin-dashboard.test.ts` | Primary path uses single `get_admin_dashboard_snapshot` RPC (`admin-dashboard.ts:141`); 5-query fallback at `:193-237` still retained for schema/permission error — fallback removal pending KZQ-P0-010 |
+| KZQ-P2-003 | P2 | Epic F 性能结构 | Unified media domain config | pending | — | — | `npx vitest run tests/unit/media-domain-config.test.ts` (to be added) | No shared config module; `next.config.mjs:134-135`, `lib/security/csp-policy.ts:33,54`, `scripts/check-release-readiness.mjs:706` each independently read `NEXT_PUBLIC_SUPABASE_URL`/`MEDIA_CDN_DOMAINS`; no `lib/config/media-domains.ts` |
+| KZQ-P2-010 | P2 | Epic H 仓库治理 | Clean up superseded draft PRs #31, #32, #33 | pending | — | — | `gh pr view 31,32,33` | GitHub PRs #31, #32, #33 reportedly still OPEN+DRAFT; their work superseded by merged PRs #34/#35/#41/#42; needs `gh` verification then close with explanation |
+| KZQ-P2-011 | P2 | Epic H 仓库治理 | Remove deprecated Vercel integration & docs | pending | — | — | `npx vitest run tests/unit/release-readiness.test.ts` | 17 files still reference Vercel: `README.md`, `.env.example`, `docs/LAUNCH_CHECKLIST.md`, `docs/EDGEONE_COMPATIBILITY_MATRIX.md`, `DEPLOYMENT.md`, `scripts/check-release-readiness.mjs:261`, `lib/supabase/middleware-session.ts:9` |
+| KZQ-P2-012 | P2 | Epic H 仓库治理 | Supply chain security (workstream — split into atomic sub-tasks: CodeQL, secret scanning, Dependabot, SBOM, license audit, GH Actions permissions) | in_progress | — | — | per sub-task | `.github/dependabot.yml` PRESENT (npm + github-actions weekly); `.github/workflows/ci.yml:8-9` top-level `permissions: contents: read`; actions SHA-pinned (:46,51). MISSING: `codeql.yml`, `sbom.yml`, secret scanning config, license audit. Dependabot + permissions baseline done; CodeQL/SBOM/secret-scanning sub-tasks pending |
+| KZQ-UPG-001 | UPG | Epic G 框架升级 | Node 20 → 22 | pending | — | — | `npm run typecheck && npm run lint && npm run test:unit && npm run build:demo` | `package.json:5-6` engines `node:20.x`; `.github/workflows/ci.yml` uses `node-version:20` in all jobs; `@types/node:^20.16.11`; must confirm EdgeOne Node support first |
+| KZQ-UPG-002 | UPG | Epic G 框架升级 | Migrate ESLint to Flat Config (`eslint.config.mjs`) | pending | — | — | `npm run lint` | `.eslintrc.json` exists (legacy); no `eslint.config.mjs`; `package.json:14` runs `next lint` (removed in Next 16); tracked in `docs/NEXT16_UPGRADE_PLAN.md` Phase 3 |
+| KZQ-UPG-003 | UPG | Epic G 框架升级 | PDF.js & Turbopack compatibility | completed | — | — | `npm run sync:pdfjs-worker && npm run build:demo` | `next.config.mjs:226` `transpilePackages:["pdfjs-dist"]`; :227-243 webpack config only sets `resolve.fallback` for Node builtins (no pdfjs-specific alias); `scripts/sync-pdfjs-worker.mjs` syncs worker to `public/lib/pdfjs/pdf.worker.min.mjs`. Code is Turbopack-compatible. Note: runtime PDF preview verification recommended before Next 16 upgrade |
+| KZQ-UPG-004 | UPG | Epic G 框架升级 | Next.js 16 upgrade | pending | — | — | Release Gate (full) | `package.json:44` next `15.5.21`; `docs/NEXT16_UPGRADE_PLAN.md:3` "Status: DRAFT — DO NOT EXECUTE YET"; pre-flight checklist unchecked. Blocked by UPG-001, UPG-002, UPG-003 (UPG-003 done) |
+
+## Workstream Split Requirements
+
+The following tasks are workstreams and MUST be split into atomic sub-tasks
+before any code work begins. Each sub-task becomes its own row (appending a
+suffix such as `-a`, `-b`) and is executed one per round.
+
+- **KZQ-P0-005** — split into: unified validation; unified final path
+  generation; unified audit-start; unified audit-complete; unified
+  compensation; unified cleanup/reconciliation; unified storage object
+  reference registration.
+- **KZQ-P1-004** — split into: Supabase SSR cookie compatibility audit;
+  CSP enforce task; output encoding / dangerous HTML ban; client-side
+  dependency audit; Trusted Types feasibility.
+- **KZQ-P1-022** — split into: data & Auth capability audit; enrollment;
+  challenge; server guard; sensitive operation step-up; E2E & docs.
+- **KZQ-P2-012** — split into: CodeQL; secret scanning config;
+  Dependabot/Renovate tuning; SBOM; license audit; GitHub Actions
+  permissions minimization.
+
+## Next Task Selection
+
+Per the priority order `P0 → P1 → P2 → Framework Upgrade`, and within each
+priority by Task ID order, the next atomic task to execute is:
+
+**KZQ-P0-003** — Bind upload token to authorizing admin (verify actor_id on
+finalize).
+
+KZQ-P0-001 and KZQ-P0-002 are now completed. KZQ-P0-003 is the next P0
+atomic task (not a workstream). Its scope requires a new forward-only
+migration to make `claim_temp_upload_for_finalize` and
+`complete_temp_upload_finalize` accept and verify `actor_id`, so that only
+the admin who authorized the upload can finalize it. No remote DB writes —
+migration is created locally and tested via `npm run test:database`.
+
+## Acceptance Commands Reference
+
+- Atomic task: typically `npm run typecheck && npm run lint` plus the
+  task-specific vitest target recorded in the Acceptance column.
+- Migration task: add `npm run check:migration-immutability:ci` and
+  `npm run test:database`.
+- Build config task: add `npm run build:demo` (or production-contract build).
+- Full Release Gate (only when an Epic completes, a framework upgrade lands,
+  or staging/production handoff): `npm ci && npm run
+  check:migration-immutability:ci && npm run typecheck && npm run lint && npm
+  run test:unit && npm run test:database && npm run build:demo && npm run
+  build:production && npm run test:e2e:demo && npm audit --omit=dev
+  --audit-level=high && git diff --check`.

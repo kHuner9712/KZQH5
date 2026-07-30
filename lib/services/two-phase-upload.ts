@@ -23,7 +23,11 @@
 //   - The signed URL points to a temp/ path under private-assets,
 //     NOT the final path. The object is moved to its final path
 //     only after finalize verification.
-//   - The signed URL has a short TTL (5 min).
+//   - The temp_uploads row has a 5-minute BUSINESS authorization
+//     window (TEMP_UPLOAD_AUTHORIZATION_WINDOW_SECONDS). The Supabase
+//     signed-upload-URL capability lifetime is server-controlled
+//     (default 1h) and NOT configurable via the SDK — see the
+//     constant docblock for the three-distinct-lifetimes breakdown.
 //   - The temp_uploads row tracks the lifecycle so stale uploads
 //     can be cleaned up.
 //   - Magic Bytes verification on finalize prevents MIME spoofing.
@@ -52,8 +56,33 @@ import { enqueueStorageCleanup } from "@/lib/services/storage-upload";
 // Constants
 // ============================================================
 
-/** Signed upload URL TTL (5 minutes). Must match the temp_uploads.expires_at default. */
-export const SIGNED_UPLOAD_URL_TTL_SECONDS = 300;
+/**
+ * Business authorization window for a two-phase upload (5 minutes).
+ *
+ * This is the lifetime of the `temp_uploads` row's `authorized` status:
+ * after this window elapses without a finalize, the row is reaped by
+ * `reap_expired_temp_uploads` and the temp object is enqueued for
+ * cleanup. It MUST be shorter than the Supabase signed-upload-URL
+ * capability lifetime so that cleanup never races with a still-valid
+ * upload URL (which would let a stale URL write a permanent orphan).
+ *
+ * IMPORTANT — three distinct lifetimes are involved, do not conflate:
+ *   1. Business authorization window (this constant, 5 min) — controls
+ *      the temp_uploads row status and the cleanup dispatcher reap schedule.
+ *   2. Supabase signed-upload-URL capability TTL — controlled by the
+ *      Supabase Storage service, NOT by this code. `createSignedUploadUrl`
+ *      accepts only `{ upsert }` and does NOT accept a TTL argument
+ *      (verified against @supabase/storage-js 2.109.0). The service-side
+ *      default is 1 hour; it cannot be lowered or raised from the client.
+ *   3. Temp object cleanup protection period — the cleanup dispatcher
+ *      must wait until BOTH the business window has expired AND the
+ *      signed-URL capability window has elapsed before deleting a temp
+ *      object, otherwise a still-valid URL could re-create an orphan.
+ *
+ * The `expiresAt` field returned to the caller is the business
+ * authorization window deadline (item 1), NOT the signed URL expiry.
+ */
+export const TEMP_UPLOAD_AUTHORIZATION_WINDOW_SECONDS = 300;
 
 /**
  * Per-MIME max file size for two-phase upload. The two-phase
@@ -202,7 +231,15 @@ export async function authorizeTempUpload(
   const uploadToken = row.id;
   const objectPath = row.object_path;
 
-  // 7. Generate signed upload URL via Supabase Storage
+  // 7. Generate signed upload URL via Supabase Storage.
+  //
+  // NOTE: `createSignedUploadUrl` does NOT accept a TTL argument —
+  // its options bag is `{ upsert }` only (verified against
+  // @supabase/storage-js 2.109.0). The signed-URL capability lifetime
+  // is controlled by the Supabase Storage service (default 1 hour)
+  // and cannot be lowered or raised from the client. The DB
+  // `expires_at` (5 min) is the BUSINESS authorization window for the
+  // temp_uploads row, NOT the signed-URL TTL — do not conflate them.
   const { data: signedData, error: signedError } = await client.storage
     .from(PRIVATE_ASSETS_BUCKET)
     .createSignedUploadUrl(objectPath);
@@ -219,7 +256,13 @@ export async function authorizeTempUpload(
     return { ok: false, code: "SIGNED_URL_FAILED" };
   }
 
-  // 8. Return the authorization response
+  // 8. Return the authorization response.
+  //
+  // `expiresAt` is the business authorization window deadline (the
+  // temp_uploads row `expires_at`), NOT the Supabase signed-URL expiry.
+  // The signed URL's actual capability lifetime is server-controlled
+  // and not exposed to this code; callers must not treat `expiresAt`
+  // as the signed-URL TTL.
   return {
     ok: true,
     uploadToken,
