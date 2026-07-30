@@ -1,31 +1,25 @@
 // ============================================================
-// CSP Policy Builder (Phase 3 Task 1)
+// CSP Policy Builder
 //
 // Builds per-route Content Security Policy strings.
 //
 // Route categories:
-//   1. Admin routes (/admin/**, /api/admin/**) — nonce-based CSP,
-//      Report-Only mode (Phase 9: switched from enforcing to fix
-//      black screen issues on EdgeOne deployments).
+//   1. Admin routes (/admin/**, /api/admin/**) — static CSP using
+//      'unsafe-inline' for script-src/style-src. Phase 9 attempted
+//      nonce-based CSP but Next.js 15 App Router does NOT inject the
+//      nonce into its internal inline scripts (RSC payload, hydration
+//      data), so the browser blocked them and the page could not
+//      hydrate (black screen). 'unsafe-inline' is the only reliable
+//      way to allow Next.js internal scripts. Other directives
+//      (img-src, connect-src, frame-ancestors, object-src) remain
+//      strict to provide meaningful protection.
 //   2. Public routes (everything else) — static CSP, Report-Only,
 //      retains 'unsafe-inline' for ISR compatibility, with
 //      report-to/report-uri wired.
 //
-// Why split:
-//   - Admin pages are dynamically rendered (force-dynamic) and
-//     can safely use per-request nonces without breaking ISR.
-//   - Public pages use ISR — per-request nonces would force every
-//     page to be dynamically rendered, destroying the ISR cache.
-//   - Admin routes use nonce-based CSP (no 'unsafe-inline') to
-//     establish a stricter policy baseline. Report-Only mode
-//     allows us to collect violations without breaking pages.
-//
-// Nonce generation:
-//   - Uses Web Crypto API (crypto.randomUUID()) which is available
-//     in the Edge Runtime.
-//   - Nonce is 32+ characters of base64url, passed via the
-//     `x-nonce` request header so Next.js can inject it into
-//     <Script nonce={nonce}> tags.
+// Both admin and public policies are served as Report-Only so that
+// violations are collected via /api/csp-report without blocking
+// page execution.
 // ============================================================
 
 const SUPABASE_PROJECT_HOST_PATTERN = /^[a-z0-9]{20}\.supabase\.co$/;
@@ -123,23 +117,26 @@ const COMMON_DIRECTIVES = [
 /**
  * Build the CSP policy for ADMIN routes (/admin/**, /api/admin/**).
  *
- * This is a nonce-based, enforcing CSP:
- *   - script-src uses 'nonce-<nonce>' instead of 'unsafe-inline'
- *   - style-src uses 'nonce-<nonce>' instead of 'unsafe-inline'
+ * Uses 'unsafe-inline' for script-src and style-src. This is required
+ * because Next.js 15 App Router generates internal inline scripts
+ * (RSC payload, hydration data) that do NOT accept a nonce attribute.
+ * A nonce-based CSP blocks these scripts and the page cannot hydrate.
+ *
+ * Other directives remain strict:
  *   - No 'unsafe-eval' (admin pages do not need PDF.js)
  *   - No Google Fonts CDN (admin uses system fonts)
  *   - No WeChat JS-SDK (admin does not need social sharing)
  *   - Supabase host is still allowed (auth + data)
+ *   - frame-ancestors 'none', object-src 'none', etc.
  *
- * The nonce must be generated per-request using generateNonce().
+ * The policy is served as Report-Only so violations are collected
+ * without blocking page execution.
  */
-export function buildAdminCspPolicy(nonce: string): string {
+export function buildAdminCspPolicy(): string {
   const directives = [
     "default-src 'self'",
-    // nonce-based script-src — no 'unsafe-inline', no 'unsafe-eval'
-    `script-src 'self' 'nonce-${nonce}'`,
-    // nonce-based style-src — no 'unsafe-inline'
-    `style-src 'self' 'nonce-${nonce}'`,
+    "script-src 'self' 'unsafe-inline'",
+    "style-src 'self' 'unsafe-inline'",
     "font-src 'self' data:",
     `img-src ${imgSrcAllowlist}`,
     `connect-src ${connectSrcAllowlist}`,
@@ -177,7 +174,8 @@ export function buildPublicCspPolicy(): string {
 
 /**
  * Check if a pathname is an admin route that should receive the
- * nonce-based enforcing CSP.
+ * admin CSP (stricter than public — no WeChat SDK, no Google Fonts,
+ * no 'unsafe-eval').
  *
  * Admin routes:
  *   - /admin/** (admin pages)
@@ -192,23 +190,6 @@ export function isAdminRoute(pathname: string): boolean {
   if (pathname === "/admin" || pathname.startsWith("/admin/")) return true;
   if (pathname === "/api/admin" || pathname.startsWith("/api/admin/")) return true;
   return false;
-}
-
-/**
- * Generate a cryptographically random nonce for CSP.
- *
- * Uses Web Crypto API (crypto.randomUUID()) which is available in
- * the Edge Runtime. The nonce is a 36-character UUID string, which
- * is safe to use in CSP 'nonce-' directives without base64 encoding.
- *
- * The nonce is:
- *   - Generated per-request (never reused)
- *   - Passed to Next.js via the `x-nonce` request header
- *   - Injected into <Script nonce={nonce}> tags by Next.js
- *   - Included in the CSP script-src and style-src directives
- */
-export function generateNonce(): string {
-  return crypto.randomUUID();
 }
 
 /**
