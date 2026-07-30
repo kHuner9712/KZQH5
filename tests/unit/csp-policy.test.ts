@@ -6,8 +6,8 @@ import { NextRequest } from "next/server";
 //
 // Verifies that:
 //   1. isAdminRoute() correctly classifies admin vs public routes.
-//   2. Admin routes receive nonce-based ENFORCING CSP:
-//      - Content-Security-Policy header (not Report-Only)
+//   2. Admin routes receive nonce-based Report-Only CSP:
+//      - Content-Security-Policy-Report-Only header
 //      - script-src uses 'nonce-<nonce>' (no 'unsafe-inline')
 //      - style-src uses 'nonce-<nonce>' (no 'unsafe-inline')
 //      - No 'unsafe-eval'
@@ -108,32 +108,32 @@ describe("isAdminRoute — route classification", () => {
 });
 
 // ============================================================
-// 2. Admin CSP — nonce-based enforcing
+// 2. Admin CSP — nonce-based Report-Only
 // ============================================================
-describe("Admin CSP — nonce-based enforcing", () => {
-  it("sets Content-Security-Policy (enforcing) on /admin", async () => {
+describe("Admin CSP — nonce-based Report-Only", () => {
+  it("sets Content-Security-Policy-Report-Only on /admin", async () => {
     const { middleware } = await import("@/middleware");
     const req = new NextRequest("https://kzq.test/admin");
     const res = await middleware(req);
-    const csp = res.headers.get("Content-Security-Policy");
+    const csp = res.headers.get("Content-Security-Policy-Report-Only");
     expect(csp).toBeTruthy();
-    // Admin must NOT use Report-Only.
-    expect(res.headers.get("Content-Security-Policy-Report-Only")).toBeNull();
+    // Phase 9: Admin uses Report-Only (not enforcing).
+    expect(res.headers.get("Content-Security-Policy")).toBeNull();
   });
 
-  it("sets enforcing CSP on /api/admin/products", async () => {
+  it("sets Report-Only CSP on /api/admin/products", async () => {
     const { middleware } = await import("@/middleware");
     const req = new NextRequest("https://kzq.test/api/admin/products");
     const res = await middleware(req);
-    expect(res.headers.get("Content-Security-Policy")).toBeTruthy();
-    expect(res.headers.get("Content-Security-Policy-Report-Only")).toBeNull();
+    expect(res.headers.get("Content-Security-Policy-Report-Only")).toBeTruthy();
+    expect(res.headers.get("Content-Security-Policy")).toBeNull();
   });
 
   it("includes 'nonce-' in script-src (no 'unsafe-inline')", async () => {
     const { middleware } = await import("@/middleware");
     const req = new NextRequest("https://kzq.test/admin");
     const res = await middleware(req);
-    const csp = res.headers.get("Content-Security-Policy")!;
+    const csp = res.headers.get("Content-Security-Policy-Report-Only")!;
     expect(csp).toMatch(/script-src[^;]*'nonce-[^']+'/);
     expect(csp).not.toMatch(/script-src[^;]*'unsafe-inline'/);
   });
@@ -142,7 +142,7 @@ describe("Admin CSP — nonce-based enforcing", () => {
     const { middleware } = await import("@/middleware");
     const req = new NextRequest("https://kzq.test/admin");
     const res = await middleware(req);
-    const csp = res.headers.get("Content-Security-Policy")!;
+    const csp = res.headers.get("Content-Security-Policy-Report-Only")!;
     expect(csp).toMatch(/style-src[^;]*'nonce-[^']+'/);
     expect(csp).not.toMatch(/style-src[^;]*'unsafe-inline'/);
   });
@@ -151,7 +151,7 @@ describe("Admin CSP — nonce-based enforcing", () => {
     const { middleware } = await import("@/middleware");
     const req = new NextRequest("https://kzq.test/admin");
     const res = await middleware(req);
-    const csp = res.headers.get("Content-Security-Policy")!;
+    const csp = res.headers.get("Content-Security-Policy-Report-Only")!;
     expect(csp).not.toContain("'unsafe-eval'");
   });
 
@@ -159,7 +159,7 @@ describe("Admin CSP — nonce-based enforcing", () => {
     const { middleware } = await import("@/middleware");
     const req = new NextRequest("https://kzq.test/admin");
     const res = await middleware(req);
-    const csp = res.headers.get("Content-Security-Policy")!;
+    const csp = res.headers.get("Content-Security-Policy-Report-Only")!;
     expect(csp).not.toContain("fonts.googleapis.com");
     expect(csp).not.toContain("fonts.gstatic.com");
   });
@@ -168,7 +168,7 @@ describe("Admin CSP — nonce-based enforcing", () => {
     const { middleware } = await import("@/middleware");
     const req = new NextRequest("https://kzq.test/admin");
     const res = await middleware(req);
-    const csp = res.headers.get("Content-Security-Policy")!;
+    const csp = res.headers.get("Content-Security-Policy-Report-Only")!;
     // WeChat JS-SDK must NOT be loadable on admin pages. The SDK
     // is loaded via <script src="https://res.wx.qq.com/...">, so
     // blocking it in script-src is sufficient. img-src and
@@ -181,7 +181,7 @@ describe("Admin CSP — nonce-based enforcing", () => {
     const { middleware } = await import("@/middleware");
     const req = new NextRequest("https://kzq.test/admin");
     const res = await middleware(req);
-    const csp = res.headers.get("Content-Security-Policy")!;
+    const csp = res.headers.get("Content-Security-Policy-Report-Only")!;
     expect(csp).toContain("abcdefghijklmnopqrst.supabase.co");
   });
 
@@ -295,8 +295,8 @@ describe("Nonce — uniqueness and format", () => {
     const req2 = new NextRequest("https://kzq.test/admin");
     const res1 = await middleware(req1);
     const res2 = await middleware(req2);
-    const csp1 = res1.headers.get("Content-Security-Policy")!;
-    const csp2 = res2.headers.get("Content-Security-Policy")!;
+    const csp1 = res1.headers.get("Content-Security-Policy-Report-Only")!;
+    const csp2 = res2.headers.get("Content-Security-Policy-Report-Only")!;
     const nonce1 = csp1.match(/'nonce-([^']+)'/)?.[1];
     const nonce2 = csp2.match(/'nonce-([^']+)'/)?.[1];
     expect(nonce1).toBeTruthy();
@@ -415,13 +415,14 @@ describe("CSP_ENFORCING flag — public route mode switch", () => {
     expect(res.headers.get("Content-Security-Policy-Report-Only")).toBeNull();
   });
 
-  it("does NOT affect admin routes (admin is always enforcing)", async () => {
+  it("does NOT affect admin routes (admin is always Report-Only)", async () => {
     vi.stubEnv("CSP_ENFORCING", "true");
     const { middleware } = await import("@/middleware");
     const req = new NextRequest("https://kzq.test/admin");
     const res = await middleware(req);
-    expect(res.headers.get("Content-Security-Policy")).toBeTruthy();
-    expect(res.headers.get("Content-Security-Policy-Report-Only")).toBeNull();
+    // Phase 9: Admin is always Report-Only, CSP_ENFORCING only affects public.
+    expect(res.headers.get("Content-Security-Policy-Report-Only")).toBeTruthy();
+    expect(res.headers.get("Content-Security-Policy")).toBeNull();
   });
 
   it("does NOT affect admin routes when CSP_ENFORCING is unset", async () => {
@@ -429,8 +430,8 @@ describe("CSP_ENFORCING flag — public route mode switch", () => {
     const { middleware } = await import("@/middleware");
     const req = new NextRequest("https://kzq.test/admin");
     const res = await middleware(req);
-    expect(res.headers.get("Content-Security-Policy")).toBeTruthy();
-    expect(res.headers.get("Content-Security-Policy-Report-Only")).toBeNull();
+    expect(res.headers.get("Content-Security-Policy-Report-Only")).toBeTruthy();
+    expect(res.headers.get("Content-Security-Policy")).toBeNull();
   });
 });
 
@@ -442,7 +443,7 @@ describe("Common directives — present in both admin and public policies", () =
     const { middleware } = await import("@/middleware");
     const req = new NextRequest("https://kzq.test/admin");
     const res = await middleware(req);
-    const csp = res.headers.get("Content-Security-Policy")!;
+    const csp = res.headers.get("Content-Security-Policy-Report-Only")!;
     expect(csp).toContain("frame-ancestors 'none'");
   });
 
@@ -458,7 +459,7 @@ describe("Common directives — present in both admin and public policies", () =
     const { middleware } = await import("@/middleware");
     const adminRes = await middleware(new NextRequest("https://kzq.test/admin"));
     const publicRes = await middleware(new NextRequest("https://kzq.test/"));
-    expect(adminRes.headers.get("Content-Security-Policy")!).toContain(
+    expect(adminRes.headers.get("Content-Security-Policy-Report-Only")!).toContain(
       "object-src 'none'",
     );
     expect(
@@ -470,7 +471,7 @@ describe("Common directives — present in both admin and public policies", () =
     const { middleware } = await import("@/middleware");
     const adminRes = await middleware(new NextRequest("https://kzq.test/admin"));
     const publicRes = await middleware(new NextRequest("https://kzq.test/"));
-    expect(adminRes.headers.get("Content-Security-Policy")!).toContain(
+    expect(adminRes.headers.get("Content-Security-Policy-Report-Only")!).toContain(
       "base-uri 'self'",
     );
     expect(
@@ -482,7 +483,7 @@ describe("Common directives — present in both admin and public policies", () =
     const { middleware } = await import("@/middleware");
     const adminRes = await middleware(new NextRequest("https://kzq.test/admin"));
     const publicRes = await middleware(new NextRequest("https://kzq.test/"));
-    expect(adminRes.headers.get("Content-Security-Policy")!).toContain(
+    expect(adminRes.headers.get("Content-Security-Policy-Report-Only")!).toContain(
       "form-action 'self'",
     );
     expect(
@@ -494,7 +495,7 @@ describe("Common directives — present in both admin and public policies", () =
     const { middleware } = await import("@/middleware");
     const adminRes = await middleware(new NextRequest("https://kzq.test/admin"));
     const publicRes = await middleware(new NextRequest("https://kzq.test/"));
-    expect(adminRes.headers.get("Content-Security-Policy")!).toContain(
+    expect(adminRes.headers.get("Content-Security-Policy-Report-Only")!).toContain(
       "upgrade-insecure-requests",
     );
     expect(
@@ -506,7 +507,7 @@ describe("Common directives — present in both admin and public policies", () =
     const { middleware } = await import("@/middleware");
     const adminRes = await middleware(new NextRequest("https://kzq.test/admin"));
     const publicRes = await middleware(new NextRequest("https://kzq.test/"));
-    const adminCsp = adminRes.headers.get("Content-Security-Policy")!;
+    const adminCsp = adminRes.headers.get("Content-Security-Policy-Report-Only")!;
     const publicCsp = publicRes.headers.get(
       "Content-Security-Policy-Report-Only",
     )!;

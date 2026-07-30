@@ -5,7 +5,8 @@
 //
 // Route categories:
 //   1. Admin routes (/admin/**, /api/admin/**) — nonce-based CSP,
-//      enforcing mode, no 'unsafe-inline', no 'unsafe-eval'.
+//      Report-Only mode (Phase 9: switched from enforcing to fix
+//      black screen issues on EdgeOne deployments).
 //   2. Public routes (everything else) — static CSP, Report-Only,
 //      retains 'unsafe-inline' for ISR compatibility, with
 //      report-to/report-uri wired.
@@ -15,8 +16,9 @@
 //     can safely use per-request nonces without breaking ISR.
 //   - Public pages use ISR — per-request nonces would force every
 //     page to be dynamically rendered, destroying the ISR cache.
-//   - Admin routes need stricter CSP (no 'unsafe-inline') because
-//     they handle authenticated sessions and PII.
+//   - Admin routes use nonce-based CSP (no 'unsafe-inline') to
+//     establish a stricter policy baseline. Report-Only mode
+//     allows us to collect violations without breaking pages.
 //
 // Nonce generation:
 //   - Uses Web Crypto API (crypto.randomUUID()) which is available

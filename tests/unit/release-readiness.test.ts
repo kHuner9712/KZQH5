@@ -359,7 +359,7 @@ describe("Phase 1 Task 4: security & operations BLOCK conditions", () => {
     expect(stdout).toContain("BLOCK");
   });
 
-  it("Phase 6 PASSes when CSP_ENFORCING=true (admin routes are nonce-based enforcing)", async () => {
+  it("Phase 6 PASSes when CSP_ENFORCING=true (admin routes are nonce-based Report-Only)", async () => {
     const { stdout } = await runScript({
       NEXT_PUBLIC_SITE_URL: "https://staging.example.com",
       NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:1",
@@ -369,7 +369,7 @@ describe("Phase 1 Task 4: security & operations BLOCK conditions", () => {
       CSP_ENFORCING: "true",
     });
     // CSP_ENFORCING=true is now ALLOWED — admin routes are always
-    // nonce-based enforcing; public routes enforce with 'unsafe-inline'
+    // nonce-based Report-Only; public routes enforce with 'unsafe-inline'
     // retained for ISR. The check should PASS, not BLOCK.
     expect(stdout).toContain("CSP_ENFORCING");
     // Find the CSP_ENFORCING line and verify it is PASS, not BLOCK.
@@ -381,7 +381,7 @@ describe("Phase 1 Task 4: security & operations BLOCK conditions", () => {
     expect(cspLine!.toUpperCase()).not.toContain("BLOCK");
   });
 
-  it("Phase 6 PASSes when CSP_ENFORCING is unset (admin enforcing, public Report-Only)", async () => {
+  it("Phase 6 PASSes when CSP_ENFORCING is unset (admin Report-Only, public Report-Only)", async () => {
     const { stdout } = await runScript({
       NEXT_PUBLIC_SITE_URL: "https://staging.example.com",
       NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:1",
@@ -491,7 +491,7 @@ describe("Phase 1 Task 4: WARN conditions in deployment mode", () => {
     expect(stdout).toContain("WARN");
   });
 
-  it("WARNs about CSP public Report-Only in staging mode (admin is already enforcing)", async () => {
+  it("WARNs about CSP public Report-Only in staging mode (admin is Report-Only)", async () => {
     const { stdout } = await runScript(
       {
         NEXT_PUBLIC_SITE_URL: "https://staging.example.com",
@@ -507,7 +507,7 @@ describe("Phase 1 Task 4: WARN conditions in deployment mode", () => {
       ["--", "--mode=staging"],
     );
     // Phase 6: label changed from "CSP mode" to "CSP public mode" to
-    // reflect that admin routes are ALWAYS nonce-based enforcing.
+    // reflect that admin routes use nonce-based Report-Only (Phase 9).
     expect(stdout).toContain("CSP public mode");
     expect(stdout).toContain("Report-Only");
     expect(stdout).toContain("WARN");

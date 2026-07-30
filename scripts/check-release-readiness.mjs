@@ -473,19 +473,21 @@ function checkSecurityAndOperations() {
   // --- CSP_ENFORCING ---
   // Phase 3 (cherry-picked into Phase 6) split CSP by route:
   //   - Admin routes (/admin/**, /api/admin/**): ALWAYS nonce-based
-  //     enforcing CSP. No 'unsafe-inline', no 'unsafe-eval'. This is
-  //     safe regardless of CSP_ENFORCING because admin pages are
-  //     force-dynamic (per-request nonce does not break ISR).
+  //     Report-Only CSP (Phase 9: switched from enforcing to Report-Only
+  //     to fix black screen issues on EdgeOne deployments). No
+  //     'unsafe-inline', no 'unsafe-eval'. This is safe regardless of
+  //     CSP_ENFORCING because admin pages are force-dynamic (per-request
+  //     nonce does not break ISR).
   //   - Public routes: Report-Only by default. CSP_ENFORCING=true
   //     switches them to enforcing. Public CSP still retains
   //     'unsafe-inline' for script-src/style-src to preserve ISR
   //     compatibility (static CSP, no per-request nonce).
   //
   // The original Phase 1 BLOCK ("nonce-based CSP not yet implemented")
-  // is no longer valid — admin routes are nonce-based enforcing.
+  // is no longer valid — admin routes use nonce-based Report-Only.
   //
   // CSP_ENFORCING=true is now ALLOWED because:
-  //   1. Admin routes are already nonce-based enforcing (unconditionally).
+  //   1. Admin routes use nonce-based Report-Only (unconditionally).
   //   2. Public routes with CSP_ENFORCING=true still have 'unsafe-inline'
   //      for script-src, but the OTHER directives (img-src allowlist,
   //      connect-src allowlist, frame-ancestors 'none', object-src
@@ -496,12 +498,12 @@ function checkSecurityAndOperations() {
   if (cspEnforcing) {
     pass(
       "env: CSP_ENFORCING",
-      "true — admin routes use nonce-based enforcing (unconditional); public routes enforce with 'unsafe-inline' retained for ISR compatibility",
+      "true — admin routes use nonce-based Report-Only (unconditional); public routes enforce with 'unsafe-inline' retained for ISR compatibility",
     );
   } else {
     pass(
       "env: CSP_ENFORCING",
-      "false / unset — admin routes use nonce-based enforcing; public routes use Report-Only (observation period)",
+      "false / unset — admin routes use nonce-based Report-Only; public routes use Report-Only (observation period)",
     );
   }
 
@@ -535,7 +537,7 @@ function checkSecurityAndOperations() {
     if (!cspEnforcing) {
       warn(
         "env: CSP public mode",
-        "Report-Only — public routes not yet enforcing (admin routes are already nonce-based enforcing). Set CSP_ENFORCING=true after observation period to enforce img-src/connect-src/frame-ancestors directives on public routes.",
+        "Report-Only — public routes not yet enforcing (admin routes use nonce-based Report-Only). Set CSP_ENFORCING=true after observation period to enforce img-src/connect-src/frame-ancestors directives on public routes.",
       );
     } else {
       pass(
