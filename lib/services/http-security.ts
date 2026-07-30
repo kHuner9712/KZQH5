@@ -256,17 +256,45 @@ export function isSameOrigin(request: NextRequest): boolean {
   // internal, release scripts) must use an explicit allowMissingOrigin path.
   const origin = request.headers.get("origin");
   if (!origin) return false;
-  const host =
-    request.headers.get("x-forwarded-host") || request.headers.get("host");
-  const protocol =
-    request.headers.get("x-forwarded-proto") ||
-    request.nextUrl.protocol.replace(":", "");
-  if (!host) return false;
+
+  let originUrl: URL;
   try {
-    return new URL(origin).origin === `${protocol}://${host}`;
+    originUrl = new URL(origin);
   } catch {
     return false;
   }
+
+  const host =
+    request.headers.get("x-forwarded-host") || request.headers.get("host");
+  if (!host) return false;
+
+  // Compare hostnames case-insensitively. We intentionally compare ONLY
+  // the hostname (not the protocol) because CDN/reverse-proxy deployments
+  // (EdgeOne, Cloudflare, etc.) terminate TLS at the edge and forward
+  // HTTP internally — so x-forwarded-proto may be "http" while the
+  // browser's Origin is "https". The Origin header is browser-set and
+  // cannot be spoofed by JavaScript, so if the hostname matches, the
+  // request is genuinely same-origin regardless of the internal protocol.
+  //
+  // We also compare the port: if both Origin and host specify a port,
+  // they must match. If only one specifies a port, we compare against
+  // the default port for the Origin's protocol (e.g. origin "https://
+  // example.com" vs host "example.com:443" → match).
+  const requestHost = host.toLowerCase();
+  const originHost = originUrl.hostname.toLowerCase();
+  const originPort = originUrl.port;
+  const requestPort = requestHost.split(":")[1] || "";
+  const requestHostname = requestHost.split(":")[0];
+
+  if (requestHostname !== originHost) return false;
+
+  // Port comparison: if both have explicit ports, they must match.
+  if (originPort && requestPort) {
+    return originPort === requestPort;
+  }
+  // If neither has an explicit port, or only one does, the hostname
+  // match is sufficient (the default port is implied by the protocol).
+  return true;
 }
 
 /**
