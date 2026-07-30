@@ -184,6 +184,16 @@ describe("Admin CSP — nonce-based enforcing", () => {
     const csp = res.headers.get("Content-Security-Policy")!;
     expect(csp).toContain("abcdefghijklmnopqrst.supabase.co");
   });
+
+  it("sets Cache-Control: no-store on admin routes (prevent CDN caching nonce mismatch)", async () => {
+    const { middleware } = await import("@/middleware");
+    const req = new NextRequest("https://kzq.test/admin");
+    const res = await middleware(req);
+    const cc = res.headers.get("Cache-Control")!;
+    expect(cc).toContain("no-store");
+    expect(cc).toContain("no-cache");
+    expect(cc).toContain("must-revalidate");
+  });
 });
 
 // ============================================================
