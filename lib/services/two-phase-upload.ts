@@ -458,8 +458,19 @@ export async function finalizeTempUpload(
     });
   }
 
-  // 9. Complete the temp_uploads RPC
-  const { error: completeError } = await client.rpc(
+  // 9. Complete the temp_uploads RPC.
+  //
+  // The RPC returns a JSONB object `{ok: boolean, error?: string, ...}`.
+  // We must validate the business return value, not just the transport
+  // error: transport error, null data, malformed structure, or
+  // `ok !== true` are ALL failures. When the object has already been
+  // moved to its final path but the RPC fails, we must NOT return
+  // success to the caller — instead we attempt compensating deletion
+  // of the moved object and, if that also fails, enqueue it for
+  // cleanup so no permanent orphan is left behind. The temp_uploads
+  // row is left in `finalizing` state for recover_stale_temp_uploads
+  // to eventually mark as failed.
+  const { data: completeData, error: completeError } = await client.rpc(
     "complete_temp_upload_finalize",
     {
       p_token: input.uploadToken,
@@ -468,14 +479,54 @@ export async function finalizeTempUpload(
     },
   );
 
-  if (completeError) {
-    // The object was moved successfully but the RPC failed. The
-    // stale recovery RPC (recover_stale_temp_uploads) will eventually
-    // mark the row as failed, but the object is already in place.
-    // Return success with the final path so the caller can proceed.
-    // Log a fixed code — never the Supabase error payload — so
-    // operators can detect stuck rows via server logs.
+  const completeResult = completeData as
+    | { ok?: boolean; error?: string; already_finalized?: boolean }
+    | null;
+
+  const completeOk =
+    !completeError &&
+    completeResult !== null &&
+    typeof completeResult === "object" &&
+    completeResult.ok === true;
+
+  if (!completeOk) {
+    // Object was moved to its final path but the DB finalize failed.
+    // Compensate by deleting the moved object so we do not leave a
+    // permanent orphan AND a stuck temp_uploads row that still claims
+    // success. Never leak the Supabase error payload — record only a
+    // coarse, fixed-code reason for the fail RPC and server log.
+    const rpcErrorTag = completeError
+      ? "transport_error"
+      : completeResult === null
+        ? "null_response"
+        : typeof completeResult !== "object" || completeResult.ok !== false
+          ? "invalid_response"
+          : (completeResult.error ?? "invalid_response");
+    const compensationReason = `complete_rpc_failed:${rpcErrorTag}`;
     console.warn("TEMP_UPLOAD_COMPLETE_RPC_FAILED");
+
+    const { error: finalDeleteError } = await client.storage
+      .from(finalBucket)
+      .remove([finalObjectPath]);
+
+    if (!finalDeleteError) {
+      // Compensation succeeded: the final object is gone. Try to
+      // mark the temp_uploads row as failed so operators see the
+      // failure in the dashboard; swallow failure of this best-effort
+      // call since the primary error must still be returned.
+      await failFinalize(client, input.uploadToken, compensationReason);
+    } else {
+      // Compensation failed: the moved object is still present. Enqueue
+      // it for the cleanup dispatcher rather than returning success.
+      await enqueueStorageCleanup({
+        bucket: finalBucket,
+        objectPath: finalObjectPath,
+        reason: "orphan_detected",
+      });
+      await failFinalize(client, input.uploadToken, compensationReason);
+    }
+
+    return { ok: false, code: "FINALIZE_RPC_FAILED" };
   }
 
   // 10. Return the final result

@@ -160,6 +160,7 @@ function mapErrorCode(code?: string): number {
     case "PATH_GENERATION_FAILED":
     case "ADMIN_CLIENT_FAILED":
     case "CLAIM_FAILED":
+    case "FINALIZE_RPC_FAILED":
       return 500;
     default:
       return 500;
