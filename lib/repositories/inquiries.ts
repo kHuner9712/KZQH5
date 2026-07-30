@@ -126,7 +126,38 @@ export async function listInquiries(
 ): Promise<InquiryListResult> {
   const page = Math.max(1, Math.floor(filters.page || 1));
   const pageSize = Math.min(500, Math.max(1, Math.floor(filters.pageSize || 20)));
-  let query = client.from("inquiries").select("*, inquiry_items(*)", { count: "exact" });
+
+  // Try with inquiry_items relation first. If the inquiry_items table is
+  // not deployed (or the relation is missing), fall back to inquiries-only
+  // query so the admin list still works.
+  const result = await runInquiryQuery(client, filters, page, pageSize, true);
+  if (result) return result;
+
+  // Fallback: without inquiry_items relation.
+  const fallback = await runInquiryQuery(client, filters, page, pageSize, false);
+  if (fallback) return fallback;
+
+  // Both attempts failed — the primary error is re-thrown below.
+  throw new Error("读取询盘失败");
+}
+
+/**
+ * Run the inquiry list query with or without the inquiry_items relation.
+ * Returns null if the query fails with a schema error (relation/table
+ * missing), so the caller can retry with the fallback. Returns the result
+ * on success. Re-throws non-schema errors.
+ */
+async function runInquiryQuery(
+  client: InquiryClient,
+  filters: InquiryFilters,
+  page: number,
+  pageSize: number,
+  withItems: boolean,
+): Promise<InquiryListResult | null> {
+  const select = withItems
+    ? "*, inquiry_items(*)"
+    : "*";
+  let query = client.from("inquiries").select(select, { count: "exact" });
   if (filters.status && filters.status !== "all") query = query.eq("status", filters.status);
   if (filters.language && filters.language !== "all") query = query.eq("language", filters.language);
   if (filters.source) query = query.eq("source", filters.source);
@@ -146,9 +177,17 @@ export async function listInquiries(
   const { data, count, error } = await query
     .order("created_at", { ascending: false })
     .range((page - 1) * pageSize, page * pageSize - 1);
-  if (error) throw error;
+  if (error) {
+    // Schema errors (table/relation/column missing) → return null to
+    // signal the caller to try the fallback. Other errors throw.
+    const cause = classifyAdminDataError(error);
+    if (cause === "schema" && withItems) {
+      return null;
+    }
+    throw error;
+  }
   if (count === null) throw new Error("Inquiry count unavailable");
-  const items = ((data as Inquiry[] | null) || []).map((inquiry) => ({
+  const items = ((data as unknown as Inquiry[] | null) || []).map((inquiry) => ({
     ...inquiry,
     inquiry_items: [...(inquiry.inquiry_items || [])].sort((a, b) => a.sort_order - b.sort_order),
   }));
@@ -163,15 +202,27 @@ export async function countUnreadInquiries(client: InquiryClient): Promise<numbe
   } catch (err) {
     // fetch or client-side throw (network, abort, etc.). Classify by code/name
     // only; never propagate the original error object.
-    throw new UnreadInquiryCountError(classifyAdminDataError(err));
+    const cause = classifyAdminDataError(err);
+    // If the RPC is not deployed (schema error), fall back to direct
+    // table count instead of failing — the admin layout should still
+    // show the unread badge.
+    if (cause === "schema" || cause === "permission") {
+      return countUnreadInquiriesViaDirectQuery(client);
+    }
+    throw new UnreadInquiryCountError(cause);
   }
 
   const { data, error } = result;
 
   if (error) {
+    const cause = classifyAdminDataError(error);
+    // Fallback for schema/permission errors (RPC not deployed).
+    if (cause === "schema" || cause === "permission") {
+      return countUnreadInquiriesViaDirectQuery(client);
+    }
     // Supabase returned an error object. Classify by code/name only.
     // The original error object is intentionally dropped.
-    throw new UnreadInquiryCountError(classifyAdminDataError(error));
+    throw new UnreadInquiryCountError(cause);
   }
 
   const count = parseUnreadInquiryCount(data);
@@ -180,6 +231,26 @@ export async function countUnreadInquiries(client: InquiryClient): Promise<numbe
     throw new UnreadInquiryCountError("count-unavailable");
   }
 
+  return count;
+}
+
+/**
+ * Fallback for countUnreadInquiries when the RPC is not deployed.
+ * Uses a direct table count query with the service_role client.
+ */
+async function countUnreadInquiriesViaDirectQuery(
+  client: InquiryClient,
+): Promise<number> {
+  const { count, error } = await client
+    .from("inquiries")
+    .select("*", { count: "exact", head: true })
+    .eq("is_read", false);
+  if (error) {
+    throw new UnreadInquiryCountError(classifyAdminDataError(error));
+  }
+  if (count === null) {
+    throw new UnreadInquiryCountError("count-unavailable");
+  }
   return count;
 }
 

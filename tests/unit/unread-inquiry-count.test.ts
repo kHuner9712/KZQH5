@@ -15,6 +15,8 @@ function makeClient(opts: {
   data?: unknown;
   error?: unknown;
   throw?: unknown;
+  fallbackCount?: number | null;
+  fallbackError?: unknown;
 }): InquiryClient {
   const rpc = vi.fn(async () => {
     if (Object.prototype.hasOwnProperty.call(opts, "throw")) {
@@ -27,7 +29,20 @@ function makeClient(opts: {
       error: opts.error ?? null,
     };
   });
-  return { rpc } as unknown as InquiryClient;
+  // Build a minimal `from(...).select(...).eq(...)` chain for the fallback
+  // direct-count query. The actual query is:
+  //   client.from("inquiries").select("*", {count:"exact",head:true}).eq("is_read", false)
+  // which resolves to { count, error }.
+  const fallbackResult = {
+    count: opts.fallbackCount ?? null,
+    error: opts.fallbackError ?? null,
+  };
+  const from = vi.fn(() => ({
+    select: vi.fn(() => ({
+      eq: vi.fn(() => Promise.resolve(fallbackResult)),
+    })),
+  }));
+  return { rpc, from } as unknown as InquiryClient;
 }
 
 describe("countUnreadInquiries", () => {
@@ -89,16 +104,35 @@ describe("countUnreadInquiries", () => {
     });
   });
 
-  it("throws UnreadInquiryCountError with cause=schema when error.code=42703", async () => {
-    const client = makeClient({ error: { code: "42703" } });
-    await expect(countUnreadInquiries(client)).rejects.toMatchObject({
-      name: "UnreadInquiryCountError",
-      causeCode: "schema",
+  it("falls back to direct table count when RPC fails with schema error (42703)", async () => {
+    // RPC not deployed (undefined function) → fallback to direct query.
+    const client = makeClient({
+      error: { code: "42703" },
+      fallbackCount: 3,
     });
+    const result = await countUnreadInquiries(client);
+    expect(result).toBe(3);
+    expect(client.rpc).toHaveBeenCalledOnce();
+    expect(client.from).toHaveBeenCalledOnce();
   });
 
-  it("throws UnreadInquiryCountError with cause=permission when error.code=42501", async () => {
-    const client = makeClient({ error: { code: "42501" } });
+  it("falls back to direct table count when RPC fails with permission error (42501)", async () => {
+    // RPC exists but execute privilege missing → fallback to direct query.
+    const client = makeClient({
+      error: { code: "42501" },
+      fallbackCount: 2,
+    });
+    const result = await countUnreadInquiries(client);
+    expect(result).toBe(2);
+    expect(client.rpc).toHaveBeenCalledOnce();
+    expect(client.from).toHaveBeenCalledOnce();
+  });
+
+  it("throws UnreadInquiryCountError when fallback direct query also fails", async () => {
+    const client = makeClient({
+      error: { code: "42703" },
+      fallbackError: { code: "42501" },
+    });
     await expect(countUnreadInquiries(client)).rejects.toMatchObject({
       name: "UnreadInquiryCountError",
       causeCode: "permission",
@@ -156,7 +190,9 @@ describe("countUnreadInquiries", () => {
   });
 
   it("does NOT return 0 on failure (no deny-by-default regression)", async () => {
-    const client = makeClient({ error: { code: "42501" } });
+    // Use an authentication error (no fallback) so the RPC failure
+    // propagates as an error rather than triggering the fallback path.
+    const client = makeClient({ error: { code: "PGRST301" } });
     const outcome = await countUnreadInquiries(client).then(
       (value) => ({ status: "resolved" as const, value }),
       (error: unknown) => ({ status: "rejected" as const, error }),
@@ -182,8 +218,11 @@ describe("countUnreadInquiries", () => {
   });
 
   it("UnreadInquiryCountError does not expose the original Supabase error", async () => {
+    // Use an authentication error (no fallback) so the original error is
+    // classified and thrown as UnreadInquiryCountError. Permission errors
+    // now trigger the fallback path, so they don't reach the throw.
     const originalError = {
-      code: "42501",
+      code: "PGRST301",
       message: "ORIGINAL_MESSAGE_MARKER",
       details: "ORIGINAL_DETAILS_MARKER",
       hint: "ORIGINAL_HINT_MARKER",
@@ -201,7 +240,7 @@ describe("countUnreadInquiries", () => {
       // And the message must be the fixed string, not the original message.
       expect(e.message).toBe("Unread inquiry count failed");
       // causeCode is the only safe field exposed.
-      expect(e.causeCode).toBe("permission");
+      expect(e.causeCode).toBe("authentication");
       expect(JSON.stringify(e)).not.toContain("ORIGINAL_");
       expect(e.stack ?? "").not.toContain("ORIGINAL_STACK_MARKER");
     }
