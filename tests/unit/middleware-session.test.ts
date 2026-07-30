@@ -540,7 +540,10 @@ describe("middleware integration", () => {
     const response = await middleware(request);
     expect(response).toBeInstanceOf(NextResponse);
     expect(response.headers.get("X-Content-Type-Options")).toBe("nosniff");
-    expect(response.headers.get("Cache-Control")).toBeNull();
+    // Admin routes always have Cache-Control: no-store (set by middleware
+    // to prevent CDN nonce mismatch). Session refresh failure does NOT
+    // remove this header — the original response is returned as-is.
+    expect(response.headers.get("Cache-Control")).toContain("no-store");
   });
 
   it("returns a response with full anti-cache headers when cookies are refreshed via middleware (WP3)", async () => {
