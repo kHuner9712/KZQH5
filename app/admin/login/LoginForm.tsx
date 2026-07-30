@@ -9,7 +9,6 @@ import { AlertCircle, Lock, Mail } from "lucide-react";
 export function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const supabase = createBrowserSupabaseClient();
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -33,6 +32,11 @@ export function LoginForm() {
 
     setLoading(true);
     try {
+      // Create the Supabase client lazily on submit, not on render.
+      // If this throws (e.g. bad env, CSP violation), the error is
+      // caught here and shown inline — instead of crashing the entire
+      // component tree during render and producing a black screen.
+      const supabase = createBrowserSupabaseClient();
       const { error: signInError } = await supabase.auth.signInWithPassword({
         email: email.trim(),
         password,
