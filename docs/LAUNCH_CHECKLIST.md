@@ -135,7 +135,7 @@
 - [ ] **CSP Reporting 已接通**：浏览器 DevTools Network 可观察到 `/api/csp-report` 的 POST 请求；`Reporting-Endpoints` 响应头包含 `csp-endpoint`；CSP `report-to csp-endpoint` 与 `report-uri /api/csp-report` 同时存在（兼容现代 Reporting API 与 legacy `report-uri`）。当前公开站点保持 Report-Only，本阶段不要求 enforcing
 - [ ] **CSP 日志无敏感信息**：`/api/csp-report` 日志不包含 query string、`script-sample`、完整 `blocked-uri` 或完整请求体（仅记录固定错误码、route、计数）
 - [ ] **`npm run check:release-readiness:staging` 在 Staging 通过**（exit 0；任何 BLOCK 必须修复后方可发布）
-- [ ] **`npm run check:release-readiness -- --mode=production` 在正式发布前通过**（exit 0；新增的 TRUSTED_PROXY_HEADER / RATE_LIMIT_FALLBACK_SECRET / OUTBOX_DISPATCH_SECRET / BUILD_MOCK_BACKEND / loopback Site URL / loopback Supabase URL / DEMO_MODE / service role 暴露 / CSP enforcing-without-nonce 等 BLOCK 条件全部满足）
+- [ ] **`npm run check:release-readiness -- --mode=production` 在正式发布前通过**（exit 0；TRUSTED_PROXY_HEADER / RATE_LIMIT_FALLBACK_SECRET / OUTBOX_DISPATCH_SECRET / BUILD_MOCK_BACKEND / loopback Site URL / loopback Supabase URL / DEMO_MODE / service role 暴露 等 BLOCK 条件全部满足。注：CSP_ENFORCING=true 不是 BLOCK 条件——admin 路由始终 Report-Only，public 路由在 CSP_ENFORCING=true 时执行 img-src/connect-src/frame-ancestors 等指令，script-src 保留 'unsafe-inline' 以兼容 ISR）
 - [ ] **Readiness Canary Provision 已部署**：在 Supabase Storage `public-assets` bucket 上传 1×1 占位 PNG 到固定路径 `canary/canary-1x1.png`（路径硬编码在 `app/api/readiness/route.ts`，不可通过环境变量修改以防止误指向私有对象）。`/api/readiness` 的 storage 子检查会 GET 此对象；非 200 即视为 storage 不可用并返回 503。部署步骤：
   1. 在 Supabase Dashboard → Storage → `public-assets` 中新建目录 `canary`
   2. 上传任意 1×1 像素 PNG（建议 ≤ 100 字节）并命名为 `canary-1x1.png`

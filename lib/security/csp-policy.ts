@@ -13,13 +13,16 @@
 //      way to allow Next.js internal scripts. Other directives
 //      (img-src, connect-src, frame-ancestors, object-src) remain
 //      strict to provide meaningful protection.
-//   2. Public routes (everything else) — static CSP, Report-Only,
-//      retains 'unsafe-inline' for ISR compatibility, with
-//      report-to/report-uri wired.
+//   2. Public routes (everything else) — static CSP, Report-Only by
+//      default (CSP_ENFORCING unset). When CSP_ENFORCING=true, the
+//      middleware emits Content-Security-Policy (enforcing) instead of
+//      Content-Security-Policy-Report-Only. Retains 'unsafe-inline' for
+//      ISR compatibility, with report-to/report-uri wired.
 //
-// Both admin and public policies are served as Report-Only so that
-// violations are collected via /api/csp-report without blocking
-// page execution.
+// Admin policy is ALWAYS served as Report-Only (never enforcing).
+// Public policy is Report-Only by default and may be switched to
+// enforcing via CSP_ENFORCING=true. In both cases, violations are
+// collected via /api/csp-report.
 // ============================================================
 
 const SUPABASE_PROJECT_HOST_PATTERN = /^[a-z0-9]{20}\.supabase\.co$/;
@@ -148,7 +151,10 @@ export function buildAdminCspPolicy(): string {
 /**
  * Build the CSP policy for PUBLIC routes (everything except /admin/**).
  *
- * This is a static, Report-Only CSP:
+ * Returns the policy string. The middleware decides whether to emit it
+ * as Content-Security-Policy-Report-Only (default) or
+ * Content-Security-Policy (enforcing, when CSP_ENFORCING=true).
+ *
  *   - Retains 'unsafe-inline' for script-src and style-src (ISR compat)
  *   - Retains 'unsafe-eval' (PDF.js / Next.js runtime may need it)
  *   - Allows WeChat JS-SDK (https://res.wx.qq.com)
