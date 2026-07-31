@@ -13,7 +13,7 @@ blindly — re-verify against real code before starting any task.
 - Node version (engines): `20.x` (local runtime v24.15.0 used for tooling only)
 - Next.js version: `15.5.21`
 - Supabase client version: `@supabase/supabase-js 2.109.0`, `@supabase/ssr 0.12.0`
-- Last updated: 2026-07-31 (KZQ-P1-004-c completed)
+- Last updated: 2026-07-31 (KZQ-P1-004-d completed)
 
 ## Status Values
 
@@ -58,7 +58,7 @@ column records the file and line where the decision was made.
 | KZQ-P1-004-a | P1 | Epic C 后台 CSP | Supabase SSR cookie compatibility audit (establish facts before any cookie attribute changes) | completed | `trae/p1-004a-supabase-cookie-audit` | (this commit) | `npm run typecheck && npm run lint` → PASS | Audit deliverable: `docs/SECURITY_AUDIT_SUPABASE_COOKIE.md`. Verified against installed `@supabase/ssr` v0.12.0 source (`node_modules/@supabase/ssr/src/cookies.ts:93-106, 195-198` + `types.ts:70-83`): `createBrowserClient` reads/writes cookies via `document.cookie` API when no custom adapter is provided; `document.cookie` CANNOT read httpOnly cookies (HTML spec). Therefore `httpOnly: false` is a HARD REQUIREMENT — setting `httpOnly: true` breaks `getSession()`, `getUser()`, auto-refresh, and admin login. Project's `lib/supabase/middleware-session.ts:128` correctly sets `httpOnly: false` to match @supabase/ssr defaults. XSS mitigation must NOT modify cookie httpOnly — must use CSP enforcement (KZQ-P1-004-b), output encoding (KZQ-P1-004-c), dependency audit (KZQ-P1-004-d), Trusted Types (KZQ-P1-004-e) instead. No code change, no migration, no behavior change — pure audit deliverable |
 | KZQ-P1-004-b | P1 | Epic C 后台 CSP | CSP enforce for admin routes (depends on KZQ-P1-002 unblock) | pending | — | — | per sub-task | Blocked by KZQ-P1-002 (CSP violation audit precondition). Cannot proceed until operator provides EdgeOne CSP violation report |
 | KZQ-P1-004-c | P1 | Epic C 后台 CSP | Output encoding / ban dangerous HTML (dangerouslySetInnerHTML audit) | completed | `trae/p1-004c-output-encoding-dangerouslysetinnerhtml` | (this commit) | `npm run typecheck && npm run lint && npx vitest run tests/unit/serialize-json-ld.test.ts` → PASS | AUDIT RESULT: 5 `dangerouslySetInnerHTML` sites found, ALL for JSON-LD via `serializeJsonLd()` (`ProductDetailPage.tsx:437,442`, `HomePage.tsx:559`, `AboutPage.tsx:183`, `DocumentsPage.tsx:281`). Data sources are CMS-managed fields (product name/description/FAQ, company info, catalog topics) — NOT directly user-controllable, but admin-editable so XSS defense still required. Previous `serializeJsonLd` only escaped `<` → `\u003c` (core defense against `</script>` injection). Hardened to also escape `>` → `\u003e`, `&` → `\u0026`, U+2028 → `\u2028`, U+2029 → `\u2029` (defense-in-depth per OWASP JSON-LD guidance). Updated `lib/utils.ts:76-98` with full security analysis comment. Added 24 unit tests in `tests/unit/serialize-json-ld.test.ts` covering: basic serialization, XSS injection defense (`</script>` in string/nested/array), defense-in-depth escaping (`>`, `&`, U+2028, U+2029), CMS data scenarios (Product/FAQ/Organization/CollectionPage JSON-LD), JSON parseability (escaped output still valid JSON), boundary values (null/undefined/empty/quotes/backslashes). No other `dangerouslySetInnerHTML` usages exist in codebase. No CSP change, no migration, no behavior change for valid JSON-LD consumers |
-| KZQ-P1-004-d | P1 | Epic C 后台 CSP | Client-side dependency audit (verify no eval/Function in production bundles) | pending | — | — | per sub-task | Audit all runtime dependencies for eval/new Function usage; verify production bundle is clean |
+| KZQ-P1-004-d | P1 | Epic C 后台 CSP | Client-side dependency audit (verify no eval/Function in production bundles) | completed | `trae/p1-004d-client-dependency-audit` | (this commit) | `npm run typecheck && npm run lint && npx vitest run tests/unit/client-dependency-audit.test.ts` → PASS | AUDIT RESULT: Project source code is CLEAN — zero `eval()` or `new Function()` across all `*.ts/*.tsx/*.js/*.jsx/*.mjs/*.cjs` files (excluding node_modules, .next, public/lib/pdfjs). Only `new Function` usage is in vendored `public/lib/pdfjs/pdf.worker.min.mjs` (2 sites): (1) `isEvalSupported()` try/catch probe at `pdf.worker.mjs:503-510` — empty function body, no code execution, caches result; (2) PostScript calculator JIT compiler at `:30173-30177` — gated by `isEvalSupported` flag, has complete `PostScriptEvaluator` interpreter fallback at `:30182`, runs in isolated Web Worker thread (no DOM/cookie/localStorage access). Worker loaded via `usePdfDocument.ts:46` `GlobalWorkerOptions.workerSrc = "/lib/pdfjs/pdf.worker.min.mjs"` — static asset from `/public`, CSP `worker-src 'self' blob:` allows loading. CSP `object-src 'none'`, `frame-ancestors 'none'` confirmed. Next.js config has no eval-based sourcemaps. DELIVERABLE: `docs/SECURITY_AUDIT_CLIENT_DEPENDENCIES.md` (323 lines). TESTS: `tests/unit/client-dependency-audit.test.ts` (17 static contract tests across 7 describe blocks). DISCREPANCY FOUND: KZQ-P1-003 ledger claims `unsafe-eval` removed from public CSP, but `lib/security/csp-policy.ts:165` still contains `'unsafe-eval'` — `trae/p1-003-remove-unsafe-eval` branch was never merged to `main`. Documented in audit deliverable for follow-up correction. No CSP change, no migration, no code behavior change — pure audit + static contract tests |
 | KZQ-P1-004-e | P1 | Epic C 后台 CSP | Trusted Types feasibility assessment | pending | — | — | per sub-task | Assess Trusted Types adoption: CSP `require-trusted-types-for 'script'`; trusted-types policy; compatibility with Next.js 15 App Router and pdfjs-dist worker |
 | KZQ-P1-010 | P1 | Epic D 限流与 Origin | Pre-auth coarse rate limiting | pending | — | — | `npx vitest run tests/unit/admin-write-boundary.test.ts` | `lib/security/admin-write-boundary.ts:159` `getVerifiedAdmin()` (runs `auth.getUser()` at `admin-auth.ts:66` + profile query at :100) runs BEFORE global rate limit at `:176` and per-admin limit at `:198`; unauthenticated attackers consume no quota |
 | KZQ-P1-011 | P1 | Epic D 限流与 Origin | Production distributed rate limiting boundary | pending | — | — | `npm run check:release-readiness && npx vitest run tests/unit/rate-limit.test.ts` | `lib/services/rate-limit.ts:58-190` only `MemoryRateLimiter`; all factories return memory instances; no Redis/KV/Postgres RPC; header comment defers to EdgeOne WAF which is not code-verified |
@@ -102,15 +102,18 @@ suffix such as `-a`, `-b`) and is executed one per round.
 Per the priority order `P0 → P1 → P2 → Framework Upgrade`, and within each
 priority by Task ID order, the next atomic task to execute is:
 
-**KZQ-P1-004-d** — Client-side dependency audit (verify no eval/Function in
-production bundles).
+**KZQ-P1-004-e** — Trusted Types feasibility assessment.
 
 Status summary:
 - All P0 tasks complete (Epic A and Epic B fully done)
 - KZQ-P1-001 completed (CSP docs conflict cleanup)
 - KZQ-P1-002 BLOCKED (admin CSP enforcing switch — requires human CSP
   violation audit in EdgeOne environment, cannot be done via code alone)
-- KZQ-P1-003 completed (unsafe-eval removed from public CSP)
+- KZQ-P1-003 DISCREPANCY (ledger claims `unsafe-eval` removed from public
+  CSP, but `lib/security/csp-policy.ts:165` still contains `'unsafe-eval'` —
+  `trae/p1-003-remove-unsafe-eval` branch was never merged to `main`;
+  documented in `docs/SECURITY_AUDIT_CLIENT_DEPENDENCIES.md`; requires
+  follow-up correction task)
 - KZQ-P1-004-a completed (Supabase SSR cookie compatibility audit —
   `httpOnly: false` confirmed as hard requirement; see
   `docs/SECURITY_AUDIT_SUPABASE_COOKIE.md`)
@@ -119,9 +122,12 @@ Status summary:
 - KZQ-P1-004-c completed (dangerouslySetInnerHTML audit — all 5 sites use
   `serializeJsonLd()` for JSON-LD; hardened with `>`/`&`/U+2028/U+2029
   escaping + 24 unit tests)
-- KZQ-P1-004-d is the next unblocked sub-task: audit all runtime
-  dependencies for eval/new Function usage; verify production bundle is clean.
-- KZQ-P1-004-e follows after KZQ-P1-004-d.
+- KZQ-P1-004-d completed (client-side dependency audit — project source
+  is clean; pdfjs-dist worker isolated with fallback; see
+  `docs/SECURITY_AUDIT_CLIENT_DEPENDENCIES.md`)
+- KZQ-P1-004-e is the next unblocked sub-task: assess Trusted Types
+  adoption (`require-trusted-types-for 'script'`), compatibility with
+  Next.js 15 App Router and pdfjs-dist worker.
 
 After KZQ-P1-004 workstream, the next P1 tasks are KZQ-P1-010 through
 KZQ-P1-022 (Epic D 限流与 Origin and Epic E 管理员身份).
