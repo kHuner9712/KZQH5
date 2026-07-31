@@ -575,9 +575,14 @@ describe("Phase 1 Task 4: WARN conditions in deployment mode", () => {
 /**
  * Builds a fully-passing verify_schema_readiness() response payload that
  * includes every expected check name.
+ *
+ * KZQ-P0-011-c: Extended with 30 new checks (15 `rls_enabled_*` +
+ * 15 `revoke_dml_*_authenticated`) added by migration
+ * 20260731120000_extend_schema_verification_rls_revoke.sql.
  */
 function buildPassingRpcResponse() {
   const checks = [
+    // --- Original checks (migration 20260724160000) ---
     "catalog_field_catalog_topic_id",
     "catalog_field_cover_image_url",
     "catalog_field_published_at",
@@ -593,6 +598,38 @@ function buildPassingRpcResponse() {
     "grant_create_inquiry_with_items",
     "grant_save_product_with_images",
     "grant_save_project_with_relations",
+    // --- KZQ-P0-011-c: RLS enabled checks (15 tables) ---
+    "rls_enabled_inquiry_items",
+    "rls_enabled_product_assets",
+    "rls_enabled_projects",
+    "rls_enabled_project_images",
+    "rls_enabled_project_products",
+    "rls_enabled_analytics_events",
+    "rls_enabled_inquiry_outbox",
+    "rls_enabled_admin_audit_log",
+    "rls_enabled_inquiry_outbox_deliveries",
+    "rls_enabled_admin_storage_operations",
+    "rls_enabled_storage_cleanup_queue",
+    "rls_enabled_storage_object_refs",
+    "rls_enabled_temp_uploads",
+    "rls_enabled_homepage_content",
+    "rls_enabled_page_content",
+    // --- KZQ-P0-011-c: DML revoke checks (15 business tables, authenticated) ---
+    "revoke_dml_categories_authenticated",
+    "revoke_dml_subcategories_authenticated",
+    "revoke_dml_products_authenticated",
+    "revoke_dml_product_images_authenticated",
+    "revoke_dml_certificates_authenticated",
+    "revoke_dml_company_profile_authenticated",
+    "revoke_dml_site_settings_authenticated",
+    "revoke_dml_homepage_content_authenticated",
+    "revoke_dml_page_content_authenticated",
+    "revoke_dml_product_assets_authenticated",
+    "revoke_dml_projects_authenticated",
+    "revoke_dml_project_images_authenticated",
+    "revoke_dml_project_products_authenticated",
+    "revoke_dml_inquiries_authenticated",
+    "revoke_dml_inquiry_items_authenticated",
   ].map((name) => ({ name, passed: true, detail: "present" }));
   return { ok: true, checks };
 }
@@ -1226,6 +1263,226 @@ describe("KZQ-P0-011-b: RPC contract allowlist — unexpected extra checks", () 
       if (process.platform !== "win32") {
         expect(exitCode).toBe(1);
       }
+    } finally {
+      await stopServer(server);
+    }
+  });
+});
+
+// ============================================================
+// KZQ-P0-011-c: RLS-enabled and DML revoke verification
+//
+// Migration 20260731120000_extend_schema_verification_rls_revoke.sql
+// extends verify_schema_readiness() with 30 new checks:
+//   * 15 `rls_enabled_<table>` checks — verify RLS is still enabled on
+//     every table the migrations declare as RLS-enabled. Uses
+//     pg_class.relrowsecurity (authoritative source).
+//   * 15 `revoke_dml_<table>_authenticated` checks — verify
+//     `authenticated` still lacks INSERT on the 15 business tables
+//     revoked by migration 20260728000000. Uses has_table_privilege.
+//
+// These tests verify the release-readiness script correctly BLOCKs when:
+//   1. An `rls_enabled_*` check is MISSING from the RPC response
+//      (caught by the KZQ-P0-011-a missing-check detector).
+//   2. An `rls_enabled_*` check is returned with passed=false
+//      (RLS was disabled on a table — security regression).
+//   3. A `revoke_dml_*_authenticated` check is returned with passed=false
+//      (authenticated was re-granted DML — security regression).
+//   4. PASSes when all 45 checks are present and passing.
+// ============================================================
+describe("KZQ-P0-011-c: RLS-enabled and DML revoke verification", () => {
+  it("BLOCKs when an rls_enabled_* check is missing from the RPC response", async () => {
+    // Remove one rls_enabled_* check from the response — the script's
+    // missing-check detection (KZQ-P0-011-a) must BLOCK.
+    const checks = buildPassingRpcResponse().checks.filter(
+      (c) => c.name !== "rls_enabled_temp_uploads",
+    );
+    const server = await startMockPostgREST((req, res) => {
+      const headers = { "Content-Type": "application/json", Connection: "close" };
+      if (req.url?.includes("/rest/v1/rpc/verify_schema_readiness")) {
+        res.writeHead(200, headers);
+        res.end(JSON.stringify({ ok: true, checks }));
+        return;
+      }
+      res.writeHead(200, headers);
+      res.end("[]");
+    });
+    const port = getPort(server);
+    try {
+      const { exitCode, stdout } = await runScript({
+        NEXT_PUBLIC_SITE_URL: "https://staging.example.com",
+        NEXT_PUBLIC_SUPABASE_URL: `http://127.0.0.1:${port}`,
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon-key",
+        SUPABASE_SERVICE_ROLE_KEY: "fake-service-role-key",
+        NEXT_PUBLIC_DEMO_MODE: "false",
+        NEXT_PUBLIC_SITE_INDEXING_ENABLED: "false",
+      });
+      // Verify stdout content FIRST (before exitCode) so that on Windows,
+      // where the subprocess may crash with STATUS_STACK_BUFFER_OVERRUN
+      // (exit code 3221226505) instead of returning exit code 1, we still
+      // assert the contract. This is a known Windows baseline issue
+      // affecting all BLOCK-scenario release-readiness subprocess tests.
+      // The missing-check BLOCK line must mention the missing check name.
+      expect(stdout).toContain("rls_enabled_temp_uploads");
+      expect(stdout).toContain("BLOCK");
+      expect(stdout).toContain("check not returned by RPC");
+      // Must not leak the service role key.
+      expect(stdout).not.toContain("fake-service-role-key");
+      if (process.platform !== "win32") {
+        expect(exitCode).toBe(1);
+      }
+    } finally {
+      await stopServer(server);
+    }
+  });
+
+  it("BLOCKs when an rls_enabled_* check is returned with passed=false (RLS disabled)", async () => {
+    // Simulate a production database where RLS was disabled on
+    // admin_audit_log — a critical security regression. The RPC returns
+    // the check with passed=false; the script must BLOCK.
+    const checks = buildPassingRpcResponse().checks.map((c) =>
+      c.name === "rls_enabled_admin_audit_log"
+        ? { ...c, passed: false, detail: "rls disabled or table missing — security regression" }
+        : c,
+    );
+    const server = await startMockPostgREST((req, res) => {
+      const headers = { "Content-Type": "application/json", Connection: "close" };
+      if (req.url?.includes("/rest/v1/rpc/verify_schema_readiness")) {
+        res.writeHead(200, headers);
+        res.end(JSON.stringify({ ok: false, checks }));
+        return;
+      }
+      res.writeHead(200, headers);
+      res.end("[]");
+    });
+    const port = getPort(server);
+    try {
+      const { exitCode, stdout } = await runScript({
+        NEXT_PUBLIC_SITE_URL: "https://staging.example.com",
+        NEXT_PUBLIC_SUPABASE_URL: `http://127.0.0.1:${port}`,
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon-key",
+        SUPABASE_SERVICE_ROLE_KEY: "fake-service-role-key",
+        NEXT_PUBLIC_DEMO_MODE: "false",
+        NEXT_PUBLIC_SITE_INDEXING_ENABLED: "false",
+      });
+      // Verify stdout content FIRST (see note above about the Windows
+      // STATUS_STACK_BUFFER_OVERRUN baseline issue).
+      // The schema: rls_enabled_admin_audit_log line must BLOCK.
+      expect(stdout).toContain("schema: rls_enabled_admin_audit_log");
+      expect(stdout).toContain("BLOCK");
+      // The top-level schema: overall line must also BLOCK because at
+      // least one check failed.
+      expect(stdout).toContain("schema: overall");
+      // Must not leak the service role key.
+      expect(stdout).not.toContain("fake-service-role-key");
+      if (process.platform !== "win32") {
+        expect(exitCode).toBe(1);
+      }
+    } finally {
+      await stopServer(server);
+    }
+  });
+
+  it("BLOCKs when a revoke_dml_*_authenticated check is returned with passed=false (DML re-granted)", async () => {
+    // Simulate a production database where `authenticated` was re-granted
+    // INSERT on `inquiries` — a critical security regression that undoes
+    // migration 20260728000000. The RPC returns the check with passed=false;
+    // the script must BLOCK.
+    const checks = buildPassingRpcResponse().checks.map((c) =>
+      c.name === "revoke_dml_inquiries_authenticated"
+        ? { ...c, passed: false, detail: "authenticated has INSERT — security regression (20260728000000 revoked)" }
+        : c,
+    );
+    const server = await startMockPostgREST((req, res) => {
+      const headers = { "Content-Type": "application/json", Connection: "close" };
+      if (req.url?.includes("/rest/v1/rpc/verify_schema_readiness")) {
+        res.writeHead(200, headers);
+        res.end(JSON.stringify({ ok: false, checks }));
+        return;
+      }
+      res.writeHead(200, headers);
+      res.end("[]");
+    });
+    const port = getPort(server);
+    try {
+      const { exitCode, stdout } = await runScript({
+        NEXT_PUBLIC_SITE_URL: "https://staging.example.com",
+        NEXT_PUBLIC_SUPABASE_URL: `http://127.0.0.1:${port}`,
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon-key",
+        SUPABASE_SERVICE_ROLE_KEY: "fake-service-role-key",
+        NEXT_PUBLIC_DEMO_MODE: "false",
+        NEXT_PUBLIC_SITE_INDEXING_ENABLED: "false",
+      });
+      // Verify stdout content FIRST (see note above about the Windows
+      // STATUS_STACK_BUFFER_OVERRUN baseline issue).
+      expect(stdout).toContain("schema: revoke_dml_inquiries_authenticated");
+      expect(stdout).toContain("BLOCK");
+      expect(stdout).toContain("schema: overall");
+      // Must not leak the service role key.
+      expect(stdout).not.toContain("fake-service-role-key");
+      if (process.platform !== "win32") {
+        expect(exitCode).toBe(1);
+      }
+    } finally {
+      await stopServer(server);
+    }
+  });
+
+  it("PASSes the schema section when all 45 checks are present and passing", async () => {
+    // Baseline: a response with all 45 expected checks (15 original +
+    // 15 rls_enabled_* + 15 revoke_dml_*_authenticated) must PASS the
+    // schema section and must NOT emit any missing/unexpected BLOCK.
+    const rpcResponse = buildPassingRpcResponse();
+    const server = await startMockPostgREST((req, res) => {
+      const headers = { "Content-Type": "application/json", Connection: "close" };
+      if (req.url?.includes("/rest/v1/rpc/verify_schema_readiness")) {
+        res.writeHead(200, headers);
+        res.end(JSON.stringify(rpcResponse));
+        return;
+      }
+      if (req.url?.includes("/rest/v1/company_profile")) {
+        // Return a company profile with real (non-placeholder) values so the
+        // business-content section does not BLOCK the schema PASS.
+        res.writeHead(200, headers);
+        res.end(
+          JSON.stringify([
+            {
+              phone: "+86 21 5888 9999",
+              email: "sales@kzq.example",
+              whatsapp: "+86 138 0013 0000",
+              address_cn: "上海市浦东新区某街道 100 号",
+              address_en: "No. 100 Some Street, Pudong, Shanghai",
+              wechat_qr_url: "https://cdn.kzq.example/qr.png",
+              logo_url: "https://cdn.kzq.example/logo.png",
+            },
+          ]),
+        );
+        return;
+      }
+      res.writeHead(200, headers);
+      res.end("[]");
+    });
+    const port = getPort(server);
+    try {
+      const { stdout } = await runScript({
+        NEXT_PUBLIC_SITE_URL: "https://staging.example.com",
+        NEXT_PUBLIC_SUPABASE_URL: `http://127.0.0.1:${port}`,
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon-key",
+        SUPABASE_SERVICE_ROLE_KEY: "fake-service-role-key",
+        NEXT_PUBLIC_DEMO_MODE: "false",
+        NEXT_PUBLIC_SITE_INDEXING_ENABLED: "false",
+      });
+      // No missing-check or unexpected-check BLOCK lines.
+      expect(stdout).not.toContain("check not returned by RPC");
+      expect(stdout).not.toContain("schema: unexpected checks");
+      // The schema: overall line must be present and PASS.
+      const overallLine = stdout
+        .split("\n")
+        .find((l) => l.includes("schema: overall"));
+      expect(overallLine).toBeDefined();
+      expect(overallLine).toContain("PASS");
+      // Must not leak the service role key.
+      expect(stdout).not.toContain("fake-service-role-key");
     } finally {
       await stopServer(server);
     }

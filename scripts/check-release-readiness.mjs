@@ -623,7 +623,15 @@ function checkSecurityAndOperations() {
 
 // Expected check names returned by verify_schema_readiness(). We track these
 // explicitly so a future RPC change that drops a check is detected.
+//
+// KZQ-P0-011-c: Added 30 new checks (15 `rls_enabled_*` + 15
+// `revoke_dml_*_authenticated`) to verify table-level RLS enablement and
+// the DML revocations from migration 20260728000000 are still in effect.
+// The allowlist is the contract between this script and migration
+// 20260731120000_extend_schema_verification_rls_revoke.sql — any check
+// name outside this list is a contract violation (KZQ-P0-011-b).
 const EXPECTED_SCHEMA_CHECKS = [
+  // --- Original checks (migration 20260724160000) ---
   "catalog_field_catalog_topic_id",
   "catalog_field_cover_image_url",
   "catalog_field_published_at",
@@ -639,6 +647,38 @@ const EXPECTED_SCHEMA_CHECKS = [
   "grant_create_inquiry_with_items",
   "grant_save_product_with_images",
   "grant_save_project_with_relations",
+  // --- KZQ-P0-011-c: RLS enabled checks (15 tables) ---
+  "rls_enabled_inquiry_items",
+  "rls_enabled_product_assets",
+  "rls_enabled_projects",
+  "rls_enabled_project_images",
+  "rls_enabled_project_products",
+  "rls_enabled_analytics_events",
+  "rls_enabled_inquiry_outbox",
+  "rls_enabled_admin_audit_log",
+  "rls_enabled_inquiry_outbox_deliveries",
+  "rls_enabled_admin_storage_operations",
+  "rls_enabled_storage_cleanup_queue",
+  "rls_enabled_storage_object_refs",
+  "rls_enabled_temp_uploads",
+  "rls_enabled_homepage_content",
+  "rls_enabled_page_content",
+  // --- KZQ-P0-011-c: DML revoke checks (15 business tables, authenticated) ---
+  "revoke_dml_categories_authenticated",
+  "revoke_dml_subcategories_authenticated",
+  "revoke_dml_products_authenticated",
+  "revoke_dml_product_images_authenticated",
+  "revoke_dml_certificates_authenticated",
+  "revoke_dml_company_profile_authenticated",
+  "revoke_dml_site_settings_authenticated",
+  "revoke_dml_homepage_content_authenticated",
+  "revoke_dml_page_content_authenticated",
+  "revoke_dml_product_assets_authenticated",
+  "revoke_dml_projects_authenticated",
+  "revoke_dml_project_images_authenticated",
+  "revoke_dml_project_products_authenticated",
+  "revoke_dml_inquiries_authenticated",
+  "revoke_dml_inquiry_items_authenticated",
 ];
 
 /**
