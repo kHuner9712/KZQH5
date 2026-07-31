@@ -13,7 +13,7 @@ blindly — re-verify against real code before starting any task.
 - Node version (engines): `20.x` (local runtime v24.15.0 used for tooling only)
 - Next.js version: `15.5.21`
 - Supabase client version: `@supabase/supabase-js 2.109.0`, `@supabase/ssr 0.12.0`
-- Last updated: 2026-07-31 (KZQ-P0-002 completed)
+- Last updated: 2026-07-31 (KZQ-P0-003 completed)
 
 ## Status Values
 
@@ -35,7 +35,7 @@ column records the file and line where the decision was made.
 |----|----------|------------|------|--------|--------|--------|------------|-------|
 | KZQ-P0-001 | P0 | Epic A 两阶段上传 | Verify `complete_temp_upload_finalize` RPC business return value (`ok` field) | completed | `trae/p0-001-finalize-rpc-return-value` | (this commit) | `npm run typecheck && npm run lint && npx vitest run tests/unit/two-phase-upload-service.test.ts` → PASS (21/21) | Fixed `lib/services/two-phase-upload.ts:461-525`: now destructures `data`, validates `ok===true`, handles transport error/null/malformed/`ok:false`; RPC failure now compensates by deleting moved final object, enqueues cleanup if compensation fails, calls failFinalize, returns `FINALIZE_RPC_FAILED`; never returns success on RPC failure. Added 8 tests covering all 9 required scenarios. `mapErrorCode` updated to map `FINALIZE_RPC_FAILED`→500 |
 | KZQ-P0-002 | P0 | Epic A 两阶段上传 | Correct signed upload URL lifecycle model (DB expiry vs Supabase capability TTL) | completed | `trae/p0-002-signed-url-lifecycle` | (this commit) | `npm run typecheck && npm run lint && npx vitest run tests/unit/two-phase-upload-service.test.ts tests/unit/two-phase-upload-client.test.ts tests/unit/migration-temp-uploads-safety.test.ts` → PASS (28+20=48) | Renamed `SIGNED_UPLOAD_URL_TTL_SECONDS`→`TEMP_UPLOAD_AUTHORIZATION_WINDOW_SECONDS` in `lib/services/two-phase-upload.ts:85`; added docblock distinguishing 3 lifetimes (business window 5min / signed-URL capability TTL server-controlled 1h / cleanup protection period); updated `docs/TWO_PHASE_UPLOAD_DESIGN.md:97-108` and Future Work section :248-261 documenting cleanup dispatcher MUST wait for both windows before deleting temp objects; fixed stale "5-minute TTL" comment in `app/api/admin/storage/upload/authorize/route.ts:18`; added test verifying `expiresAt` is the business window deadline. No migration needed — cleanup dispatcher not yet implemented; protection-period guard documented for future implementation |
-| KZQ-P0-003 | P0 | Epic A 两阶段上传 | Bind upload token to authorizing admin (verify actor_id on finalize) | pending | — | — | `npm run test:database` | `supabase/migrations/20260729020000_temp_uploads_two_phase_upload.sql:235-301` `claim_temp_upload_for_finalize`/`complete_temp_upload_finalize` accept only token; never verify `actor_id`; requires new forward-only migration |
+| KZQ-P0-003 | P0 | Epic A 两阶段上传 | Bind upload token to authorizing admin (verify actor_id on finalize) | completed | `trae/p0-003-bind-upload-actor` | (this commit) | `npm run typecheck && npm run lint && npx vitest run tests/unit/two-phase-upload-service.test.ts tests/unit/migration-temp-uploads-safety.test.ts && npm run check:migration-immutability:ci` → PASS | New forward-only migration `20260731020000_bind_temp_upload_actor.sql` drops old `claim_temp_upload_for_finalize(uuid)` and creates `claim_temp_upload_for_finalize(uuid, text)` that verifies `p_actor_id` against `row.actor_id`; rejects with `invalid_actor`/`actor_not_bound`/`actor_mismatch`; SECURITY INVOKER, empty search_path, EXECUTE to service_role ONLY. Updated `types/database.ts` RPC signature, `lib/services/two-phase-upload.ts` to pass `p_actor_id`, `finalize/route.ts` mapErrorCode for 403. Added 5 actor-binding service tests + 12 migration safety tests. Super-admin override NOT implemented (requires explicit business need + audit design — deferred) |
 | KZQ-P0-004 | P0 | Epic A 两阶段上传 | Final extension from verified MIME, not original filename | pending | — | — | `npx vitest run tests/unit/two-phase-upload.test.ts` | `lib/services/two-phase-upload.ts:362` `getExtensionFromFilename(row.declared_filename)`; no shared MIME→ext map; single-stage `storage-upload.ts:189` has consistency check + `MIME_DEFAULT_EXT` fallback but two-stage skips it |
 | KZQ-P0-005 | P0 | Epic A 两阶段上传 | Unify single-stage and two-stage storage saga (workstream — split into atomic sub-tasks) | pending | — | — | per sub-task | `two-phase-upload.ts` uses `claim_temp_upload_for_finalize`/`complete_temp_upload_finalize` + `verifyMagicBytes`; `storage-upload.ts` uses `recordStorageAuditStarted`/`completeStorageAudit` + `validateUploadFile`; only `generatePrivateStoragePath` + `enqueueStorageCleanup` shared. Must split before execution |
 | KZQ-P0-010 | P0 | Epic B 数据库版本 | Production schema fallback explicit (`ALLOW_SCHEMA_COMPATIBILITY_FALLBACK`) | pending | — | — | `npm run typecheck && npm run lint && npx vitest run tests/unit/release-readiness.test.ts` | `lib/repositories/inquiries.ts:206-222` and `lib/repositories/admin-dashboard.ts:137-159` silently fall back to direct table queries when RPC undeployed (added by PR #41); no env gate, no operator signal |
@@ -86,15 +86,13 @@ suffix such as `-a`, `-b`) and is executed one per round.
 Per the priority order `P0 → P1 → P2 → Framework Upgrade`, and within each
 priority by Task ID order, the next atomic task to execute is:
 
-**KZQ-P0-003** — Bind upload token to authorizing admin (verify actor_id on
-finalize).
+**KZQ-P0-004** — Final extension from verified MIME, not original filename.
 
-KZQ-P0-001 and KZQ-P0-002 are now completed. KZQ-P0-003 is the next P0
-atomic task (not a workstream). Its scope requires a new forward-only
-migration to make `claim_temp_upload_for_finalize` and
-`complete_temp_upload_finalize` accept and verify `actor_id`, so that only
-the admin who authorized the upload can finalize it. No remote DB writes —
-migration is created locally and tested via `npm run test:database`.
+KZQ-P0-001, KZQ-P0-002, and KZQ-P0-003 are now completed. KZQ-P0-004 is the
+next P0 atomic task (not a workstream). Its scope is to establish a shared
+MIME→extension mapping so the final object extension is determined by the
+server-verified MIME type, not the user-supplied filename. Single-stage and
+two-stage paths should share the same mapping. No migration required.
 
 ## Acceptance Commands Reference
 

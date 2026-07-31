@@ -295,3 +295,148 @@ describe("Phase 4: temp_uploads migration safety", () => {
     });
   });
 });
+
+// ============================================================
+// KZQ-P0-003: Migration 20260731020000_bind_temp_upload_actor.sql
+// ------------------------------------------------------------
+// Verifies the actor-binding migration:
+//   1. Drops the old claim_temp_upload_for_finalize(uuid) signature
+//   2. Creates the new claim_temp_upload_for_finalize(uuid, text)
+//   3. New function verifies p_actor_id against row.actor_id
+//   4. SECURITY INVOKER + empty search_path
+//   5. GRANT EXECUTE to service_role ONLY
+//   6. REVOKE from public/anon/authenticated
+//   7. Does NOT drop tables, truncate, or modify existing data
+//   8. Registered in the SHA-256 manifest
+// ============================================================
+
+const ACTOR_MIGRATION_PATH = join(
+  process.cwd(),
+  "supabase",
+  "migrations",
+  "20260731020000_bind_temp_upload_actor.sql",
+);
+
+function readActorMigration(): string {
+  return readFileSync(ACTOR_MIGRATION_PATH, "utf8");
+}
+
+describe("KZQ-P0-003: bind_temp_upload_actor migration safety", () => {
+  let actorSql: string;
+
+  beforeEach(() => {
+    actorSql = readActorMigration();
+  });
+
+  function stripLineComments(input: string): string {
+    return input
+      .split("\n")
+      .map((line) => {
+        const trimmed = line.trim();
+        if (trimmed.startsWith("--")) return "";
+        return line;
+      })
+      .join("\n");
+  }
+
+  describe("forward-only (no destructive operations)", () => {
+    it("does NOT contain DROP TABLE", () => {
+      expect(stripLineComments(actorSql)).not.toMatch(/drop\s+table/i);
+    });
+
+    it("does NOT contain TRUNCATE", () => {
+      expect(stripLineComments(actorSql)).not.toMatch(/truncate/i);
+    });
+
+    it("does NOT contain DELETE FROM at the top level", () => {
+      const lines = actorSql.split("\n");
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (trimmed.startsWith("--")) continue;
+        if (/^delete\s+from/i.test(trimmed)) {
+          expect.fail(`Top-level DELETE found: ${trimmed}`);
+        }
+      }
+    });
+
+    it("does NOT modify existing tables (no ALTER TABLE)", () => {
+      expect(stripLineComments(actorSql)).not.toMatch(/alter\s+table/i);
+    });
+  });
+
+  describe("signature change", () => {
+    it("drops the old claim_temp_upload_for_finalize(uuid) signature", () => {
+      expect(actorSql).toMatch(
+        /drop\s+function\s+if\s+exists\s+public\.claim_temp_upload_for_finalize\s*\(\s*p_token\s+uuid\s*\)/i,
+      );
+    });
+
+    it("creates the new claim_temp_upload_for_finalize(uuid, text) signature", () => {
+      expect(actorSql).toMatch(
+        /create\s+or\s+replace\s+function\s+public\.claim_temp_upload_for_finalize\s*\(\s*p_token\s+uuid,\s*p_actor_id\s+text\s*\)/i,
+      );
+    });
+  });
+
+  describe("actor_id verification logic", () => {
+    it("rejects null p_actor_id with invalid_actor", () => {
+      expect(actorSql).toMatch(/invalid_actor/i);
+    });
+
+    it("rejects null row.actor_id with actor_not_bound", () => {
+      expect(actorSql).toMatch(/actor_not_bound/i);
+    });
+
+    it("rejects mismatched actor_id with actor_mismatch", () => {
+      expect(actorSql).toMatch(/actor_mismatch/i);
+    });
+
+    it("compares row.actor_id against p_actor_id", () => {
+      expect(actorSql).toMatch(/v_row\.actor_id\s*!=\s*p_actor_id/i);
+    });
+  });
+
+  describe("RPC security — SECURITY INVOKER + empty search_path", () => {
+    it("new function uses SECURITY INVOKER", () => {
+      expect(actorSql).toMatch(
+        /create\s+or\s+replace\s+function\s+public\.claim_temp_upload_for_finalize[\s\S]*?language\s+plpgsql\s+security\s+invoker/i,
+      );
+    });
+
+    it("new function uses SET search_path = ''", () => {
+      expect(actorSql).toMatch(
+        /create\s+or\s+replace\s+function\s+public\.claim_temp_upload_for_finalize[\s\S]*?set\s+search_path\s*=\s*''/i,
+      );
+    });
+  });
+
+  describe("grants — service_role only", () => {
+    it("revokes EXECUTE on new function from public, anon, authenticated", () => {
+      expect(actorSql).toMatch(
+        /revoke\s+all\s+on\s+function\s+public\.claim_temp_upload_for_finalize\s*\(\s*uuid,\s*text\s*\)\s+from\s+public,\s*anon,\s*authenticated/i,
+      );
+    });
+
+    it("grants EXECUTE on new function to service_role ONLY", () => {
+      expect(actorSql).toMatch(
+        /grant\s+execute\s+on\s+function\s+public\.claim_temp_upload_for_finalize\s*\(\s*uuid,\s*text\s*\)\s+to\s+service_role/i,
+      );
+      expect(actorSql).not.toMatch(
+        /grant\s+execute\s+on\s+function\s+public\.claim_temp_upload_for_finalize\s*\(\s*uuid,\s*text\s*\)\s+to\s+anon/i,
+      );
+      expect(actorSql).not.toMatch(
+        /grant\s+execute\s+on\s+function\s+public\.claim_temp_upload_for_finalize\s*\(\s*uuid,\s*text\s*\)\s+to\s+authenticated/i,
+      );
+    });
+  });
+
+  describe("manifest registration", () => {
+    it("migration is registered in the SHA-256 manifest", () => {
+      const manifest = readFileSync(
+        join(process.cwd(), "docs", "MIGRATION_SHA256_MANIFEST.txt"),
+        "utf8",
+      );
+      expect(manifest).toContain("20260731020000_bind_temp_upload_actor.sql");
+    });
+  });
+});

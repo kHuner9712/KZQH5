@@ -306,6 +306,15 @@ describe("finalizeTempUpload", () => {
     declared_filename: "test.jpg",
     final_bucket: "public-assets",
     final_category: "products",
+    // KZQ-P0-003: actor_id is set at authorize time and verified
+    // at finalize by the claim_temp_upload_for_finalize RPC.
+    actor_id: "admin-001",
+    actor_role: "admin",
+    status: "authorized",
+    expires_at: "2026-07-29T12:05:00Z",
+    finalized_object_path: null,
+    finalized_at: null,
+    failure_reason: null,
   };
 
   it("rejects when claim RPC fails", async () => {
@@ -363,6 +372,124 @@ describe("finalizeTempUpload", () => {
 
     expect(result.ok).toBe(false);
     expect(result.code).toBe("SIZE_MISMATCH");
+  });
+
+  // ============================================================
+  // KZQ-P0-003: Actor binding tests.
+  //
+  // The claim_temp_upload_for_finalize RPC now accepts p_actor_id
+  // and verifies it matches the row's actor_id. These tests verify
+  // the service correctly forwards the caller's actorId and
+  // propagates the RPC's fixed error codes when the binding fails.
+  // ============================================================
+  it("passes p_actor_id to the claim RPC", async () => {
+    const { finalizeTempUpload } = await import("@/lib/services/two-phase-upload");
+
+    mockRpc.mockResolvedValueOnce({
+      data: { ok: true, row: validClaimRow },
+      error: null,
+    });
+
+    // The service will proceed past the claim and try to list the
+    // object. Return empty so it fails at OBJECT_NOT_FOUND, which
+    // is enough to verify the claim RPC call arguments.
+    mockList.mockResolvedValueOnce({ data: [], error: null });
+    mockRpc.mockResolvedValueOnce({ data: { ok: true }, error: null });
+
+    await finalizeTempUpload({
+      uploadToken: "abc12345-1234-1234-1234-123456789abc",
+      actorId: "admin-001",
+    });
+
+    // Verify the claim RPC was called with p_actor_id
+    expect(mockRpc).toHaveBeenCalledWith(
+      "claim_temp_upload_for_finalize",
+      expect.objectContaining({
+        p_token: "abc12345-1234-1234-1234-123456789abc",
+        p_actor_id: "admin-001",
+      }),
+    );
+  });
+
+  it("passes null p_actor_id when actorId is not provided", async () => {
+    const { finalizeTempUpload } = await import("@/lib/services/two-phase-upload");
+
+    mockRpc.mockResolvedValueOnce({
+      data: { ok: false, error: "invalid_actor" },
+      error: null,
+    });
+
+    const result = await finalizeTempUpload({
+      uploadToken: "abc12345-1234-1234-1234-123456789abc",
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.code).toBe("invalid_actor");
+    // Verify the service forwarded null (not undefined) to the RPC
+    expect(mockRpc).toHaveBeenCalledWith(
+      "claim_temp_upload_for_finalize",
+      expect.objectContaining({
+        p_token: "abc12345-1234-1234-1234-123456789abc",
+        p_actor_id: null,
+      }),
+    );
+  });
+
+  it("rejects with actor_mismatch when a different admin finalizes", async () => {
+    const { finalizeTempUpload } = await import("@/lib/services/two-phase-upload");
+
+    // The RPC rejects because the caller's actorId doesn't match
+    // the row's actor_id.
+    mockRpc.mockResolvedValueOnce({
+      data: { ok: false, error: "actor_mismatch" },
+      error: null,
+    });
+
+    const result = await finalizeTempUpload({
+      uploadToken: "abc12345-1234-1234-1234-123456789abc",
+      actorId: "admin-002", // different admin
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.code).toBe("actor_mismatch");
+  });
+
+  it("rejects with actor_not_bound when the row has no actor_id", async () => {
+    const { finalizeTempUpload } = await import("@/lib/services/two-phase-upload");
+
+    // The RPC rejects because the upload was not bound to an admin
+    // at authorize time (row.actor_id is null).
+    mockRpc.mockResolvedValueOnce({
+      data: { ok: false, error: "actor_not_bound" },
+      error: null,
+    });
+
+    const result = await finalizeTempUpload({
+      uploadToken: "abc12345-1234-1234-1234-123456789abc",
+      actorId: "admin-001",
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.code).toBe("actor_not_bound");
+  });
+
+  it("rejects with invalid_actor when actorId is null", async () => {
+    const { finalizeTempUpload } = await import("@/lib/services/two-phase-upload");
+
+    // The RPC rejects because p_actor_id is null — the caller did
+    // not identify itself.
+    mockRpc.mockResolvedValueOnce({
+      data: { ok: false, error: "invalid_actor" },
+      error: null,
+    });
+
+    const result = await finalizeTempUpload({
+      uploadToken: "abc12345-1234-1234-1234-123456789abc",
+      actorId: null,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.code).toBe("invalid_actor");
   });
 });
 
