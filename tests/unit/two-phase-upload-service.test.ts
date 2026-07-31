@@ -962,4 +962,105 @@ describe("finalizeTempUpload", () => {
       expect(finalObjectRemoves.length).toBe(1);
     });
   });
+
+  // ============================================================
+  // KZQ-P0-005-f: Unified cleanup/reconciliation
+  // ------------------------------------------------------------
+  // Both single-stage and two-stage paths now call the SAME public
+  // `enqueueStorageCleanup` function for cleanup enqueue. The private
+  // `enqueueResidualObjectForCleanup` wrapper has been REMOVED from
+  // storage-upload.ts.
+  //
+  // This locks the contract so that:
+  //   1. Both paths import and call the shared `enqueueStorageCleanup`
+  //   2. The private `enqueueResidualObjectForCleanup` is NOT redefined
+  //   3. Both paths call the same `enqueue_storage_cleanup` RPC
+  //   4. The shared function validates bucket whitelist + non-empty path
+  // ============================================================
+  describe("KZQ-P0-005-f: unified cleanup (shared enqueueStorageCleanup)", () => {
+    const TWO_PHASE_SRC = "lib/services/two-phase-upload.ts";
+    const SINGLE_STAGE_SRC = "lib/services/storage-upload.ts";
+
+    it("storage-upload.ts EXPORTS enqueueStorageCleanup (single source of truth)", async () => {
+      const { readFileSync } = await import("node:fs");
+      const src = readFileSync(SINGLE_STAGE_SRC, "utf8");
+      expect(src).toMatch(
+        /export\s+async\s+function\s+enqueueStorageCleanup\s*\(/,
+      );
+    });
+
+    it("storage-upload.ts does NOT define private enqueueResidualObjectForCleanup anymore", async () => {
+      const { readFileSync } = await import("node:fs");
+      const src = readFileSync(SINGLE_STAGE_SRC, "utf8");
+      // The private wrapper function definition must be gone.
+      // (A comment mentioning the old name is OK, but not a function def.)
+      expect(src).not.toMatch(
+        /async\s+function\s+enqueueResidualObjectForCleanup\s*\(/,
+      );
+    });
+
+    it("storage-upload.ts: all 4 single-stage call sites use enqueueStorageCleanup", async () => {
+      const { readFileSync } = await import("node:fs");
+      const src = readFileSync(SINGLE_STAGE_SRC, "utf8");
+
+      // uploadToPrivateAssets: audit-complete failure compensation
+      const privateFnIdx = src.indexOf("export async function uploadToPrivateAssets");
+      expect(privateFnIdx).toBeGreaterThanOrEqual(0);
+      const privateFn = src.slice(privateFnIdx, src.indexOf("export async function", privateFnIdx + 10));
+      expect(privateFn).toMatch(/enqueueStorageCleanup\s*\(/);
+
+      // uploadToPublicAssets: audit-complete failure compensation
+      const publicFnIdx = src.indexOf("export async function uploadToPublicAssets");
+      expect(publicFnIdx).toBeGreaterThanOrEqual(0);
+      const publicFn = src.slice(publicFnIdx, src.indexOf("export async function", publicFnIdx + 10));
+      expect(publicFn).toMatch(/enqueueStorageCleanup\s*\(/);
+
+      // publishCatalogAssetFlow: compensatePublicCopy
+      const catalogFnIdx = src.indexOf("export async function publishCatalogAssetFlow");
+      expect(catalogFnIdx).toBeGreaterThanOrEqual(0);
+      const catalogFn = src.slice(catalogFnIdx, src.indexOf("export async function", catalogFnIdx + 10));
+      expect(catalogFn).toMatch(/enqueueStorageCleanup\s*\(/);
+
+      // publishCertificateFlow: compensatePublicCopy (last function in file,
+      // so slice to end — nested `}` would break a naive `\n}` search)
+      const certFnIdx = src.indexOf("export async function publishCertificateFlow");
+      expect(certFnIdx).toBeGreaterThanOrEqual(0);
+      const certFn = src.slice(certFnIdx);
+      expect(certFn).toMatch(/enqueueStorageCleanup\s*\(/);
+    });
+
+    it("two-phase-upload.ts IMPORTS enqueueStorageCleanup (no local redefinition)", async () => {
+      const { readFileSync } = await import("node:fs");
+      const src = readFileSync(TWO_PHASE_SRC, "utf8");
+      expect(src).toMatch(
+        /import\s*\{[^}]*\benqueueStorageCleanup\b[^}]*\}\s*from\s*["']@\/lib\/services\/storage-upload["']/,
+      );
+      // Must NOT define it locally
+      expect(src).not.toMatch(
+        /function\s+enqueueStorageCleanup\s*\(/,
+      );
+    });
+
+    it("enqueueStorageCleanup validates bucket whitelist (rejects unknown bucket)", async () => {
+      // The shared function validates bucket against public-assets/private-assets
+      const { readFileSync } = await import("node:fs");
+      const src = readFileSync(SINGLE_STAGE_SRC, "utf8");
+      const fnIdx = src.indexOf("export async function enqueueStorageCleanup");
+      expect(fnIdx).toBeGreaterThanOrEqual(0);
+      const fnBody = src.slice(fnIdx, src.indexOf("\n}\n", fnIdx + 10));
+      expect(fnBody).toMatch(/public-assets/);
+      expect(fnBody).toMatch(/private-assets/);
+      expect(fnBody).toMatch(/ADMIN_WRITE_BAD_REQUEST/);
+    });
+
+    it("enqueueStorageCleanup returns discriminated union (not void)", async () => {
+      const { readFileSync } = await import("node:fs");
+      const src = readFileSync(SINGLE_STAGE_SRC, "utf8");
+      const fnIdx = src.indexOf("export async function enqueueStorageCleanup");
+      expect(fnIdx).toBeGreaterThanOrEqual(0);
+      // Find the return type annotation
+      const fnHeader = src.slice(fnIdx, fnIdx + 300);
+      expect(fnHeader).toMatch(/Promise<EnqueueCleanupResult>/);
+    });
+  });
 });

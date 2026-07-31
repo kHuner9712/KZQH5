@@ -382,39 +382,18 @@ export async function compensateDeleteUploadedObject(
   }
 }
 
-/**
- * 补偿失败后入队 storage_cleanup_queue 让 dispatcher 后续处理。
- *
- * 调用时机：compensateDeleteUploadedObject 返回 { ok: false } 时，
- * 调用方应调用此函数把残留对象入队。入队失败时仅记录日志，
- * 由 read-only inventory 脚本兜底发现。
- */
-async function enqueueResidualObjectForCleanup(
-  client: SupabaseClient<Database>,
-  bucket: string,
-  path: string,
-  reason: "form_cancelled" | "replaced" | "row_deleted" | "orphan_detected",
-  sourceType?: string | null,
-  sourceId?: string | null,
-): Promise<void> {
-  try {
-    await client.rpc("enqueue_storage_cleanup", {
-      p_bucket: bucket,
-      p_object_path: path,
-      p_reason: reason,
-      p_source_type: sourceType ?? null,
-      p_source_id: sourceId ?? null,
-    });
-  } catch {
-    // 入队失败时仅记录日志；read-only inventory 脚本可发现残留对象
-    console.error("STORAGE_RESIDUAL_ENQUEUE_FAILED", {
-      bucket,
-      path,
-      reason,
-      code: "STORAGE_RESIDUAL_ENQUEUE_FAILED",
-    });
-  }
-}
+// KZQ-P0-005-f: The private `enqueueResidualObjectForCleanup` wrapper has
+// been REMOVED. The single-stage path now calls the SAME public
+// `enqueueStorageCleanup` function that the two-stage path already uses.
+// This unifies: (1) input validation (bucket whitelist + non-empty path),
+// (2) discriminated union return (`{ ok: true; cleanupId } | { ok: false; code }`),
+// (3) fixed log codes (`STORAGE_CLEANUP_ENQUEUE_FAILED` /
+// `STORAGE_CLEANUP_ENQUEUE_EXCEPTION`). Both paths now share the same
+// domain service for cleanup enqueue, preventing validation and error-
+// handling drift. Note: `enqueueStorageCleanup` creates its own admin
+// client internally; the previously-passed-in `client` argument is no
+// longer needed because cleanup enqueue is an edge case (only when
+// compensation fails), not a hot path.
 
 /**
  * 使用 service_role 将文件字节上传到 private-assets bucket。
@@ -511,14 +490,14 @@ export async function uploadToPrivateAssets(
     );
     if (!compensate.ok) {
       // 补偿删除失败 → 对象残留，入队 cleanup queue
-      await enqueueResidualObjectForCleanup(
-        client,
-        PRIVATE_ASSETS_BUCKET,
-        path,
-        "orphan_detected",
-        "storage.upload",
-        operationId,
-      );
+      // KZQ-P0-005-f: Use shared `enqueueStorageCleanup` (same as two-stage path)
+      await enqueueStorageCleanup({
+        bucket: PRIVATE_ASSETS_BUCKET,
+        objectPath: path,
+        reason: "orphan_detected",
+        sourceType: "storage.upload",
+        sourceId: operationId,
+      });
     }
     return { ok: false, code: "ADMIN_WRITE_FAILED" };
   }
@@ -665,14 +644,14 @@ export async function uploadToPublicAssets(
     );
     if (!compensate.ok) {
       // 补偿删除失败 → 对象残留，入队 cleanup queue
-      await enqueueResidualObjectForCleanup(
-        client,
-        PUBLIC_ASSETS_BUCKET,
-        path,
-        "orphan_detected",
-        "storage.upload",
-        operationId,
-      );
+      // KZQ-P0-005-f: Use shared `enqueueStorageCleanup` (same as two-stage path)
+      await enqueueStorageCleanup({
+        bucket: PUBLIC_ASSETS_BUCKET,
+        objectPath: path,
+        reason: "orphan_detected",
+        sourceType: "storage.upload",
+        sourceId: operationId,
+      });
     }
     return { ok: false, code: "ADMIN_WRITE_FAILED" };
   }
@@ -1478,14 +1457,14 @@ export async function publishCatalogAssetFlow(input: {
     );
     if (!compensate.ok) {
       // 补偿删除失败 → 入队 cleanup queue 让 dispatcher 后续处理
-      await enqueueResidualObjectForCleanup(
-        client,
-        PUBLIC_ASSETS_BUCKET,
-        uploadResult.path,
-        "orphan_detected",
-        "catalog_publish",
-        input.assetId,
-      );
+      // KZQ-P0-005-f: Use shared `enqueueStorageCleanup` (same as two-stage path)
+      await enqueueStorageCleanup({
+        bucket: PUBLIC_ASSETS_BUCKET,
+        objectPath: uploadResult.path,
+        reason: "orphan_detected",
+        sourceType: "catalog_publish",
+        sourceId: input.assetId,
+      });
     }
   };
 
@@ -1859,14 +1838,14 @@ export async function publishCertificateFlow(input: {
     );
     if (!compensate.ok) {
       // 补偿删除失败 → 入队 cleanup queue 让 dispatcher 后续处理
-      await enqueueResidualObjectForCleanup(
-        client,
-        PUBLIC_ASSETS_BUCKET,
-        uploadResult.path,
-        "orphan_detected",
-        "certificate_publish",
-        input.certificateId,
-      );
+      // KZQ-P0-005-f: Use shared `enqueueStorageCleanup` (same as two-stage path)
+      await enqueueStorageCleanup({
+        bucket: PUBLIC_ASSETS_BUCKET,
+        objectPath: uploadResult.path,
+        reason: "orphan_detected",
+        sourceType: "certificate_publish",
+        sourceId: input.certificateId,
+      });
     }
   };
 

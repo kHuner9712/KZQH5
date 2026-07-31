@@ -94,11 +94,18 @@ describe("Storage audit + compensation — static contract", () => {
     expect(content).toMatch(/return\s*\{\s*ok:\s*false\s*\}/);
   });
 
-  it("enqueueResidualObjectForCleanup enqueues when compensation fails", () => {
+  it("enqueueStorageCleanup enqueues when compensation fails (unified, KZQ-P0-005-f)", () => {
     const content = readLib(SOURCE);
-    expect(content).toMatch(/enqueueResidualObjectForCleanup/);
+    // KZQ-P0-005-f: the private `enqueueResidualObjectForCleanup` wrapper
+    // has been REMOVED. Both single-stage and two-stage paths now call the
+    // SAME public `enqueueStorageCleanup` function.
+    expect(content).toMatch(/enqueueStorageCleanup/);
     expect(content).toMatch(/enqueue_storage_cleanup/);
     expect(content).toMatch(/"orphan_detected"/);
+    // The private wrapper must NOT be redefined
+    expect(content).not.toMatch(
+      /async\s+function\s+enqueueResidualObjectForCleanup\s*\(/,
+    );
   });
 
   it("uploadToPrivateAssets: audit-complete failure triggers compensation + cleanup enqueue", () => {
@@ -112,7 +119,8 @@ describe("Storage audit + compensation — static contract", () => {
     const afterFn = content.slice(fnStart);
     expect(afterFn).toMatch(/completeStorageAudit\(client,\s*operationId,\s*true\)/);
     expect(afterFn).toMatch(/compensateDeleteUploadedObject/);
-    expect(afterFn).toMatch(/enqueueResidualObjectForCleanup/);
+    // KZQ-P0-005-f: now uses the shared `enqueueStorageCleanup`
+    expect(afterFn).toMatch(/enqueueStorageCleanup/);
   });
 
   it("uploadToPublicAssets: same fail-closed audit saga as private upload", () => {
@@ -122,7 +130,8 @@ describe("Storage audit + compensation — static contract", () => {
     const afterFn = content.slice(fnStart);
     expect(afterFn).toMatch(/completeStorageAudit\(client,\s*operationId,\s*true\)/);
     expect(afterFn).toMatch(/compensateDeleteUploadedObject/);
-    expect(afterFn).toMatch(/enqueueResidualObjectForCleanup/);
+    // KZQ-P0-005-f: now uses the shared `enqueueStorageCleanup`
+    expect(afterFn).toMatch(/enqueueStorageCleanup/);
   });
 
   it("deletePrivateAsset: audit-complete failure returns PARTIAL failure (not normal success)", () => {
@@ -153,7 +162,8 @@ describe("Storage audit + compensation — static contract", () => {
     // Must define a compensatePublicCopy helper inside the function.
     expect(afterFn).toMatch(/compensatePublicCopy/);
     expect(afterFn).toMatch(/await\s+compensatePublicCopy\(\)/);
-    expect(afterFn).toMatch(/enqueueResidualObjectForCleanup/);
+    // KZQ-P0-005-f: now uses the shared `enqueueStorageCleanup`
+    expect(afterFn).toMatch(/enqueueStorageCleanup/);
   });
 
   it("reconcilePendingStorageAudit implements the 4-state machine via claim/complete RPCs (Section 10)", () => {
