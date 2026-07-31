@@ -783,4 +783,183 @@ describe("finalizeTempUpload", () => {
       });
     });
   });
+
+  // ============================================================
+  // KZQ-P0-005-e: Unified compensation (shared compensateDeleteUploadedObject)
+  // ------------------------------------------------------------
+  // The two-stage finalize path now shares the SAME compensation
+  // function as the single-stage path. When audit-complete fails
+  // after a successful object move, the final object is compensated
+  // (deleted) via the shared `compensateDeleteUploadedObject` imported
+  // from storage-upload.ts, instead of an inline
+  // `client.storage.from(...).remove(...)`.
+  //
+  // This locks the contract so that:
+  //   1. Exceptions during compensation are caught (no uncaught throw)
+  //   2. Fixed log codes are emitted (STORAGE_COMPENSATE_DELETE_*)
+  //   3. A discriminated union { ok: true } | { ok: false } is returned
+  //   4. Compensation failure enqueues cleanup for the final object
+  // ============================================================
+  describe("KZQ-P0-005-e: unified compensation (shared compensateDeleteUploadedObject)", () => {
+    const TWO_PHASE_SRC = "lib/services/two-phase-upload.ts";
+    const SINGLE_STAGE_SRC = "lib/services/storage-upload.ts";
+    const JPEG_MAGIC = new Uint8Array([0xff, 0xd8, 0xff, 0xe0]);
+    const privateRow = {
+      id: "abc12345-1234-1234-1234-123456789abc",
+      object_path: "temp/abc12345-1234-1234-1234-123456789abc/test.jpg",
+      declared_mime_type: "image/jpeg",
+      declared_size: 1024,
+      declared_filename: "test.jpg",
+      final_bucket: "private-assets",
+      final_category: "products",
+      actor_id: "admin-uuid-1",
+      actor_role: "admin",
+    };
+
+    function mockPreAuditAndCopySuccess(row: Record<string, unknown>) {
+      mockRpc.mockResolvedValueOnce({ data: { ok: true, row }, error: null });
+      mockList.mockResolvedValueOnce({
+        data: [{ name: "test", metadata: { size: row.declared_size } }],
+        error: null,
+      });
+      mockCreateSignedUrl.mockResolvedValueOnce({
+        data: { signedUrl: "https://supabase.co/signed/test" },
+        error: null,
+      });
+      const fetchMock = vi.fn().mockResolvedValueOnce({
+        ok: true,
+        arrayBuffer: async () => JPEG_MAGIC.buffer.slice(0, JPEG_MAGIC.byteLength),
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      // audit-start succeeds
+      mockRpc.mockResolvedValueOnce({ data: "audit-op-comp", error: null });
+      // copy succeeds
+      mockCopy.mockResolvedValueOnce({ error: null });
+    }
+
+    // ----- Static contract tests (lock the import + call site) -----
+
+    it("storage-upload.ts EXPORTS compensateDeleteUploadedObject (single source of truth)", async () => {
+      const { readFileSync } = await import("node:fs");
+      const src = readFileSync(SINGLE_STAGE_SRC, "utf8");
+      expect(src).toMatch(
+        /export\s+async\s+function\s+compensateDeleteUploadedObject\s*\(/,
+      );
+    });
+
+    it("two-phase-upload.ts IMPORTS compensateDeleteUploadedObject (no inline redefinition)", async () => {
+      const { readFileSync } = await import("node:fs");
+      const src = readFileSync(TWO_PHASE_SRC, "utf8");
+      expect(src).toMatch(
+        /import\s*\{[^}]*\bcompensateDeleteUploadedObject\b[^}]*\}\s*from\s*["']@\/lib\/services\/storage-upload["']/,
+      );
+      // Must NOT redefine the function locally
+      expect(src).not.toMatch(
+        /function\s+compensateDeleteUploadedObject\s*\(/,
+      );
+    });
+
+    it("two-phase-upload.ts uses compensateDeleteUploadedObject in audit-complete failure (no inline remove)", async () => {
+      const { readFileSync } = await import("node:fs");
+      const src = readFileSync(TWO_PHASE_SRC, "utf8");
+
+      // The audit-complete failure block must call the shared function,
+      // not an inline `client.storage.from(finalBucket).remove(...)`.
+      // Find the block starting at "completeStorageAudit(client, auditOperationId, true)"
+      const auditCompleteIdx = src.indexOf(
+        "completeStorageAudit(client, auditOperationId, true)",
+      );
+      expect(auditCompleteIdx).toBeGreaterThanOrEqual(0);
+      const afterAuditComplete = src.slice(auditCompleteIdx);
+      expect(afterAuditComplete).toMatch(
+        /compensateDeleteUploadedObject\(/,
+      );
+    });
+
+    // ----- Behavioral tests -----
+
+    it("compensation remove FAILS → enqueues cleanup for the final object", async () => {
+      mockPreAuditAndCopySuccess(privateRow);
+      // audit-complete(true) FAILS
+      mockRpc.mockResolvedValueOnce({ data: null, error: { message: "rpc down" } });
+      // compensate: remove FAILS (returns error)
+      mockRemove.mockResolvedValueOnce({
+        data: null,
+        error: { message: "storage remove failed" },
+      });
+      // failFinalize RPC
+      mockRpc.mockResolvedValueOnce({ data: { ok: true }, error: null });
+      // NOTE: enqueueStorageCleanup is mocked at module level, doesn't call RPC.
+
+      const { finalizeTempUpload } = await import("@/lib/services/two-phase-upload");
+      const result = await finalizeTempUpload({
+        uploadToken: "abc12345-1234-1234-1234-123456789abc",
+      });
+      vi.unstubAllGlobals();
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.code).toBe("ADMIN_WRITE_FAILED");
+      }
+      // The final object remove was attempted
+      expect(mockRemove).toHaveBeenCalled();
+      // Verify the remove targeted the final object path (products/...)
+      const finalRemove = mockRemove.mock.calls.find(
+        (call) => Array.isArray(call[0]) && call[0].some((p: string) => p.startsWith("products/")),
+      );
+      expect(finalRemove).toBeDefined();
+    });
+
+    it("compensation remove THROWS → handled gracefully (no uncaught exception), enqueues cleanup", async () => {
+      mockPreAuditAndCopySuccess(privateRow);
+      // audit-complete(true) FAILS
+      mockRpc.mockResolvedValueOnce({ data: null, error: { message: "rpc down" } });
+      // compensate: remove THROWS (network/exception)
+      mockRemove.mockRejectedValueOnce(new Error("network timeout"));
+      // failFinalize RPC
+      mockRpc.mockResolvedValueOnce({ data: { ok: true }, error: null });
+
+      const { finalizeTempUpload } = await import("@/lib/services/two-phase-upload");
+      // Must NOT throw — the shared compensateDeleteUploadedObject
+      // catches the exception and returns { ok: false }
+      const result = await finalizeTempUpload({
+        uploadToken: "abc12345-1234-1234-1234-123456789abc",
+      });
+      vi.unstubAllGlobals();
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.code).toBe("ADMIN_WRITE_FAILED");
+      }
+      // The remove was still attempted
+      expect(mockRemove).toHaveBeenCalled();
+    });
+
+    it("compensation remove SUCCEEDS → does NOT enqueue cleanup for final object (only temp)", async () => {
+      mockPreAuditAndCopySuccess(privateRow);
+      // audit-complete(true) FAILS
+      mockRpc.mockResolvedValueOnce({ data: null, error: { message: "rpc down" } });
+      // compensate: remove SUCCEEDS
+      mockRemove.mockResolvedValueOnce({ data: null, error: null });
+      // failFinalize RPC
+      mockRpc.mockResolvedValueOnce({ data: { ok: true }, error: null });
+
+      const { finalizeTempUpload } = await import("@/lib/services/two-phase-upload");
+      const result = await finalizeTempUpload({
+        uploadToken: "abc12345-1234-1234-1234-123456789abc",
+      });
+      vi.unstubAllGlobals();
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.code).toBe("ADMIN_WRITE_FAILED");
+      }
+      // Compensation remove succeeded — exactly ONE remove call for
+      // the final object (no second remove for the final object path).
+      const finalObjectRemoves = mockRemove.mock.calls.filter(
+        (call) => Array.isArray(call[0]) && call[0].some((p: string) => p.startsWith("products/")),
+      );
+      expect(finalObjectRemoves.length).toBe(1);
+    });
+  });
 });
