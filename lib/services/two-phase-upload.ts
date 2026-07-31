@@ -45,6 +45,7 @@ import {
   generatePublicStoragePath,
   recordStorageAuditStarted,
   completeStorageAudit,
+  compensateDeleteUploadedObject,
   type PrivateAssetCategory,
 } from "@/lib/services/storage-upload";
 import {
@@ -556,16 +557,25 @@ export async function finalizeTempUpload(
   //     the single-stage path). The temp delete (step 9) and complete
   //     RPC (step 10) are post-audit cleanup that only runs when the
   //     audit saga succeeds.
+  //
+  // KZQ-P0-005-e: Use the shared `compensateDeleteUploadedObject`
+  //     (imported from storage-upload.ts) instead of inline
+  //     `client.storage.from(...).remove(...)`. This unifies the
+  //     compensation semantics with the single-stage path: exceptions
+  //     are caught, fixed log codes are emitted, and a discriminated
+  //     union is returned (no inline `.error` drift).
   const auditEnd = await completeStorageAudit(client, auditOperationId, true);
   if (!auditEnd.ok) {
     // Compensate: delete the final object from finalBucket.
     // For cross-bucket: object is in PUBLIC_ASSETS_BUCKET (private copy
     // already deleted at step 7). For same-bucket: object is in
     // PRIVATE_ASSETS_BUCKET.
-    const { error: compensateError } = await client.storage
-      .from(finalBucket)
-      .remove([finalObjectPath]);
-    if (compensateError) {
+    const compensate = await compensateDeleteUploadedObject(
+      client,
+      finalBucket,
+      finalObjectPath,
+    );
+    if (!compensate.ok) {
       // Compensation failed — enqueue cleanup for the final object.
       await enqueueStorageCleanup({
         bucket: finalBucket,

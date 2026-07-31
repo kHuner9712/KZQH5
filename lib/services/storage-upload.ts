@@ -324,6 +324,21 @@ export async function completeStorageAudit(
 }
 
 /**
+ * 补偿删除结果。
+ *
+ * KZQ-P0-005-e: Exported so the two-stage upload path can share the
+ * SAME compensation semantics as the single-stage path. Both paths
+ * now call this function (instead of the two-stage path using inline
+ * `client.storage.from(...).remove(...)`) so that:
+ *   - exceptions are caught (no uncaught throw during compensation)
+ *   - fixed log codes are emitted (no silent swallow)
+ *   - a discriminated union is returned (no inline `.error` check drift)
+ */
+export type CompensateDeleteResult =
+  | { ok: true }
+  | { ok: false };
+
+/**
  * 补偿：删除已上传对象（用于审计完成失败场景）。
  *
  * fail-closed 语义：
@@ -333,12 +348,16 @@ export async function completeStorageAudit(
  *     让 dispatcher 后续重新检查引用后再删除
  *   - 不宣称对象已删除（除非 `.remove()` 明确返回无 error）
  *   - 调用方根据返回值决定是否入队 reconciliation
+ *
+ * KZQ-P0-005-e: Exported so the two-stage upload path shares the SAME
+ * compensation function as the single-stage path, preventing drift in
+ * try/catch coverage, fixed log codes, and return-shape contract.
  */
-async function compensateDeleteUploadedObject(
+export async function compensateDeleteUploadedObject(
   client: SupabaseClient<Database>,
   bucket: string,
   path: string,
-): Promise<{ ok: true } | { ok: false }> {
+): Promise<CompensateDeleteResult> {
   try {
     const { error } = await client.storage.from(bucket).remove([path]);
     if (error) {
