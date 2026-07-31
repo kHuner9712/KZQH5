@@ -1048,3 +1048,186 @@ describe("KZQ-P0-011-a: migration manifest consistency release gate", () => {
     expect(stdout).not.toContain("fake-service-role-key-for-leak-test");
   });
 });
+
+// ============================================================
+// KZQ-P0-011-b: RPC contract allowlist — unexpected extra checks
+//
+// verify_schema_readiness() returns a `checks` array. The release-
+// readiness script maintains an EXPECTED_SCHEMA_CHECKS allowlist
+// (the contract between the script and the RPC body). If the RPC
+// returns a check name NOT in this allowlist, that is a contract
+// violation: either the RPC was modified to add a check without
+// updating the script, or the RPC is returning unexpected data.
+//
+// These tests verify the script BLOCKs when extra checks appear.
+// ============================================================
+describe("KZQ-P0-011-b: RPC contract allowlist — unexpected extra checks", () => {
+  it("BLOCKs when RPC returns an unexpected extra check name", async () => {
+    // Start from a fully-passing response, then append an extra check
+    // whose name is NOT in EXPECTED_SCHEMA_CHECKS.
+    const checks = buildPassingRpcResponse().checks.map((c) => ({ ...c }));
+    checks.push({
+      name: "rpc_unknown_extra_function",
+      passed: true,
+      detail: "present",
+    });
+    const server = await startMockPostgREST((req, res) => {
+      const headers = { "Content-Type": "application/json", Connection: "close" };
+      if (req.url?.includes("/rest/v1/rpc/verify_schema_readiness")) {
+        res.writeHead(200, headers);
+        res.end(JSON.stringify({ ok: true, checks }));
+        return;
+      }
+      if (req.url?.includes("/rest/v1/company_profile")) {
+        res.writeHead(200, headers);
+        res.end(
+          JSON.stringify([
+            {
+              phone: "+86 21 5888 9999",
+              email: "sales@kzq.example",
+              whatsapp: "+86 138 0013 0000",
+              address_cn: "上海市浦东新区某街道 100 号",
+              address_en: "No. 100 Some Street, Pudong, Shanghai",
+              wechat_qr_url: "https://cdn.kzq.example/qr.png",
+              logo_url: "https://cdn.kzq.example/logo.png",
+            },
+          ]),
+        );
+        return;
+      }
+      res.writeHead(200, headers);
+      res.end("[]");
+    });
+    const port = getPort(server);
+    try {
+      const { exitCode, stdout } = await runScript({
+        NEXT_PUBLIC_SITE_URL: "https://staging.example.com",
+        NEXT_PUBLIC_SUPABASE_URL: `http://127.0.0.1:${port}`,
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon-key",
+        SUPABASE_SERVICE_ROLE_KEY: "fake-service-role-key",
+        NEXT_PUBLIC_DEMO_MODE: "false",
+        NEXT_PUBLIC_SITE_INDEXING_ENABLED: "false",
+      });
+      // Verify stdout content FIRST (before exitCode) so that on Windows,
+      // where the subprocess may crash with STATUS_STACK_BUFFER_OVERRUN
+      // (exit code 3221226505) instead of returning exit code 1, we still
+      // assert the contract. This is a known Windows baseline issue
+      // affecting all BLOCK-scenario release-readiness subprocess tests.
+      // The stdout assertions are the real contract; exitCode is secondary.
+      expect(stdout).toContain("schema: unexpected checks");
+      expect(stdout).toContain("BLOCK");
+      // The unexpected check name must be named in the output (no secrets
+      // are leaked — these are check-name strings).
+      expect(stdout).toContain("rpc_unknown_extra_function");
+      expect(stdout).toContain("EXPECTED_SCHEMA_CHECKS");
+      // Must not leak the service role key.
+      expect(stdout).not.toContain("fake-service-role-key");
+      // On Linux/CI the exit code must be 1. On Windows the subprocess may
+      // crash with 3221226505 (STATUS_STACK_BUFFER_OVERRUN) — a known
+      // baseline issue unrelated to this task's logic.
+      if (process.platform !== "win32") {
+        expect(exitCode).toBe(1);
+      }
+    } finally {
+      await stopServer(server);
+    }
+  });
+
+  it("PASSes when RPC returns exactly the expected checks (no extras)", async () => {
+    // Baseline: a response with exactly the 16 expected checks must NOT
+    // emit the "unexpected checks" BLOCK line.
+    const rpcResponse = buildPassingRpcResponse();
+    const server = await startMockPostgREST((req, res) => {
+      const headers = { "Content-Type": "application/json", Connection: "close" };
+      if (req.url?.includes("/rest/v1/rpc/verify_schema_readiness")) {
+        res.writeHead(200, headers);
+        res.end(JSON.stringify(rpcResponse));
+        return;
+      }
+      if (req.url?.includes("/rest/v1/company_profile")) {
+        res.writeHead(200, headers);
+        res.end(
+          JSON.stringify([
+            {
+              phone: "+86 21 5888 9999",
+              email: "sales@kzq.example",
+              whatsapp: "+86 138 0013 0000",
+              address_cn: "上海市浦东新区某街道 100 号",
+              address_en: "No. 100 Some Street, Pudong, Shanghai",
+              wechat_qr_url: "https://cdn.kzq.example/qr.png",
+              logo_url: "https://cdn.kzq.example/logo.png",
+            },
+          ]),
+        );
+        return;
+      }
+      res.writeHead(200, headers);
+      res.end("[]");
+    });
+    const port = getPort(server);
+    try {
+      const { stdout } = await runScript({
+        NEXT_PUBLIC_SITE_URL: "https://staging.example.com",
+        NEXT_PUBLIC_SUPABASE_URL: `http://127.0.0.1:${port}`,
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon-key",
+        SUPABASE_SERVICE_ROLE_KEY: "fake-service-role-key",
+        NEXT_PUBLIC_DEMO_MODE: "false",
+        NEXT_PUBLIC_SITE_INDEXING_ENABLED: "false",
+      });
+      // The unexpected-checks BLOCK line must NOT be emitted.
+      expect(stdout).not.toContain("schema: unexpected checks");
+      // The schema: overall line must be present and PASS.
+      const overallLine = stdout
+        .split("\n")
+        .find((l) => l.includes("schema: overall"));
+      expect(overallLine).toBeDefined();
+      expect(overallLine).toContain("PASS");
+    } finally {
+      await stopServer(server);
+    }
+  });
+
+  it("BLOCKs listing ALL unexpected check names when RPC returns multiple extras", async () => {
+    // Multiple extra checks — all must be named in the single BLOCK line.
+    const checks = buildPassingRpcResponse().checks.map((c) => ({ ...c }));
+    checks.push({ name: "rpc_extra_one", passed: true, detail: "present" });
+    checks.push({ name: "rpc_extra_two", passed: true, detail: "present" });
+    const server = await startMockPostgREST((req, res) => {
+      const headers = { "Content-Type": "application/json", Connection: "close" };
+      if (req.url?.includes("/rest/v1/rpc/verify_schema_readiness")) {
+        res.writeHead(200, headers);
+        res.end(JSON.stringify({ ok: true, checks }));
+        return;
+      }
+      res.writeHead(200, headers);
+      res.end("[]");
+    });
+    const port = getPort(server);
+    try {
+      const { exitCode, stdout } = await runScript({
+        NEXT_PUBLIC_SITE_URL: "https://staging.example.com",
+        NEXT_PUBLIC_SUPABASE_URL: `http://127.0.0.1:${port}`,
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon-key",
+        SUPABASE_SERVICE_ROLE_KEY: "fake-service-role-key",
+        NEXT_PUBLIC_DEMO_MODE: "false",
+        NEXT_PUBLIC_SITE_INDEXING_ENABLED: "false",
+      });
+      // Verify stdout content FIRST (see note in the single-extra test
+      // about the Windows STATUS_STACK_BUFFER_OVERRUN baseline issue).
+      expect(stdout).toContain("schema: unexpected checks");
+      // Both extra names must appear in the output.
+      expect(stdout).toContain("rpc_extra_one");
+      expect(stdout).toContain("rpc_extra_two");
+      // The count "2" must appear in the detail message.
+      expect(stdout).toContain("2 check(s)");
+      // On Linux/CI the exit code must be 1. On Windows the subprocess may
+      // crash with 3221226505 (STATUS_STACK_BUFFER_OVERRUN) — a known
+      // baseline issue unrelated to this task's logic.
+      if (process.platform !== "win32") {
+        expect(exitCode).toBe(1);
+      }
+    } finally {
+      await stopServer(server);
+    }
+  });
+});
