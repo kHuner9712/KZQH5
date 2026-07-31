@@ -318,15 +318,22 @@ function checkUrlAndSeo() {
 //   - RATE_LIMIT_FALLBACK_SECRET missing or < 32 chars
 //   - OUTBOX_DISPATCH_SECRET missing or < 16 chars
 //   - Production using loopback Supabase or Site URL
-//   - CSP_ENFORCING=true without nonce-based CSP (Phase 1 hasn't
-//     implemented nonces yet, so enforcing with 'unsafe-inline' is unsafe)
 //
 // In deployment mode, the following conditions WARN:
 //   - READINESS_TOKEN not configured
 //   - All notification providers unconfigured
-//   - CSP still Report-Only (not enforcing)
+//   - CSP public mode still Report-Only (CSP_ENFORCING unset)
 //   - Production indexing still false
 //   - Cannot verify external WAF configuration
+//
+// CSP_ENFORCING=true is ALLOWED (PASS, not BLOCK):
+//   - Admin routes are ALWAYS Report-Only with 'unsafe-inline'
+//     (Next.js 15 App Router internal inline scripts do not accept a
+//     nonce, so nonce-based CSP causes black screen).
+//   - Public routes with CSP_ENFORCING=true enforce img-src,
+//     connect-src, frame-ancestors, object-src directives while
+//     retaining 'unsafe-inline' for script-src (ISR compatibility).
+//   - The operator explicitly opts into this tradeoff.
 //
 // In local development mode, these checks are permissive (PASS or WARN)
 // so they don't block normal development.
