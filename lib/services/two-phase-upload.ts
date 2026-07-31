@@ -45,7 +45,7 @@ import {
   resolvePurposeConfig,
   type StoragePurpose,
 } from "@/lib/services/storage-purpose";
-import { validateMimeType, verifyMagicBytes } from "@/lib/validation/storage";
+import { getExtensionForMimeType, validateMimeType, verifyMagicBytes } from "@/lib/validation/storage";
 import { enqueueStorageCleanup } from "@/lib/services/storage-upload";
 
 // ============================================================
@@ -358,8 +358,14 @@ export async function finalizeTempUpload(
     return { ok: false, code: "MAGIC_BYTES_MISMATCH" };
   }
 
-  // 5. Generate the final object path
-  const ext = getExtensionFromFilename(row.declared_filename);
+  // 5. Generate the final object path.
+  // KZQ-P0-004: The final extension is derived from the server-verified
+  // MIME type (magic bytes verified at step 4), NOT from the user-supplied
+  // filename. The original filename is stored on the temp_uploads row for
+  // display/audit only. This prevents an attacker from controlling the final
+  // object extension via a crafted filename (e.g. "evil.html" with an
+  // image/jpeg MIME would still produce a ".jpg" object).
+  const ext = getExtensionForMimeType(declaredMimeType);
   let finalObjectPath: string;
   if (finalBucket === PRIVATE_ASSETS_BUCKET) {
     finalObjectPath = generatePrivateStoragePath(
@@ -501,12 +507,6 @@ function isValidFilename(filename: string): boolean {
   if (filename.startsWith(".")) return false;
   if (/[\x00-\x1f]/.test(filename)) return false;
   return true;
-}
-
-function getExtensionFromFilename(filename: string): string {
-  const lastDot = filename.lastIndexOf(".");
-  if (lastDot === -1 || lastDot === filename.length - 1) return "";
-  return filename.substring(lastDot + 1).toLowerCase();
 }
 
 async function failFinalize(
