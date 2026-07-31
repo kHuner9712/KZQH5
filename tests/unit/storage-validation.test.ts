@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   extractFileExtension,
   generateStoragePath,
+  getExtensionForMimeType,
   IMAGE_ALLOWED_MIME,
   IMAGE_MAX_SIZE,
   PUBLIC_ASSETS_ALLOWED_MIME,
@@ -497,6 +498,63 @@ describe("Phase 4: storage validation", () => {
     it("returns empty string for no extension", () => {
       expect(extractFileExtension("noextension")).toBe("");
       expect(extractFileExtension("")).toBe("");
+    });
+  });
+
+  // ----------------------------------------------------------
+  // 8b. KZQ-P0-004: getExtensionForMimeType
+  // ----------------------------------------------------------
+  // The final object extension MUST come from the server-verified MIME
+  // type, not from the user-supplied filename. This is the shared
+  // mapping used by both the single-stage and two-stage upload paths.
+  describe("getExtensionForMimeType", () => {
+    it("returns canonical extension for each allowed MIME type", () => {
+      expect(getExtensionForMimeType("application/pdf")).toBe(".pdf");
+      expect(getExtensionForMimeType("image/jpeg")).toBe(".jpg");
+      expect(getExtensionForMimeType("image/png")).toBe(".png");
+      expect(getExtensionForMimeType("image/webp")).toBe(".webp");
+    });
+
+    it("canonicalizes JPEG to .jpg (not .jpeg)", () => {
+      // .jpg is the canonical shorter form; both .jpg and .jpeg are
+      // ACCEPTED as consistent by validateMimeExtensionConsistency, but
+      // the final object path uses .jpg.
+      expect(getExtensionForMimeType("image/jpeg")).toBe(".jpg");
+      expect(getExtensionForMimeType("image/jpeg")).not.toBe(".jpeg");
+    });
+
+    it("is case-insensitive", () => {
+      expect(getExtensionForMimeType("IMAGE/JPEG")).toBe(".jpg");
+      expect(getExtensionForMimeType("Application/PDF")).toBe(".pdf");
+      expect(getExtensionForMimeType("Image/PNG")).toBe(".png");
+    });
+
+    it("trims whitespace", () => {
+      expect(getExtensionForMimeType("  image/jpeg  ")).toBe(".jpg");
+      expect(getExtensionForMimeType("\tapplication/pdf\n")).toBe(".pdf");
+    });
+
+    it("returns empty string for empty or null MIME", () => {
+      expect(getExtensionForMimeType("")).toBe("");
+      expect(getExtensionForMimeType(null as unknown as string)).toBe("");
+      expect(getExtensionForMimeType(undefined as unknown as string)).toBe("");
+    });
+
+    it("returns empty string for unknown MIME type", () => {
+      // Unknown MIME types should never reach this function (the allowlist
+      // + magic-bytes checks run first), but returning "" is safe —
+      // generatePrivateStoragePath handles an empty extension gracefully.
+      expect(getExtensionForMimeType("text/html")).toBe("");
+      expect(getExtensionForMimeType("image/svg+xml")).toBe("");
+      expect(getExtensionForMimeType("application/octet-stream")).toBe("");
+    });
+
+    it("extension always starts with a dot", () => {
+      for (const mime of PUBLIC_ASSETS_ALLOWED_MIME) {
+        const ext = getExtensionForMimeType(mime);
+        expect(ext.startsWith(".")).toBe(true);
+        expect(ext.length).toBeGreaterThan(1);
+      }
     });
   });
 

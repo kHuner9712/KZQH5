@@ -22,6 +22,7 @@ import type { AdminWriteErrorCode } from "@/lib/services/admin-write-boundary";
 import { createAdminClient } from "@/lib/supabase/admin";
 import {
   extractFileExtension,
+  getExtensionForMimeType,
   sanitizeStoragePath,
   validateFileSize,
   validateMimeExtensionConsistency,
@@ -92,14 +93,6 @@ const MIME_MAX_SIZE: Readonly<Record<string, number>> = {
 };
 
 const PRIVATE_ASSETS_ALLOWED_MIME: readonly string[] = Object.keys(MIME_MAX_SIZE);
-
-/** MIME → 默认扩展名（文件名无可用扩展名时由服务端决定）。 */
-const MIME_DEFAULT_EXT: Readonly<Record<string, string>> = {
-  "image/jpeg": ".jpg",
-  "image/png": ".png",
-  "image/webp": ".webp",
-  "application/pdf": ".pdf",
-};
 
 export interface UploadFileBytes {
   /** 实际文件字节（完整内容；Magic Bytes 校验读取前若干字节）。 */
@@ -178,7 +171,14 @@ function validateUploadFile(input: {
     return { ok: false, code: "ADMIN_WRITE_UNSUPPORTED_MEDIA" };
   }
 
-  // 4. 扩展名 ↔ MIME 一致性；无扩展名时使用 MIME 默认扩展名
+  // 4. KZQ-P0-004: Final extension comes from the verified MIME type,
+  //    NOT from the user-supplied filename. The filename extension is
+  //    still cross-checked for consistency (defense in depth: a mismatch
+  //    is rejected), but the final object path uses the MIME-canonical
+  //    extension. This prevents an attacker from controlling the final
+  //    object extension via a crafted filename (e.g. "evil.html" with
+  //    an image/jpeg MIME is rejected at the consistency check; a
+  //    filename without an extension still produces a ".jpg" object).
   const fileExt = extractFileExtension(input.filename);
   if (fileExt) {
     const consistency = validateMimeExtensionConsistency(mimeType, fileExt);
@@ -186,7 +186,7 @@ function validateUploadFile(input: {
       return { ok: false, code: "ADMIN_WRITE_BAD_REQUEST" };
     }
   }
-  const ext = fileExt || MIME_DEFAULT_EXT[mimeType] || "";
+  const ext = getExtensionForMimeType(mimeType);
 
   return { ok: true, mimeType, ext };
 }

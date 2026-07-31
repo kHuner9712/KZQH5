@@ -63,6 +63,45 @@ const MIME_EXTENSION_MAP: Readonly<Record<string, readonly string[]>> = {
 };
 
 /**
+ * KZQ-P0-004: Canonical extension for each verified MIME type.
+ *
+ * This is the SINGLE source of truth for the final object extension.
+ * The extension is derived from the server-verified MIME type (after
+ * magic-bytes verification), NEVER from the user-supplied filename.
+ *
+ * The original filename is only used for display/audit; the final
+ * Storage object path always uses the extension below.
+ *
+ * For JPEG we canonicalize to ".jpg" (shorter, conventional).
+ */
+const MIME_CANONICAL_EXT: Readonly<Record<string, string>> = {
+  "application/pdf": ".pdf",
+  "image/jpeg": ".jpg",
+  "image/png": ".png",
+  "image/webp": ".webp",
+};
+
+/**
+ * KZQ-P0-004: Returns the canonical file extension for a given MIME type.
+ *
+ * The caller MUST have already verified the MIME type via:
+ *   1. `validateMimeType` (allowlist check)
+ *   2. `verifyMagicBytes` (content matches declared MIME)
+ *
+ * Returns the extension WITH a leading dot (e.g. ".pdf"), lowercased.
+ * Returns "" if the MIME type is not in the canonical map (should not
+ * happen when the allowlist + magic-bytes checks have run first, but
+ * the empty string is safe — `generatePrivateStoragePath` handles it).
+ *
+ * Shared by both the single-stage path (`storage-upload.ts`) and the
+ * two-stage path (`two-phase-upload.ts`) so they cannot drift.
+ */
+export function getExtensionForMimeType(mimeType: string): string {
+  if (!mimeType) return "";
+  return MIME_CANONICAL_EXT[mimeType.toLowerCase().trim()] ?? "";
+}
+
+/**
  * Magic bytes (file signatures) for each allowed MIME type.
  * The key is the MIME type; the value is an array of byte sequences
  * where ANY match is sufficient (e.g., JPEG has FFD8FF variants).

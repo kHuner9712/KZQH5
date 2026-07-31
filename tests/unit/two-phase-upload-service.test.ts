@@ -699,5 +699,172 @@ describe("finalizeTempUpload — strict complete RPC parsing (KZQ-P0-001)", () =
 
     // already_finalized returns ok:true → treated as success
     expect(result.ok).toBe(true);
+
+  // KZQ-P0-004: Final extension from verified MIME, not filename.
+  //
+  // These tests verify that the final Storage object path uses the
+  // extension derived from the server-verified MIME type (magic bytes
+  // verified), NOT the user-supplied filename. The temp_uploads row
+  // stores declared_filename for display/audit only.
+  //
+  // We use final_bucket="private-assets" so the flow stops at the
+  // copy step (no cross-bucket move), and we assert the copy
+  // destination path ends with the MIME-canonical extension.
+  // ============================================================
+  describe("KZQ-P0-004: MIME-derived extension", () => {
+    // Valid magic bytes for each supported MIME type
+    const JPEG_MAGIC = new Uint8Array([0xff, 0xd8, 0xff, 0xe0]);
+    const PNG_MAGIC = new Uint8Array([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+    ]);
+    const WEBP_MAGIC = new Uint8Array([
+      0x52, 0x49, 0x46, 0x46, 0x00, 0x00, 0x00, 0x00,
+      0x57, 0x45, 0x42, 0x50,
+    ]);
+    const PDF_MAGIC = new Uint8Array([
+      0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x35,
+    ]);
+
+    /**
+     * Helper: run finalize up to the copy step and return the
+     * destination path that was passed to copy(). The copy mock
+     * resolves successfully, and the flow continues to delete the
+     * temp object and call the complete RPC.
+     */
+    async function runFinalizeUntilCopy(row: Record<string, unknown>): Promise<string> {
+      mockRpc.mockResolvedValueOnce({ data: { ok: true, row }, error: null });
+      mockList.mockResolvedValueOnce({
+        data: [{ name: "test", metadata: { size: row.declared_size } }],
+        error: null,
+      });
+      mockCreateSignedUrl.mockResolvedValueOnce({
+        data: { signedUrl: "https://supabase.co/signed/test" },
+        error: null,
+      });
+
+      const magicBytes = (
+        row.declared_mime_type === "image/jpeg" ? JPEG_MAGIC
+        : row.declared_mime_type === "image/png" ? PNG_MAGIC
+        : row.declared_mime_type === "image/webp" ? WEBP_MAGIC
+        : PDF_MAGIC
+      );
+      const fetchMock = vi.fn().mockResolvedValueOnce({
+        ok: true,
+        arrayBuffer: async () => magicBytes.buffer.slice(0, magicBytes.byteLength),
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      mockCopy.mockResolvedValueOnce({ error: null });
+      mockRemove.mockResolvedValue({ data: null, error: null });
+      mockRpc.mockResolvedValueOnce({ data: { ok: true }, error: null });
+
+      const { finalizeTempUpload } = await import("@/lib/services/two-phase-upload");
+      await finalizeTempUpload({
+        uploadToken: "abc12345-1234-1234-1234-123456789abc",
+      });
+
+      vi.unstubAllGlobals();
+
+      // copy was called with (source, destination); return destination
+      expect(mockCopy).toHaveBeenCalledTimes(1);
+      return mockCopy.mock.calls[0][1] as string;
+    }
+
+    it("uses .jpg from MIME even when filename has .jpeg", async () => {
+      const destPath = await runFinalizeUntilCopy({
+        ...validClaimRow,
+        final_bucket: "private-assets",
+        declared_filename: "photo.jpeg",
+        declared_mime_type: "image/jpeg",
+      });
+      expect(destPath).toMatch(/\.jpg$/);
+      expect(destPath).not.toMatch(/\.jpeg$/);
+    });
+
+    it("uses .jpg from MIME when filename has wrong extension (.html)", async () => {
+      // An attacker might name a JPEG file "evil.html" to try to get
+      // an HTML object served. The two-stage path previously used
+      // getExtensionFromFilename(declared_filename) which would have
+      // produced "html". Now it uses the verified MIME → ".jpg".
+      const destPath = await runFinalizeUntilCopy({
+        ...validClaimRow,
+        final_bucket: "private-assets",
+        declared_filename: "evil.html",
+        declared_mime_type: "image/jpeg",
+      });
+      expect(destPath).toMatch(/\.jpg$/);
+      expect(destPath).not.toMatch(/\.html$/);
+    });
+
+    it("uses .jpg from MIME when filename has no extension", async () => {
+      const destPath = await runFinalizeUntilCopy({
+        ...validClaimRow,
+        final_bucket: "private-assets",
+        declared_filename: "noextension",
+        declared_mime_type: "image/jpeg",
+      });
+      expect(destPath).toMatch(/\.jpg$/);
+    });
+
+    it("uses .jpg from MIME when filename has double extension", async () => {
+      // e.g. "archive.pdf.jpg" — old code took the last extension
+      // (".jpg"); new code still produces ".jpg" from MIME, so the
+      // behavior is consistent regardless of how many dots the
+      // filename has.
+      const destPath = await runFinalizeUntilCopy({
+        ...validClaimRow,
+        final_bucket: "private-assets",
+        declared_filename: "archive.pdf.jpg",
+        declared_mime_type: "image/jpeg",
+      });
+      expect(destPath).toMatch(/\.jpg$/);
+    });
+
+    it("uses .png from MIME for PNG files", async () => {
+      const destPath = await runFinalizeUntilCopy({
+        ...validClaimRow,
+        final_bucket: "private-assets",
+        declared_filename: "screenshot.png",
+        declared_mime_type: "image/png",
+      });
+      expect(destPath).toMatch(/\.png$/);
+    });
+
+    it("uses .webp from MIME for WebP files", async () => {
+      const destPath = await runFinalizeUntilCopy({
+        ...validClaimRow,
+        final_bucket: "private-assets",
+        declared_filename: "image.webp",
+        declared_mime_type: "image/webp",
+      });
+      expect(destPath).toMatch(/\.webp$/);
+    });
+
+    it("uses .pdf from MIME for PDF files", async () => {
+      const destPath = await runFinalizeUntilCopy({
+        ...validClaimRow,
+        final_bucket: "private-assets",
+        declared_filename: "catalog.pdf",
+        declared_mime_type: "application/pdf",
+      });
+      expect(destPath).toMatch(/\.pdf$/);
+    });
+
+    it("ignores filename extension completely — MIME is the sole source", async () => {
+      // Even if the filename says ".png", the verified MIME says
+      // "image/jpeg", so the final object is ".jpg". (In practice the
+      // magic bytes check would reject a PNG-content file claiming to
+      // be JPEG, but this test isolates the extension-derivation
+      // logic: the filename extension is NEVER used for the path.)
+      const destPath = await runFinalizeUntilCopy({
+        ...validClaimRow,
+        final_bucket: "private-assets",
+        declared_filename: "misnamed.png",
+        declared_mime_type: "image/jpeg",
+      });
+      expect(destPath).toMatch(/\.jpg$/);
+      expect(destPath).not.toMatch(/\.png$/);
+    });
+>>>>>>> 305304a (feat(security): derive final object extension from verified MIME (KZQ-P0-004))
   });
 });
