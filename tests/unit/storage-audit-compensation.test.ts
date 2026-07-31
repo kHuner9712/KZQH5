@@ -55,6 +55,15 @@ vi.mock("@/lib/validation/storage", async (importOriginal) => {
   return {
     ...actual,
     // Skip real Magic Bytes / MIME validation in unit tests.
+    // KZQ-P0-005-a: validateUploadFile is now the shared entry point
+    // used by both single-stage and two-stage paths. We mock it directly
+    // so the audit saga tests focus on audit/compensation behavior, not
+    // on validation internals.
+    validateUploadFile: () => ({
+      ok: true,
+      mimeType: "image/png",
+      ext: ".png",
+    }),
     verifyMagicBytes: () => ({ ok: true }),
     validateMimeType: () => ({ ok: true }),
     validateFileSize: () => ({ ok: true }),

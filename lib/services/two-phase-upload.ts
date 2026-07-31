@@ -49,7 +49,7 @@ import {
   resolvePurposeConfig,
   type StoragePurpose,
 } from "@/lib/services/storage-purpose";
-import { getExtensionForMimeType, validateMimeType, verifyMagicBytes } from "@/lib/validation/storage";
+import { getExtensionForMimeType, validateFileSize, validateMimeType, verifyMagicBytes } from "@/lib/validation/storage";
 import { enqueueStorageCleanup } from "@/lib/services/storage-upload";
 
 // ============================================================
@@ -187,9 +187,15 @@ export async function authorizeTempUpload(
     return { ok: false, code: "MIME_NOT_ALLOWED_FOR_PURPOSE" };
   }
 
-  // 3. Validate size against per-MIME two-phase cap
+  // 3. Validate size against per-MIME two-phase cap.
+  // KZQ-P0-005-a: Uses the shared validateFileSize from lib/validation/storage.ts
+  // so single-stage and two-stage size checks share the same implementation.
   const maxSize = TWO_PHASE_MAX_SIZE[input.mimeType];
-  if (!maxSize || input.size <= 0 || input.size > maxSize) {
+  if (!maxSize) {
+    return { ok: false, code: "SIZE_EXCEEDS_LIMIT" };
+  }
+  const sizeValidation = validateFileSize(input.size, maxSize);
+  if (!sizeValidation.ok) {
     return { ok: false, code: "SIZE_EXCEEDS_LIMIT" };
   }
 
