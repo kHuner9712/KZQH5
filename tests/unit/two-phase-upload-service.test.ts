@@ -1063,4 +1063,84 @@ describe("finalizeTempUpload", () => {
       expect(fnHeader).toMatch(/Promise<EnqueueCleanupResult>/);
     });
   });
+
+  // ============================================================
+  // KZQ-P0-005-g: Unified storage object reference registration
+  // ------------------------------------------------------------
+  // AUDIT RESULT: no drift existed. Real-code verification confirms
+  // that NEITHER upload path registers `storage_object_ref` rows in
+  // the application layer:
+  //   - single-stage `storage-upload.ts` uploads the object then
+  //     hands off to business-table save RPCs (catalog/certificate/
+  //     product asset flows) which call `register_storage_object_ref`
+  //     in the DATABASE layer (migration 20260725250000...).
+  //   - two-stage `two-phase-upload.ts` finalize moves the object
+  //     then calls `complete_temp_upload_finalize`, which explicitly
+  //     does NOT insert a storage_object_ref (migration
+  //     20260729020000...:315-319). Ref registration happens later
+  //     when the caller saves the business entity.
+  //
+  // The previous docblock at two-phase-upload.ts:15 claimed the
+  // finalize path "registers a storage_object_ref" — that comment
+  // was stale and has been corrected. These tests lock the
+  // no-app-layer-ref-registration contract so future drift is
+  // caught by CI.
+  // ============================================================
+  describe("KZQ-P0-005-g: unified storage object ref registration (no app-layer drift)", () => {
+    const TWO_PHASE_SRC = "lib/services/two-phase-upload.ts";
+    const SINGLE_STAGE_SRC = "lib/services/storage-upload.ts";
+
+    it("two-phase-upload.ts does NOT call register_storage_object_ref RPC", async () => {
+      const { readFileSync } = await import("node:fs");
+      const src = readFileSync(TWO_PHASE_SRC, "utf8");
+      // The application layer must not invoke the ref-registration
+      // RPC directly — that is the database layer's responsibility.
+      expect(src).not.toMatch(/register_storage_object_ref/);
+    });
+
+    it("two-phase-upload.ts does NOT insert into storage_object_refs table", async () => {
+      const { readFileSync } = await import("node:fs");
+      const src = readFileSync(TWO_PHASE_SRC, "utf8");
+      // No direct table insert into the refs table.
+      expect(src).not.toMatch(/\.from\(\s*["']storage_object_refs["']/);
+    });
+
+    it("storage-upload.ts does NOT call register_storage_object_ref RPC", async () => {
+      const { readFileSync } = await import("node:fs");
+      const src = readFileSync(SINGLE_STAGE_SRC, "utf8");
+      // The single-stage path must also not invoke the ref-registration
+      // RPC directly — refs are registered by business-table RPCs.
+      expect(src).not.toMatch(/register_storage_object_ref/);
+    });
+
+    it("storage-upload.ts does NOT insert into storage_object_refs table", async () => {
+      const { readFileSync } = await import("node:fs");
+      const src = readFileSync(SINGLE_STAGE_SRC, "utf8");
+      expect(src).not.toMatch(/\.from\(\s*["']storage_object_refs["']/);
+    });
+
+    it("two-phase-upload.ts docblock does NOT claim the finalize path registers a storage_object_ref", async () => {
+      const { readFileSync } = await import("node:fs");
+      const src = readFileSync(TWO_PHASE_SRC, "utf8");
+      // The stale comment "registers a storage_object_ref, completes
+      // the RPC" must be gone. The corrected comment must state that
+      // ref registration is the database layer's responsibility.
+      expect(src).not.toMatch(/registers a storage_object_ref/);
+      // The corrected comment must explicitly disclaim app-layer
+      // ref registration so the contract is documented in code.
+      expect(src).toMatch(
+        /application layer does NOT register\s+storage_object_refs/i,
+      );
+    });
+
+    it("two-phase-upload.ts docblock references the migration that defines ref registration", async () => {
+      const { readFileSync } = await import("node:fs");
+      const src = readFileSync(TWO_PHASE_SRC, "utf8");
+      // Pointing readers at the migration that wires refs into the
+      // asset lifecycle prevents the comment from drifting again.
+      expect(src).toMatch(
+        /20260725250000_wire_storage_object_refs_into_asset_lifecycle\.sql/,
+      );
+    });
+  });
 });
