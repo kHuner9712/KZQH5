@@ -980,3 +980,71 @@ describe("KZQ-P0-010: ALLOW_SCHEMA_COMPATIBILITY_FALLBACK release gate", () => {
     expect(line!.toUpperCase()).toContain("PASS");
   });
 });
+
+// ============================================================
+// KZQ-P0-011-a: Migration SHA-256 manifest consistency release gate
+//
+// Verifies the release-readiness script invokes
+// scripts/check-migration-immutability.mjs and surfaces its result:
+//   - clean repo (manifest matches disk) -> PASS line emitted
+//   - the check label "migrations: manifest consistency" is present
+//   - the migration count appears in the detail
+//
+// This test runs against the real on-disk migrations + manifest (no
+// mock) because the immutability check is a repo-state assertion, not
+// a Supabase/network check. The clean-repo PASS is the baseline; a
+// tampered-manifest BLOCK is covered by check-migration-immutability's
+// own unit tests and is not duplicated here (would require writing a
+// corrupted manifest to disk, which is unsafe in a shared workspace).
+// ============================================================
+describe("KZQ-P0-011-a: migration manifest consistency release gate", () => {
+  it("PASSes when manifest matches on-disk migrations (clean repo baseline)", async () => {
+    const { stdout } = await runScript({
+      NEXT_PUBLIC_SITE_URL: "https://staging.example.com",
+      NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:1",
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon-key",
+      NEXT_PUBLIC_DEMO_MODE: "false",
+      NEXT_PUBLIC_SITE_INDEXING_ENABLED: "false",
+    });
+    const line = stdout
+      .split("\n")
+      .find((l) => l.includes("migrations: manifest consistency"));
+    expect(line).toBeTruthy();
+    expect(line!.toUpperCase()).toContain("PASS");
+    // The detail message should mention the migration count.
+    expect(line).toMatch(/\d+\s+migration/i);
+  });
+
+  it("emits the manifest consistency check AFTER the files-present check", async () => {
+    const { stdout } = await runScript({
+      NEXT_PUBLIC_SITE_URL: "https://staging.example.com",
+      NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:1",
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon-key",
+      NEXT_PUBLIC_DEMO_MODE: "false",
+      NEXT_PUBLIC_SITE_INDEXING_ENABLED: "false",
+    });
+    const filesPresentIdx = stdout.indexOf("migrations: files present");
+    const manifestIdx = stdout.indexOf("migrations: manifest consistency");
+    expect(filesPresentIdx).toBeGreaterThan(-1);
+    expect(manifestIdx).toBeGreaterThan(-1);
+    // Manifest check must come after files-present check.
+    expect(manifestIdx).toBeGreaterThan(filesPresentIdx);
+  });
+
+  it("does NOT leak secrets in the manifest consistency output", async () => {
+    const { stdout } = await runScript({
+      NEXT_PUBLIC_SITE_URL: "https://staging.example.com",
+      NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:1",
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon-key",
+      SUPABASE_SERVICE_ROLE_KEY: "fake-service-role-key-for-leak-test",
+      NEXT_PUBLIC_DEMO_MODE: "false",
+      NEXT_PUBLIC_SITE_INDEXING_ENABLED: "false",
+    });
+    const line = stdout
+      .split("\n")
+      .find((l) => l.includes("migrations: manifest consistency"));
+    expect(line).toBeTruthy();
+    // The immutability subprocess output must not contain the key.
+    expect(stdout).not.toContain("fake-service-role-key-for-leak-test");
+  });
+});

@@ -30,7 +30,7 @@
 //     objects are NEVER printed. Only fixed error codes + coarse cause.
 // ============================================================
 
-import { execSync } from "node:child_process";
+import { execSync, spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 
 // ---------- Argument parsing ----------
@@ -740,6 +740,98 @@ function validateRpcResponse(body) {
   return checks;
 }
 
+async function checkMigrationManifestConsistency() {
+  // --- Migration files present locally ---
+  // We cannot execute migrations; we only verify the files exist so the
+  // runbook can reference them. This is a repo-state check, not a schema
+  // check. It runs BEFORE the Supabase connection check so manifest drift
+  // is caught even when the database is unreachable.
+  try {
+    const migration1 = readFileSync(
+      "supabase/migrations/20260719090000_catalog_center_fields.sql",
+      { encoding: "utf-8" },
+    );
+    const migration2 = readFileSync(
+      "supabase/migrations/20260721000000_catalog_viewer_analytics_events.sql",
+      { encoding: "utf-8" },
+    );
+    const migration7 = readFileSync(
+      "supabase/migrations/20260724160000_schema_verification_rpc.sql",
+      { encoding: "utf-8" },
+    );
+    if (
+      migration1.includes("catalog_topic_id") &&
+      migration2.includes("catalog_open") &&
+      migration7.includes("verify_schema_readiness")
+    ) {
+      pass("migrations: files present", "catalog + schema-verification migration files found");
+    } else {
+      warn("migrations: files present", "files exist but content unexpected");
+    }
+  } catch {
+    block("migrations: files present", "required migration files missing from repo");
+  }
+
+  // --- Migration SHA-256 manifest consistency (KZQ-P0-011-a) ---
+  // Verifies that docs/MIGRATION_SHA256_MANIFEST.txt is consistent with
+  // the on-disk migration files: every registered hash matches, no
+  // unregistered migration files exist, timestamps are strictly
+  // monotonic. This catches tampering with frozen migrations and
+  // manifest/disk drift that the file-presence check above cannot detect.
+  //
+  // We invoke scripts/check-migration-immutability.mjs in default verify
+  // mode as a subprocess and interpret its exit code + stdout. We do NOT
+  // run --verify-against-ref because that requires a full clone
+  // (fetch-depth: 0) which is not available in all release-readiness
+  // invocation contexts (e.g. local pre-deploy checks). CI runs the
+  // ref-anchored check separately in its own workflow step.
+  //
+  // The subprocess output is captured and emitted verbatim (it contains
+  // only fixed error codes and file names — no secrets).
+  try {
+    const result = spawnSync(
+      process.execPath,
+      ["scripts/check-migration-immutability.mjs"],
+      {
+        encoding: "utf-8",
+        cwd: process.cwd(),
+        timeout: 30_000,
+      },
+    );
+    const stdout = (result.stdout || "").trim();
+    const stderr = (result.stderr || "").trim();
+    const combined = [stdout, stderr].filter(Boolean).join("\n");
+
+    if (result.status === 0) {
+      // Extract the count from the PASS line for a richer detail message.
+      // Expected formats:
+      //   "PASS: N frozen migration(s) verified. ..." (default verify mode)
+      //   "PASS: N migration(s) verified unchanged ..." (--verify-against-ref)
+      const match = /PASS:\s+(\d+)/i.exec(stdout);
+      const count = match ? match[1] : "?";
+      pass(
+        "migrations: manifest consistency",
+        `${count} migration(s) verified — every registered SHA-256 matches disk, no unregistered files, timestamps monotonic`,
+      );
+    } else {
+      // Exit code 1 = BLOCK (tampering, missing manifest, unregistered
+      // file, non-monotonic timestamp, duplicate, parse error).
+      block(
+        "migrations: manifest consistency",
+        combined || `immutability check exited with code ${result.status} (no output)`,
+      );
+    }
+  } catch (err) {
+    // spawnSync itself threw (e.g. ENOENT if node binary is missing, or
+    // the immutability script path is wrong). This is an infrastructure
+    // failure, not a schema failure, but we cannot claim readiness.
+    block(
+      "migrations: manifest consistency",
+      `MIGRATION_IMMUTABILITY_SPAWN_FAILED — could not invoke check-migration-immutability.mjs`,
+    );
+  }
+}
+
 async function checkSupabaseSchema() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -765,36 +857,6 @@ async function checkSupabaseSchema() {
     return;
   } else {
     pass("supabase: service role", "configured (server-side)");
-  }
-
-  // --- Migration files present locally ---
-  // We cannot execute migrations; we only verify the files exist so the
-  // runbook can reference them. This is a repo-state check, not a schema
-  // check.
-  try {
-    const migration1 = readFileSync(
-      "supabase/migrations/20260719090000_catalog_center_fields.sql",
-      { encoding: "utf-8" },
-    );
-    const migration2 = readFileSync(
-      "supabase/migrations/20260721000000_catalog_viewer_analytics_events.sql",
-      { encoding: "utf-8" },
-    );
-    const migration7 = readFileSync(
-      "supabase/migrations/20260724160000_schema_verification_rpc.sql",
-      { encoding: "utf-8" },
-    );
-    if (
-      migration1.includes("catalog_topic_id") &&
-      migration2.includes("catalog_open") &&
-      migration7.includes("verify_schema_readiness")
-    ) {
-      pass("migrations: files present", "catalog + schema-verification migration files found");
-    } else {
-      warn("migrations: files present", "files exist but content unexpected");
-    }
-  } catch {
-    block("migrations: files present", "required migration files missing from repo");
   }
 
   // --- Schema verification via RPC ---
@@ -1085,6 +1147,7 @@ async function main() {
   checkGitAndBuild();
   checkUrlAndSeo();
   checkSecurityAndOperations();
+  await checkMigrationManifestConsistency();
   await checkSupabaseSchema();
   await checkBusinessContent();
 
