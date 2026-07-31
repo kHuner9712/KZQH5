@@ -215,8 +215,13 @@ function computeSha256Hex(bytes: Uint8Array): string {
  *   2. 才能执行实际 Storage 上传/删除
  *   3. 操作结束后调用 completeStorageAudit
  *   4. 若 completeStorageAudit 失败 → 补偿删除已上传对象（上传场景）
+ *
+ * KZQ-P0-005-c: Exported so the two-stage upload path can share the
+ * SAME fail-closed audit saga as the single-stage path. Both paths
+ * record a pending `admin_storage_operations` row BEFORE the object
+ * operation and complete it AFTER, preventing drift.
  */
-type AuditStartedResult =
+export type AuditStartedResult =
   | { ok: true; operationId: string }
   | { ok: false; code: AdminWriteErrorCode };
 
@@ -227,7 +232,7 @@ type AuditStartedResult =
  * fail-closed：若审计开始失败，返回 { ok: false }，调用方必须 NOT 执行
  * 实际业务操作。这避免「业务操作成功但审计缺失」的不一致状态。
  */
-async function recordStorageAuditStarted(input: {
+export async function recordStorageAuditStarted(input: {
   client: SupabaseClient<Database>;
   actorId?: string | null;
   actorRole?: string | null;
@@ -277,7 +282,7 @@ async function recordStorageAuditStarted(input: {
  * fail-closed 语义：若完成审计失败，调用方必须执行补偿（删除已上传对象
  * 或重新加入 cleanup queue），并返回错误而非沉默成功。
  */
-type AuditCompleteResult =
+export type AuditCompleteResult =
   | { ok: true }
   | { ok: false; code: AdminWriteErrorCode };
 
@@ -287,7 +292,7 @@ type AuditCompleteResult =
  * fail-closed：返回结果给调用方，调用方在失败时执行补偿。
  * 不再静默吞错。
  */
-async function completeStorageAudit(
+export async function completeStorageAudit(
   client: SupabaseClient<Database>,
   operationId: string,
   success: boolean,

@@ -368,7 +368,13 @@ describe("finalizeTempUpload", () => {
       });
       vi.stubGlobal("fetch", fetchMock);
 
+      // KZQ-P0-005-c: audit-start RPC (record_storage_operation_started)
+      // returns the operation ID string. Must succeed before copy.
+      mockRpc.mockResolvedValueOnce({ data: "audit-op-1", error: null });
       mockCopy.mockResolvedValueOnce({ error: null });
+      // KZQ-P0-005-c/d: audit-complete RPC (complete_storage_operation)
+      // must succeed so the saga doesn't compensate-delete the final object.
+      mockRpc.mockResolvedValueOnce({ data: null, error: null });
       mockRemove.mockResolvedValue({ data: null, error: null });
       mockRpc.mockResolvedValueOnce({ data: { ok: true }, error: null });
 
@@ -589,6 +595,192 @@ describe("finalizeTempUpload", () => {
       );
       expect(privateMatch).not.toBeNull();
       expect(publicMatch).not.toBeNull();
+    });
+  });
+
+  // ============================================================
+  // KZQ-P0-005-c: Unified audit-start (fail-closed saga)
+  // ------------------------------------------------------------
+  // The two-stage finalize path now shares the SAME fail-closed
+  // audit saga as the single-stage path. It creates a pending
+  // admin_storage_operations row (via record_storage_operation_started
+  // RPC) BEFORE the object is moved to its final path, and completes
+  // it (via complete_storage_operation RPC) AFTER the move succeeds.
+  //
+  // These tests verify the saga behavior with mocked Supabase:
+  //   1. audit-start failure → finalize aborts (no copy)
+  //   2. copy failure → audit marked as failed
+  //   3. audit-complete failure after successful copy → compensates
+  //      by deleting the final object + returns error
+  //   4. successful saga → both audit RPCs called, finalize succeeds
+  // ============================================================
+  describe("KZQ-P0-005-c: unified audit-start saga", () => {
+    const JPEG_MAGIC = new Uint8Array([0xff, 0xd8, 0xff, 0xe0]);
+    const privateRow = {
+      id: "abc12345-1234-1234-1234-123456789abc",
+      object_path: "temp/abc12345-1234-1234-1234-123456789abc/test.jpg",
+      declared_mime_type: "image/jpeg",
+      declared_size: 1024,
+      declared_filename: "test.jpg",
+      final_bucket: "private-assets",
+      final_category: "products",
+      actor_id: "admin-uuid-1",
+      actor_role: "admin",
+    };
+
+    /**
+     * Helper: mock the pre-audit steps (claim, list, signed URL,
+     * magic bytes fetch) so the flow reaches audit-start.
+     */
+    function mockPreAuditSteps(row: Record<string, unknown>) {
+      mockRpc.mockResolvedValueOnce({ data: { ok: true, row }, error: null });
+      mockList.mockResolvedValueOnce({
+        data: [{ name: "test", metadata: { size: row.declared_size } }],
+        error: null,
+      });
+      mockCreateSignedUrl.mockResolvedValueOnce({
+        data: { signedUrl: "https://supabase.co/signed/test" },
+        error: null,
+      });
+      const fetchMock = vi.fn().mockResolvedValueOnce({
+        ok: true,
+        arrayBuffer: async () => JPEG_MAGIC.buffer.slice(0, JPEG_MAGIC.byteLength),
+      });
+      vi.stubGlobal("fetch", fetchMock);
+    }
+
+    it("audit-start failure → finalize aborts before copy (fail-closed)", async () => {
+      mockPreAuditSteps(privateRow);
+      // audit-start RPC returns error
+      mockRpc.mockResolvedValueOnce({ data: null, error: { message: "rpc down" } });
+      // failFinalize RPC
+      mockRpc.mockResolvedValueOnce({ data: { ok: true }, error: null });
+
+      const { finalizeTempUpload } = await import("@/lib/services/two-phase-upload");
+      const result = await finalizeTempUpload({
+        uploadToken: "abc12345-1234-1234-1234-123456789abc",
+      });
+      vi.unstubAllGlobals();
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.code).toBe("ADMIN_WRITE_FAILED");
+      }
+      // copy MUST NOT have been called (fail-closed)
+      expect(mockCopy).not.toHaveBeenCalled();
+    });
+
+    it("copy failure → audit marked as failed before compensation", async () => {
+      mockPreAuditSteps(privateRow);
+      // audit-start succeeds, returns operation ID
+      mockRpc.mockResolvedValueOnce({ data: "audit-op-fail", error: null });
+      // copy fails
+      mockCopy.mockResolvedValueOnce({ error: { message: "storage error" } });
+      // audit-complete(false) — must be called
+      mockRpc.mockResolvedValueOnce({ data: null, error: null });
+      // failFinalize RPC
+      mockRpc.mockResolvedValueOnce({ data: { ok: true }, error: null });
+      // NOTE: enqueueStorageCleanup is mocked at module level (vi.mock) and
+      // does NOT call client.rpc, so no RPC mock is needed for it here.
+      // Adding an unconsumed mockResolvedValueOnce would bleed into the
+      // next test because vi.clearAllMocks() only clears history, not
+      // the mock implementation queue.
+
+      const { finalizeTempUpload } = await import("@/lib/services/two-phase-upload");
+      const result = await finalizeTempUpload({
+        uploadToken: "abc12345-1234-1234-1234-123456789abc",
+      });
+      vi.unstubAllGlobals();
+
+      expect(result.ok).toBe(false);
+      expect(result.code).toBe("COPY_FAILED");
+      // Verify audit-complete(false) was called via RPC
+      const completeCall = mockRpc.mock.calls.find(
+        (call) => call[0] === "complete_storage_operation",
+      );
+      expect(completeCall).toBeDefined();
+      expect(completeCall![1]).toMatchObject({
+        p_operation_id: "audit-op-fail",
+        p_success: false,
+      });
+    });
+
+    it("audit-complete failure after successful copy → compensates by deleting final object", async () => {
+      mockPreAuditSteps(privateRow);
+      // audit-start succeeds
+      mockRpc.mockResolvedValueOnce({ data: "audit-op-comp", error: null });
+      // copy succeeds
+      mockCopy.mockResolvedValueOnce({ error: null });
+      // audit-complete(true) FAILS
+      mockRpc.mockResolvedValueOnce({ data: null, error: { message: "rpc down" } });
+      // compensate: remove the final object from private-assets
+      mockRemove.mockResolvedValueOnce({ data: null, error: null });
+      // failFinalize RPC
+      mockRpc.mockResolvedValueOnce({ data: { ok: true }, error: null });
+      // NOTE: enqueueStorageCleanup is mocked at module level (vi.mock) and
+      // does NOT call client.rpc, so no RPC mock is needed for it here.
+
+      const { finalizeTempUpload } = await import("@/lib/services/two-phase-upload");
+      const result = await finalizeTempUpload({
+        uploadToken: "abc12345-1234-1234-1234-123456789abc",
+      });
+      vi.unstubAllGlobals();
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.code).toBe("ADMIN_WRITE_FAILED");
+      }
+      // The final object MUST have been removed (compensation)
+      // remove is called as remove([path]) so call[0] is the path array
+      const removeCalls = mockRemove.mock.calls;
+      expect(removeCalls.length).toBeGreaterThanOrEqual(1);
+      // At least one remove call targets the final object path
+      const finalObjectRemove = removeCalls.find(
+        (call) => Array.isArray(call[0]) && call[0].some((p: string) => p.startsWith("products/")),
+      );
+      expect(finalObjectRemove).toBeDefined();
+    });
+
+    it("successful saga → audit-start and audit-complete both called", async () => {
+      mockPreAuditSteps(privateRow);
+      // audit-start succeeds, returns operation ID
+      mockRpc.mockResolvedValueOnce({ data: "audit-op-ok", error: null });
+      // copy succeeds
+      mockCopy.mockResolvedValueOnce({ error: null });
+      // audit-complete(true) succeeds
+      mockRpc.mockResolvedValueOnce({ data: null, error: null });
+      // temp delete
+      mockRemove.mockResolvedValue({ data: null, error: null });
+      // complete RPC
+      mockRpc.mockResolvedValueOnce({ data: { ok: true }, error: null });
+
+      const { finalizeTempUpload } = await import("@/lib/services/two-phase-upload");
+      const result = await finalizeTempUpload({
+        uploadToken: "abc12345-1234-1234-1234-123456789abc",
+      });
+      vi.unstubAllGlobals();
+
+      expect(result.ok).toBe(true);
+      // Verify audit-start was called with correct params
+      const startCall = mockRpc.mock.calls.find(
+        (call) => call[0] === "record_storage_operation_started",
+      );
+      expect(startCall).toBeDefined();
+      expect(startCall![1]).toMatchObject({
+        p_action: "storage.upload",
+        p_bucket: "private-assets",
+        p_actor_id: "admin-uuid-1",
+        p_actor_role: "admin",
+      });
+      // Verify audit-complete(true) was called
+      const completeCall = mockRpc.mock.calls.find(
+        (call) => call[0] === "complete_storage_operation",
+      );
+      expect(completeCall).toBeDefined();
+      expect(completeCall![1]).toMatchObject({
+        p_operation_id: "audit-op-ok",
+        p_success: true,
+      });
     });
   });
 });
