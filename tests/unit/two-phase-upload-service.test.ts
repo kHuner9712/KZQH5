@@ -480,4 +480,115 @@ describe("finalizeTempUpload", () => {
       expect(destPath).not.toMatch(/\.png$/);
     });
   });
+
+  // ============================================================
+  // KZQ-P0-005-b: Unified final path generation (static contract)
+  // ------------------------------------------------------------
+  // Both upload paths MUST share the same final-object path
+  // generation logic so they cannot drift. This is enforced by a
+  // source-level contract: the two-stage service IMPORTS
+  // generatePrivateStoragePath / generatePublicStoragePath from
+  // storage-upload.ts rather than redefining them, and it derives
+  // the extension via the shared getExtensionForMimeType (same as
+  // the single-stage path does through validateUploadFile).
+  //
+  // If a future change re-introduces an inline path builder in
+  // two-phase-upload.ts, these tests will fail and force the
+  // author to either reuse the shared function or explicitly
+  // justify the divergence.
+  // ============================================================
+  describe("KZQ-P0-005-b: final path generation is shared, not duplicated", () => {
+    const TWO_PHASE_SRC = "lib/services/two-phase-upload.ts";
+    const SINGLE_STAGE_SRC = "lib/services/storage-upload.ts";
+
+    it("two-phase-upload.ts IMPORTS generatePrivateStoragePath / generatePublicStoragePath (no local redefinition)", async () => {
+      const { readFileSync } = await import("node:fs");
+      const src = readFileSync(TWO_PHASE_SRC, "utf8");
+
+      // Import statement must reference the shared service module.
+      expect(src).toMatch(
+        /import\s*\{[^}]*\bgeneratePrivateStoragePath\b[^}]*\}\s*from\s*["']@\/lib\/services\/storage-upload["']/,
+      );
+      expect(src).toMatch(
+        /import\s*\{[^}]*\bgeneratePublicStoragePath\b[^}]*\}\s*from\s*["']@\/lib\/services\/storage-upload["']/,
+      );
+
+      // Must NOT redefine the functions locally — drift would appear
+      // as a local `function generatePrivateStoragePath` declaration.
+      expect(src).not.toMatch(
+        /function\s+generatePrivateStoragePath\s*\(/,
+      );
+      expect(src).not.toMatch(
+        /function\s+generatePublicStoragePath\s*\(/,
+      );
+    });
+
+    it("storage-upload.ts EXPORTS both path generators (single source of truth)", async () => {
+      const { readFileSync } = await import("node:fs");
+      const src = readFileSync(SINGLE_STAGE_SRC, "utf8");
+
+      expect(src).toMatch(
+        /export\s+function\s+generatePrivateStoragePath\s*\(/,
+      );
+      expect(src).toMatch(
+        /export\s+function\s+generatePublicStoragePath\s*\(/,
+      );
+    });
+
+    it("two-stage finalize calls the shared generators (no inline path string building)", async () => {
+      const { readFileSync } = await import("node:fs");
+      const src = readFileSync(TWO_PHASE_SRC, "utf8");
+
+      // Both branches of the bucket decision must invoke the shared
+      // generator functions. We anchor on the function-call syntax
+      // so an inline `${finalCategory}/${uuid}.${ext}` template
+      // would fail this assertion.
+      expect(src).toMatch(
+        /generatePrivateStoragePath\(\s*finalCategory/,
+      );
+      expect(src).toMatch(
+        /generatePublicStoragePath\(\s*finalCategory/,
+      );
+    });
+
+    it("two-stage derives ext from shared getExtensionForMimeType (same source as single-stage)", async () => {
+      const { readFileSync } = await import("node:fs");
+      const src = readFileSync(TWO_PHASE_SRC, "utf8");
+
+      // KZQ-P0-004: ext must come from MIME, not filename.
+      // KZQ-P0-005-a/b: single-stage gets ext via validateUploadFile
+      // (which calls getExtensionForMimeType internally); two-stage
+      // calls getExtensionForMimeType directly because validation
+      // already happened at authorize time. Both share the SAME
+      // mapping. Verify the import + call site.
+      expect(src).toMatch(
+        /import\s*\{[^}]*\bgetExtensionForMimeType\b[^}]*\}\s*from\s*["']@\/lib\/validation\/storage["']/,
+      );
+      expect(src).toMatch(
+        /getExtensionForMimeType\(declaredMimeType\)/,
+      );
+    });
+
+    it("both paths produce the same {category}/{uuid}.{ext} shape for the same inputs", async () => {
+      // Behavioral parity: feed the same category + ext through the
+      // shared generators used by each path. UUIDs differ per call
+      // but the path SHAPE (top-folder + uuid + ext) must match.
+      const { generatePrivateStoragePath, generatePublicStoragePath } =
+        await import("@/lib/services/storage-upload");
+
+      const privatePath = generatePrivateStoragePath("products", ".jpg");
+      const publicPath = generatePublicStoragePath("products", ".jpg");
+      expect(publicPath).not.toBeNull();
+
+      // Shape: "products/<uuid>.jpg"
+      const privateMatch = privatePath.match(
+        /^products\/[0-9a-f-]{36}\.jpg$/,
+      );
+      const publicMatch = publicPath?.match(
+        /^products\/[0-9a-f-]{36}\.jpg$/,
+      );
+      expect(privateMatch).not.toBeNull();
+      expect(publicMatch).not.toBeNull();
+    });
+  });
 });
