@@ -4,6 +4,10 @@ import {
   classifyAdminDataError,
   type AdminDataFailureCause,
 } from "@/lib/services/admin-data-error";
+import {
+  SCHEMA_COMPAT_DISABLED_LOG_CODE,
+  shouldUseSchemaCompatFallback,
+} from "@/lib/config/schema-compat";
 import { normalizeSearchTerm } from "@/lib/utils";
 import type { Database, Inquiry, InquiryStatus } from "@/types/database";
 import type { InquiryCreateRecord } from "@/lib/services/inquiries/validation";
@@ -203,11 +207,14 @@ export async function countUnreadInquiries(client: InquiryClient): Promise<numbe
     // fetch or client-side throw (network, abort, etc.). Classify by code/name
     // only; never propagate the original error object.
     const cause = classifyAdminDataError(err);
-    // If the RPC is not deployed (schema error), fall back to direct
-    // table count instead of failing — the admin layout should still
-    // show the unread badge.
-    if (cause === "schema" || cause === "permission") {
+    // KZQ-P0-010: schema/permission fallback is gated by an explicit env
+    // switch. In production it defaults OFF so an undeployed RPC surfaces
+    // as a fixed error instead of silently masking a missing migration.
+    if (shouldUseSchemaCompatFallback(cause)) {
       return countUnreadInquiriesViaDirectQuery(client);
+    }
+    if (cause === "schema" || cause === "permission") {
+      console.warn(SCHEMA_COMPAT_DISABLED_LOG_CODE);
     }
     throw new UnreadInquiryCountError(cause);
   }
@@ -216,9 +223,12 @@ export async function countUnreadInquiries(client: InquiryClient): Promise<numbe
 
   if (error) {
     const cause = classifyAdminDataError(error);
-    // Fallback for schema/permission errors (RPC not deployed).
-    if (cause === "schema" || cause === "permission") {
+    // KZQ-P0-010: gated fallback for schema/permission errors (RPC not deployed).
+    if (shouldUseSchemaCompatFallback(cause)) {
       return countUnreadInquiriesViaDirectQuery(client);
+    }
+    if (cause === "schema" || cause === "permission") {
+      console.warn(SCHEMA_COMPAT_DISABLED_LOG_CODE);
     }
     // Supabase returned an error object. Classify by code/name only.
     // The original error object is intentionally dropped.
