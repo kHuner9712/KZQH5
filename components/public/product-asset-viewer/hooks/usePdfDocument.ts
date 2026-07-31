@@ -27,7 +27,7 @@ interface PdfLoadingTask {
 }
 interface PdfjsModule {
   GlobalWorkerOptions: { workerSrc: string; workerPort: unknown };
-  getDocument(params: { url: string }): PdfLoadingTask;
+  getDocument(params: { url: string; isEvalSupported?: boolean }): PdfLoadingTask;
 }
 
 // Static import — Next.js's webpack cannot reliably resolve dynamic
@@ -122,7 +122,15 @@ export function usePdfDocument(url: string | null, _locale: Locale) {
       // timeout already fired while we were setting up.
       if (token !== loadToken.current) return; // superseded or timed out
 
-      const loadingTask = pdfjs.getDocument({ url });
+      // isEvalSupported: false explicitly disables the PostScript calculator
+      // JIT path (which uses `new Function`) and forces the interpreter
+      // fallback. This aligns with the public CSP removal of 'unsafe-eval'
+      // (KZQ-P1-003): without this flag, PDF.js's isEvalSupported() probe
+      // would call `new Function("")` for feature detection, generating CSP
+      // violation reports in Report-Only mode and failing in enforcing mode.
+      // The interpreter fallback renders identical canvas output with
+      // negligible performance impact for standard product catalog PDFs.
+      const loadingTask = pdfjs.getDocument({ url, isEvalSupported: false });
       activeLoadingTask.current = loadingTask;
 
       const result = await loadingTask.promise;
