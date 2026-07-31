@@ -320,13 +320,18 @@ function checkUrlAndSeo() {
 //   - Production using loopback Supabase or Site URL
 //   - CSP_ENFORCING=true without nonce-based CSP (Phase 1 hasn't
 //     implemented nonces yet, so enforcing with 'unsafe-inline' is unsafe)
+//   - KZQ-P1-011-a: Production WAF_RATE_LIMIT_VERIFIED not "true" —
+//     production deployments MUST NOT ship relying solely on the
+//     per-process MemoryRateLimiter. EdgeOne WAF / Rate Limiting rules
+//     provide the cross-instance floor that the in-memory limiter cannot.
+//     Staging still WARNs (operator may not have WAF configured yet).
 //
 // In deployment mode, the following conditions WARN:
 //   - READINESS_TOKEN not configured
 //   - All notification providers unconfigured
 //   - CSP still Report-Only (not enforcing)
 //   - Production indexing still false
-//   - Cannot verify external WAF configuration
+//   - Staging WAF_RATE_LIMIT_VERIFIED not set (OK to stage without WAF)
 //
 // In local development mode, these checks are permissive (PASS or WARN)
 // so they don't block normal development.
@@ -553,11 +558,51 @@ function checkSecurityAndOperations() {
       );
     }
 
-    // Cannot verify external WAF configuration
-    warn(
-      "env: WAF",
-      "cannot verify external WAF configuration from code — manual check required (see docs/EDGEONE_WAF_RULES.md)",
-    );
+    // KZQ-P1-011-a: Distributed rate-limit boundary gate.
+    //
+    // The in-memory MemoryRateLimiter is per-process only. On EdgeOne
+    // multi-instance deployments the effective limit is N × configured,
+    // which is NOT a real production rate limit. EdgeOne WAF / Rate
+    // Limiting rules provide the cross-instance floor.
+    //
+    // We cannot verify the WAF configuration from code, so we require
+    // the operator to assert (under human verification) that the WAF
+    // rules documented in docs/EDGEONE_WAF_RULES.md are deployed by
+    // setting WAF_RATE_LIMIT_VERIFIED=true in the production env.
+    //
+    // Production: missing or not "true" → BLOCK (cannot ship without
+    //   the cross-instance floor — the in-memory limiter alone is not
+    //   a production-grade rate limit).
+    // Staging: missing → WARN (operator may not have WAF configured yet,
+    //   staging is for testing the application, not the edge config).
+    //   "true" → PASS (operator has confirmed WAF is configured).
+    const wafVerified = (process.env.WAF_RATE_LIMIT_VERIFIED || "").trim();
+    if (productionMode) {
+      if (wafVerified !== "true") {
+        block(
+          "env: WAF_RATE_LIMIT_VERIFIED",
+          'not "true" — production deployments MUST have EdgeOne WAF / Rate Limiting rules deployed per docs/EDGEONE_WAF_RULES.md and the operator MUST assert this by setting WAF_RATE_LIMIT_VERIFIED=true. The in-memory MemoryRateLimiter is per-process only and does NOT provide a cross-instance rate-limit floor on multi-instance EdgeOne deployments.',
+        );
+      } else {
+        pass(
+          "env: WAF_RATE_LIMIT_VERIFIED",
+          "true — operator has asserted EdgeOne WAF / Rate Limiting rules are deployed (manual verification per docs/EDGEONE_WAF_RULES.md)",
+        );
+      }
+    } else {
+      // staging
+      if (wafVerified !== "true") {
+        warn(
+          "env: WAF_RATE_LIMIT_VERIFIED",
+          'not "true" — EdgeOne WAF / Rate Limiting rules not yet verified for staging. Set WAF_RATE_LIMIT_VERIFIED=true after deploying WAF rules per docs/EDGEONE_WAF_RULES.md. Production release will be BLOCKED without this.',
+        );
+      } else {
+        pass(
+          "env: WAF_RATE_LIMIT_VERIFIED",
+          "true — EdgeOne WAF / Rate Limiting rules verified for staging",
+        );
+      }
+    }
   }
 }
 

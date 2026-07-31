@@ -4,6 +4,48 @@
 >
 > **重要声明**：EdgeOne WAF 规则在 EdgeOne 控制台配置，无法通过仓库代码直接修改。本文档是**控制台操作的规范文档**，不是代码可执行的配置。部署人员必须按照本文档在 EdgeOne 控制台手动配置 WAF 规则，并在验收记录中提供证据。
 
+## 0. 分布式限流架构与 Fail-Closed 决策 (KZQ-P1-011-a)
+
+### 0.1 两层限流模型
+
+KZQ 采用**两层限流模型**，各层职责明确，不可互相替代：
+
+| 层 | 执行点 | 一致性范围 | 角色 |
+|----|--------|------------|------|
+| 第一层：应用层 `MemoryRateLimiter` | EdgeOne Cloud Function (Node 进程内) | 单进程 | 本机快速拒绝 + 开发/测试 fallback |
+| 第二层：EdgeOne WAF / Rate Limiting | EdgeOne 边缘节点 | 跨实例全局 | 生产级跨实例 floor |
+
+**为什么需要两层**：EdgeOne Cloud Functions 是多实例部署，应用层 `MemoryRateLimiter` 的计数器仅在单个 Node 进程内一致。当 N 个实例并行运行时，实际限流阈值为 `N × 配置值`，这**不是真正的生产级限流**。EdgeOne WAF / Rate Limiting 规则在边缘节点执行，所有实例的请求先经过边缘限流，提供跨实例一致的全局 floor。
+
+### 0.2 Fail-Closed 决策
+
+| 场景 | 决策 | 理由 |
+|------|------|------|
+| 应用层 `MemoryRateLimiter` 容量满 | **Fail-closed**（拒绝新 key） | 不驱逐活跃条目，防止攻击者重置受害者桶 |
+| 应用层 `MemoryRateLimiter` 异常 | **Fail-open**（放行，依赖 WAF 层） | 单进程故障不应阻断所有请求；WAF 层仍提供 floor |
+| EdgeOne WAF 未配置（生产） | **BLOCK 发布** | `WAF_RATE_LIMIT_VERIFIED ≠ "true"` 时 `check-release-readiness --mode=production` 阻断 |
+| EdgeOne WAF 未配置（staging） | **WARN** | Staging 可在 WAF 配置前先部署验证应用层 |
+| EdgeOne WAF 规则触发 | **429**（限流）或 **403**（拦截） | 由 EdgeOne 边缘节点返回，不到达应用层 |
+
+### 0.3 发布门控
+
+生产环境发布前必须满足：
+
+1. EdgeOne 控制台已按本文档第 1 节配置所有路由的 WAF 限流规则
+2. 已执行第 5 节的全部验收测试并记录证据
+3. 在生产环境变量中设置 `WAF_RATE_LIMIT_VERIFIED=true`
+4. `npm run check:release-readiness -- --mode=production` 通过（exit 0）
+
+**仅接受精确字符串 `"true"`**（区分大小写）。`"TRUE"` / `"1"` / `"yes"` 均被拒绝，防止误配。
+
+### 0.4 应用层限流器的多实例边界声明
+
+`lib/services/rate-limit.ts` 文件头已明确声明：
+
+> MemoryRateLimiter is consistent only within a single Node process. On EdgeOne multi-instance deployments the effective limit may be N × configured (N = running instances). Production deployments MUST additionally enable EdgeOne WAF / Rate Limiting rules.
+
+应用层所有 `getXxxRateLimiter()` 工厂返回的 `MemoryRateLimiter` 实例**仅作为本机/第二层保护**，不是生产级限流的唯一执行点。
+
 ## 1. 受保护路由清单
 
 | 路由 | 方法 | 用途 | 限流阈值 | 请求体上限 | 并发限制 | 可信 IP Header |
@@ -274,4 +316,16 @@ EdgeOne WAF 必须配置全局 fallback 限流，防止未知客户端绕过路�
 - [ ] 为 `/api/internal/storage/audit-reconcile` 配置 IP 白名单 + SECRET 鉴权
 - [ ] 配置全局 fallback 限流
 - [ ] 配置可信 IP Header (`eo-connecting-ip`)
-- [ ] 执行验收测试并记录证据
+- [ ] 执行第 5 节全部验收测试并记录证据
+- [ ] **KZQ-P1-011-a**: 验收通过后，在生产环境变量中设置 `WAF_RATE_LIMIT_VERIFIED=true`
+- [ ] **KZQ-P1-011-a**: 运行 `npm run check:release-readiness -- --mode=production` 确认通过
+
+### 8.1 证据要求
+
+设置 `WAF_RATE_LIMIT_VERIFIED=true` 前，必须收集并归档以下证据：
+
+1. **EdgeOne 控制台截图**：展示已配置的限流规则列表（含路由、阈值、处置动作）
+2. **验收测试输出**：第 5 节全部 7 项测试的 curl 或脚本输出
+3. **变更记录**：操作时间、操作人、规则 ID、变更工单号
+
+`WAF_RATE_LIMIT_VERIFIED=true` 是运维人员的**人工断言**，表示上述证据已收集归档。代码无法验证 WAF 配置的真实性，但可以通过此门控确保发布前有人工确认环节。
