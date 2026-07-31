@@ -536,7 +536,7 @@ describe("Phase 1 Task 4: WARN conditions in deployment mode", () => {
     expect(cspPublicLine!.toUpperCase()).toContain("PASS");
   });
 
-  it("WARNs about WAF verification in staging mode", async () => {
+  it("WARNs about WAF_RATE_LIMIT_VERIFIED in staging mode when not set", async () => {
     const { stdout } = await runScript(
       {
         NEXT_PUBLIC_SITE_URL: "https://staging.example.com",
@@ -550,8 +550,119 @@ describe("Phase 1 Task 4: WARN conditions in deployment mode", () => {
       },
       ["--", "--mode=staging"],
     );
-    expect(stdout).toContain("WAF");
+    expect(stdout).toContain("WAF_RATE_LIMIT_VERIFIED");
     expect(stdout).toContain("WARN");
+  });
+
+  // ============================================================
+  // KZQ-P1-011-a: Distributed rate-limit boundary gate.
+  //
+  // Production deployments MUST NOT ship relying solely on the
+  // per-process MemoryRateLimiter. EdgeOne WAF / Rate Limiting rules
+  // provide the cross-instance floor. The operator must assert WAF
+  // deployment by setting WAF_RATE_LIMIT_VERIFIED=true.
+  //
+  // Staging WARNs (operator may not have WAF configured yet).
+  // Production BLOCKs (cannot ship without the cross-instance floor).
+  // ============================================================
+
+  it("KZQ-P1-011-a: PASSes WAF_RATE_LIMIT_VERIFIED in staging mode when true", async () => {
+    const { stdout } = await runScript(
+      {
+        NEXT_PUBLIC_SITE_URL: "https://staging.example.com",
+        NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:1",
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon-key",
+        NEXT_PUBLIC_DEMO_MODE: "false",
+        NEXT_PUBLIC_SITE_INDEXING_ENABLED: "false",
+        TRUSTED_PROXY_HEADER: "eo-connecting-ip",
+        RATE_LIMIT_FALLBACK_SECRET: "a".repeat(32),
+        OUTBOX_DISPATCH_SECRET: "a".repeat(16),
+        WAF_RATE_LIMIT_VERIFIED: "true",
+      },
+      ["--", "--mode=staging"],
+    );
+    expect(stdout).toContain("WAF_RATE_LIMIT_VERIFIED");
+    const wafLine = stdout
+      .split("\n")
+      .find((l) => l.includes("WAF_RATE_LIMIT_VERIFIED"));
+    expect(wafLine).toBeTruthy();
+    expect(wafLine!.toUpperCase()).toContain("PASS");
+  });
+
+  it("KZQ-P1-011-a: BLOCKs WAF_RATE_LIMIT_VERIFIED in production mode when not set", async () => {
+    const { stdout } = await runScript(
+      {
+        NEXT_PUBLIC_SITE_URL: "https://example.com",
+        NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:1",
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon-key",
+        NEXT_PUBLIC_DEMO_MODE: "false",
+        NEXT_PUBLIC_SITE_INDEXING_ENABLED: "false",
+        TRUSTED_PROXY_HEADER: "eo-connecting-ip",
+        RATE_LIMIT_FALLBACK_SECRET: "a".repeat(32),
+        OUTBOX_DISPATCH_SECRET: "a".repeat(16),
+        // WAF_RATE_LIMIT_VERIFIED intentionally omitted
+      },
+      ["--", "--mode=production"],
+    );
+    expect(stdout).toContain("WAF_RATE_LIMIT_VERIFIED");
+    expect(stdout).toContain("BLOCK");
+  });
+
+  it("KZQ-P1-011-a: BLOCKs WAF_RATE_LIMIT_VERIFIED in production mode when not 'true'", async () => {
+    const { stdout } = await runScript(
+      {
+        NEXT_PUBLIC_SITE_URL: "https://example.com",
+        NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:1",
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon-key",
+        NEXT_PUBLIC_DEMO_MODE: "false",
+        NEXT_PUBLIC_SITE_INDEXING_ENABLED: "false",
+        TRUSTED_PROXY_HEADER: "eo-connecting-ip",
+        RATE_LIMIT_FALLBACK_SECRET: "a".repeat(32),
+        OUTBOX_DISPATCH_SECRET: "a".repeat(16),
+        WAF_RATE_LIMIT_VERIFIED: "yes",
+      },
+      ["--", "--mode=production"],
+    );
+    expect(stdout).toContain("WAF_RATE_LIMIT_VERIFIED");
+    expect(stdout).toContain("BLOCK");
+  });
+
+  it("KZQ-P1-011-a: PASSes WAF_RATE_LIMIT_VERIFIED in production mode when 'true'", async () => {
+    const { stdout } = await runScript(
+      {
+        NEXT_PUBLIC_SITE_URL: "https://example.com",
+        NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:1",
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon-key",
+        NEXT_PUBLIC_DEMO_MODE: "false",
+        NEXT_PUBLIC_SITE_INDEXING_ENABLED: "false",
+        TRUSTED_PROXY_HEADER: "eo-connecting-ip",
+        RATE_LIMIT_FALLBACK_SECRET: "a".repeat(32),
+        OUTBOX_DISPATCH_SECRET: "a".repeat(16),
+        WAF_RATE_LIMIT_VERIFIED: "true",
+      },
+      ["--", "--mode=production"],
+    );
+    expect(stdout).toContain("WAF_RATE_LIMIT_VERIFIED");
+    const wafLine = stdout
+      .split("\n")
+      .find((l) => l.includes("WAF_RATE_LIMIT_VERIFIED"));
+    expect(wafLine).toBeTruthy();
+    expect(wafLine!.toUpperCase()).toContain("PASS");
+  });
+
+  it("KZQ-P1-011-a: does NOT BLOCK on WAF_RATE_LIMIT_VERIFIED in default (dev) mode", async () => {
+    const { stdout } = await runScript({
+      NEXT_PUBLIC_SITE_URL: "https://staging.example.com",
+      NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:1",
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon-key",
+      NEXT_PUBLIC_DEMO_MODE: "false",
+      NEXT_PUBLIC_SITE_INDEXING_ENABLED: "false",
+      // WAF_RATE_LIMIT_VERIFIED intentionally omitted — dev mode
+    });
+    // In dev mode, the WAF check is not run at all (it's inside the
+    // `if (deploymentMode)` block), so WAF_RATE_LIMIT_VERIFIED should
+    // NOT appear in stdout.
+    expect(stdout).not.toContain("WAF_RATE_LIMIT_VERIFIED");
   });
 });
 
