@@ -630,6 +630,13 @@ function buildPassingRpcResponse() {
     "revoke_dml_project_products_authenticated",
     "revoke_dml_inquiries_authenticated",
     "revoke_dml_inquiry_items_authenticated",
+    // --- KZQ-P0-011-d: service_role EXECUTE on critical service-role-only RPCs ---
+    "grant_service_role_count_unread_inquiries",
+    "grant_service_role_get_admin_dashboard_snapshot",
+    "grant_service_role_create_inquiry_with_items",
+    "grant_service_role_save_product_with_images",
+    "grant_service_role_save_project_with_relations",
+    "grant_service_role_verify_schema_readiness",
   ].map((name) => ({ name, passed: true, detail: "present" }));
   return { ok: true, checks };
 }
@@ -1428,10 +1435,238 @@ describe("KZQ-P0-011-c: RLS-enabled and DML revoke verification", () => {
     }
   });
 
-  it("PASSes the schema section when all 45 checks are present and passing", async () => {
-    // Baseline: a response with all 45 expected checks (15 original +
-    // 15 rls_enabled_* + 15 revoke_dml_*_authenticated) must PASS the
-    // schema section and must NOT emit any missing/unexpected BLOCK.
+  it("PASSes the schema section when all 51 checks are present and passing", async () => {
+    // Baseline: a response with all 51 expected checks (15 original +
+    // 15 rls_enabled_* + 15 revoke_dml_*_authenticated +
+    // 6 grant_service_role_*) must PASS the schema section and must
+    // NOT emit any missing/unexpected BLOCK.
+    const rpcResponse = buildPassingRpcResponse();
+    const server = await startMockPostgREST((req, res) => {
+      const headers = { "Content-Type": "application/json", Connection: "close" };
+      if (req.url?.includes("/rest/v1/rpc/verify_schema_readiness")) {
+        res.writeHead(200, headers);
+        res.end(JSON.stringify(rpcResponse));
+        return;
+      }
+      if (req.url?.includes("/rest/v1/company_profile")) {
+        // Return a company profile with real (non-placeholder) values so the
+        // business-content section does not BLOCK the schema PASS.
+        res.writeHead(200, headers);
+        res.end(
+          JSON.stringify([
+            {
+              phone: "+86 21 5888 9999",
+              email: "sales@kzq.example",
+              whatsapp: "+86 138 0013 0000",
+              address_cn: "上海市浦东新区某街道 100 号",
+              address_en: "No. 100 Some Street, Pudong, Shanghai",
+              wechat_qr_url: "https://cdn.kzq.example/qr.png",
+              logo_url: "https://cdn.kzq.example/logo.png",
+            },
+          ]),
+        );
+        return;
+      }
+      res.writeHead(200, headers);
+      res.end("[]");
+    });
+    const port = getPort(server);
+    try {
+      const { stdout } = await runScript({
+        NEXT_PUBLIC_SITE_URL: "https://staging.example.com",
+        NEXT_PUBLIC_SUPABASE_URL: `http://127.0.0.1:${port}`,
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon-key",
+        SUPABASE_SERVICE_ROLE_KEY: "fake-service-role-key",
+        NEXT_PUBLIC_DEMO_MODE: "false",
+        NEXT_PUBLIC_SITE_INDEXING_ENABLED: "false",
+      });
+      // No missing-check or unexpected-check BLOCK lines.
+      expect(stdout).not.toContain("check not returned by RPC");
+      expect(stdout).not.toContain("schema: unexpected checks");
+      // The schema: overall line must be present and PASS.
+      const overallLine = stdout
+        .split("\n")
+        .find((l) => l.includes("schema: overall"));
+      expect(overallLine).toBeDefined();
+      expect(overallLine).toContain("PASS");
+      // Must not leak the service role key.
+      expect(stdout).not.toContain("fake-service-role-key");
+    } finally {
+      await stopServer(server);
+    }
+  });
+});
+
+// ============================================================
+// KZQ-P0-011-d: service_role EXECUTE privilege verification
+//
+// Migration 20260731130000_add_service_role_grant_verification.sql
+// extends verify_schema_readiness() with 6 new checks:
+//   * grant_service_role_count_unread_inquiries
+//   * grant_service_role_get_admin_dashboard_snapshot
+//   * grant_service_role_create_inquiry_with_items
+//   * grant_service_role_save_product_with_images
+//   * grant_service_role_save_project_with_relations
+//   * grant_service_role_verify_schema_readiness (self-verify)
+//
+// Each check verifies that service_role still has EXECUTE on the
+// critical service-role-only RPC. If the grant is accidentally revoked
+// (migration ordering bug, manual REVOKE, restore that lost grants),
+// the application cannot function — release-readiness must BLOCK.
+//
+// These tests verify the release-readiness script correctly BLOCKs when:
+//   1. A grant_service_role_* check is MISSING from the RPC response
+//      (caught by the KZQ-P0-011-a missing-check detector).
+//   2. A grant_service_role_* check is returned with passed=false
+//      (service_role lacks EXECUTE — runtime 403 risk).
+//   3. Edge case: the self-verify check (verify_schema_readiness on
+//      itself) is returned with passed=false.
+//   4. PASSes when all 51 checks (including the 6 new ones) are
+//      present and passing.
+// ============================================================
+describe("KZQ-P0-011-d: service_role EXECUTE privilege verification", () => {
+  it("BLOCKs when a grant_service_role_* check is missing from the RPC response", async () => {
+    // Remove one grant_service_role_* check from the response — the
+    // script's missing-check detection (KZQ-P0-011-a) must BLOCK.
+    const checks = buildPassingRpcResponse().checks.filter(
+      (c) => c.name !== "grant_service_role_verify_schema_readiness",
+    );
+    const server = await startMockPostgREST((req, res) => {
+      const headers = { "Content-Type": "application/json", Connection: "close" };
+      if (req.url?.includes("/rest/v1/rpc/verify_schema_readiness")) {
+        res.writeHead(200, headers);
+        res.end(JSON.stringify({ ok: true, checks }));
+        return;
+      }
+      res.writeHead(200, headers);
+      res.end("[]");
+    });
+    const port = getPort(server);
+    try {
+      const { exitCode, stdout } = await runScript({
+        NEXT_PUBLIC_SITE_URL: "https://staging.example.com",
+        NEXT_PUBLIC_SUPABASE_URL: `http://127.0.0.1:${port}`,
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon-key",
+        SUPABASE_SERVICE_ROLE_KEY: "fake-service-role-key",
+        NEXT_PUBLIC_DEMO_MODE: "false",
+        NEXT_PUBLIC_SITE_INDEXING_ENABLED: "false",
+      });
+      // Verify stdout content FIRST (before exitCode) so that on Windows,
+      // where the subprocess may crash with STATUS_STACK_BUFFER_OVERRUN
+      // (exit code 3221226505) instead of returning exit code 1, we still
+      // assert the contract. This is a known Windows baseline issue
+      // affecting all BLOCK-scenario release-readiness subprocess tests.
+      expect(stdout).toContain("grant_service_role_verify_schema_readiness");
+      expect(stdout).toContain("BLOCK");
+      expect(stdout).toContain("check not returned by RPC");
+      // Must not leak the service role key.
+      expect(stdout).not.toContain("fake-service-role-key");
+      if (process.platform !== "win32") {
+        expect(exitCode).toBe(1);
+      }
+    } finally {
+      await stopServer(server);
+    }
+  });
+
+  it("BLOCKs when a grant_service_role_* check is returned with passed=false (grant revoked)", async () => {
+    // Simulate a production database where service_role's EXECUTE on
+    // save_product_with_images was accidentally revoked — the
+    // application cannot save products. The RPC returns the check
+    // with passed=false; the script must BLOCK.
+    const checks = buildPassingRpcResponse().checks.map((c) =>
+      c.name === "grant_service_role_save_product_with_images"
+        ? { ...c, passed: false, detail: "service_role lacks execute — application cannot function" }
+        : c,
+    );
+    const server = await startMockPostgREST((req, res) => {
+      const headers = { "Content-Type": "application/json", Connection: "close" };
+      if (req.url?.includes("/rest/v1/rpc/verify_schema_readiness")) {
+        res.writeHead(200, headers);
+        res.end(JSON.stringify({ ok: false, checks }));
+        return;
+      }
+      res.writeHead(200, headers);
+      res.end("[]");
+    });
+    const port = getPort(server);
+    try {
+      const { exitCode, stdout } = await runScript({
+        NEXT_PUBLIC_SITE_URL: "https://staging.example.com",
+        NEXT_PUBLIC_SUPABASE_URL: `http://127.0.0.1:${port}`,
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon-key",
+        SUPABASE_SERVICE_ROLE_KEY: "fake-service-role-key",
+        NEXT_PUBLIC_DEMO_MODE: "false",
+        NEXT_PUBLIC_SITE_INDEXING_ENABLED: "false",
+      });
+      // Verify stdout content FIRST (see note above about the Windows
+      // STATUS_STACK_BUFFER_OVERRUN baseline issue).
+      expect(stdout).toContain("schema: grant_service_role_save_product_with_images");
+      expect(stdout).toContain("BLOCK");
+      // The top-level schema: overall line must also BLOCK because at
+      // least one check failed.
+      expect(stdout).toContain("schema: overall");
+      // Must not leak the service role key.
+      expect(stdout).not.toContain("fake-service-role-key");
+      if (process.platform !== "win32") {
+        expect(exitCode).toBe(1);
+      }
+    } finally {
+      await stopServer(server);
+    }
+  });
+
+  it("BLOCKs when grant_service_role_verify_schema_readiness is returned with passed=false (self-verify failure)", async () => {
+    // Edge case: the RPC is verifying its own EXECUTE grant. If
+    // service_role lacks EXECUTE on verify_schema_readiness itself,
+    // the RPC would not be callable in the first place — but the
+    // check still guards against privilege drift between the grant
+    // and a future re-grant. The script must BLOCK on passed=false.
+    const checks = buildPassingRpcResponse().checks.map((c) =>
+      c.name === "grant_service_role_verify_schema_readiness"
+        ? { ...c, passed: false, detail: "service_role lacks execute — application cannot function" }
+        : c,
+    );
+    const server = await startMockPostgREST((req, res) => {
+      const headers = { "Content-Type": "application/json", Connection: "close" };
+      if (req.url?.includes("/rest/v1/rpc/verify_schema_readiness")) {
+        res.writeHead(200, headers);
+        res.end(JSON.stringify({ ok: false, checks }));
+        return;
+      }
+      res.writeHead(200, headers);
+      res.end("[]");
+    });
+    const port = getPort(server);
+    try {
+      const { exitCode, stdout } = await runScript({
+        NEXT_PUBLIC_SITE_URL: "https://staging.example.com",
+        NEXT_PUBLIC_SUPABASE_URL: `http://127.0.0.1:${port}`,
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon-key",
+        SUPABASE_SERVICE_ROLE_KEY: "fake-service-role-key",
+        NEXT_PUBLIC_DEMO_MODE: "false",
+        NEXT_PUBLIC_SITE_INDEXING_ENABLED: "false",
+      });
+      // Verify stdout content FIRST (see note above about the Windows
+      // STATUS_STACK_BUFFER_OVERRUN baseline issue).
+      expect(stdout).toContain("schema: grant_service_role_verify_schema_readiness");
+      expect(stdout).toContain("BLOCK");
+      expect(stdout).toContain("schema: overall");
+      // Must not leak the service role key.
+      expect(stdout).not.toContain("fake-service-role-key");
+      if (process.platform !== "win32") {
+        expect(exitCode).toBe(1);
+      }
+    } finally {
+      await stopServer(server);
+    }
+  });
+
+  it("PASSes the schema section when all 51 checks (including 6 grant_service_role_*) are present and passing", async () => {
+    // Baseline: a response with all 51 expected checks (15 original +
+    // 15 rls_enabled_* + 15 revoke_dml_*_authenticated +
+    // 6 grant_service_role_*) must PASS the schema section and must
+    // NOT emit any missing/unexpected BLOCK.
     const rpcResponse = buildPassingRpcResponse();
     const server = await startMockPostgREST((req, res) => {
       const headers = { "Content-Type": "application/json", Connection: "close" };
