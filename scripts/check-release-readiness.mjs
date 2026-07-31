@@ -318,13 +318,26 @@ function checkUrlAndSeo() {
 //   - RATE_LIMIT_FALLBACK_SECRET missing or < 32 chars
 //   - OUTBOX_DISPATCH_SECRET missing or < 16 chars
 //   - Production using loopback Supabase or Site URL
-//   - CSP_ENFORCING=true without nonce-based CSP (Phase 1 hasn't
-//     implemented nonces yet, so enforcing with 'unsafe-inline' is unsafe)
+//
+// CSP_ENFORCING is NOT a BLOCK condition. See `checkSecurityAndOperations()`
+// below for the actual contract:
+//   - Admin routes (/admin/**, /api/admin/**): ALWAYS Report-Only with
+//     'unsafe-inline' for script-src/style-src, regardless of CSP_ENFORCING.
+//     Next.js 15 App Router internal inline scripts (RSC payload, hydration
+//     data) do not accept a nonce attribute — a nonce-based CSP blocks them
+//     and the page cannot hydrate (black screen). Other directives
+//     (img-src, connect-src, frame-ancestors, object-src) remain strict.
+//   - Public routes: Report-Only by default. CSP_ENFORCING=true switches
+//     them to enforcing. Public CSP still retains 'unsafe-inline' for
+//     script-src to preserve ISR compatibility (static CSP, no per-request
+//     nonce), but other directives ARE enforced and provide meaningful
+//     protection against image/data exfiltration, clickjacking, and plugin
+//     content. The operator explicitly opts into this tradeoff.
 //
 // In deployment mode, the following conditions WARN:
 //   - READINESS_TOKEN not configured
 //   - All notification providers unconfigured
-//   - CSP still Report-Only (not enforcing)
+//   - CSP_ENFORCING unset (public routes still Report-Only, not enforcing)
 //   - Production indexing still false
 //   - Cannot verify external WAF configuration
 //

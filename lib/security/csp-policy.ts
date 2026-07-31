@@ -1,7 +1,10 @@
 // ============================================================
 // CSP Policy Builder
 //
-// Builds per-route Content Security Policy strings.
+// Builds per-route Content Security Policy strings. The actual header
+// (Report-Only vs Enforcing) is chosen by `middleware.ts` based on route
+// and the `CSP_ENFORCING` env var; this module only builds the policy
+// directive string.
 //
 // Route categories:
 //   1. Admin routes (/admin/**, /api/admin/**) — static CSP using
@@ -13,13 +16,23 @@
 //      way to allow Next.js internal scripts. Other directives
 //      (img-src, connect-src, frame-ancestors, object-src) remain
 //      strict to provide meaningful protection.
-//   2. Public routes (everything else) — static CSP, Report-Only,
-//      retains 'unsafe-inline' for ISR compatibility, with
-//      report-to/report-uri wired.
+//      Header: ALWAYS `Content-Security-Policy-Report-Only` regardless
+//      of `CSP_ENFORCING`. Admin pages are force-dynamic (no ISR
+//      concern) but still need Report-Only to avoid black-screen risk
+//      from any future inline-script addition by Next.js internals.
+//   2. Public routes (everything else) — static CSP, retains
+//      'unsafe-inline' for ISR compatibility, with report-to/report-uri
+//      wired. Header chosen by middleware:
+//        - `CSP_ENFORCING=true`  → `Content-Security-Policy` (enforcing)
+//        - unset / "false"      → `Content-Security-Policy-Report-Only`
+//      Even in enforcing mode, 'unsafe-inline' is retained for
+//      script-src/style-src because Next.js 15 App Router generates
+//      internal inline scripts that do not accept a nonce. Other
+//      directives (img-src, connect-src, frame-ancestors, object-src)
+//      ARE enforced and provide meaningful protection.
 //
-// Both admin and public policies are served as Report-Only so that
-// violations are collected via /api/csp-report without blocking
-// page execution.
+// Both policies wire CSP reporting (`report-to` + `report-uri`) so that
+// violations are collected via /api/csp-report regardless of route or mode.
 // ============================================================
 
 const SUPABASE_PROJECT_HOST_PATTERN = /^[a-z0-9]{20}\.supabase\.co$/;
@@ -129,8 +142,12 @@ const COMMON_DIRECTIVES = [
  *   - Supabase host is still allowed (auth + data)
  *   - frame-ancestors 'none', object-src 'none', etc.
  *
- * The policy is served as Report-Only so violations are collected
- * without blocking page execution.
+ * The policy is ALWAYS served as `Content-Security-Policy-Report-Only`
+ * by `middleware.ts`, regardless of `CSP_ENFORCING`. This is intentional:
+ * admin pages are force-dynamic (no ISR concern), but Next.js 15 App
+ * Router can introduce new internal inline scripts at any time, and
+ * Report-Only ensures violations are collected without blocking page
+ * execution (no black-screen risk).
  */
 export function buildAdminCspPolicy(): string {
   const directives = [
@@ -148,12 +165,25 @@ export function buildAdminCspPolicy(): string {
 /**
  * Build the CSP policy for PUBLIC routes (everything except /admin/**).
  *
- * This is a static, Report-Only CSP:
- *   - Retains 'unsafe-inline' for script-src and style-src (ISR compat)
- *   - Retains 'unsafe-eval' (PDF.js / Next.js runtime may need it)
+ * This is a static CSP (no per-request nonce). The actual header
+ * (Report-Only vs Enforcing) is chosen by `middleware.ts` based on
+ * `CSP_ENFORCING`:
+ *   - `CSP_ENFORCING=true`  → middleware sets `Content-Security-Policy`
+ *   - unset / "false"      → middleware sets `Content-Security-Policy-Report-Only`
+ *
+ * Directive choices:
+ *   - Retains 'unsafe-inline' for script-src and style-src (ISR compat —
+ *     Next.js 15 App Router generates internal inline scripts that do not
+ *     accept a nonce)
+ *   - Retains 'unsafe-eval' (PDF.js / Next.js runtime may need it —
+ *     tracked for removal in KZQ-P1-003)
  *   - Allows WeChat JS-SDK (https://res.wx.qq.com)
  *   - No Google Fonts CDN (project uses system fonts only)
  *   - Supabase host is allowed
+ *
+ * Other directives (img-src allowlist, connect-src allowlist,
+ * frame-ancestors 'none', object-src 'none', etc.) ARE enforced when
+ * middleware emits the enforcing header.
  *
  * This policy is intentionally permissive to avoid breaking ISR pages.
  * It will be tightened in a future phase after migrating to next/font

@@ -300,7 +300,7 @@ The following are explicitly NOT part of the Next.js 16 upgrade:
 - Database migrations (frozen baseline unaffected)
 - Migration immutability hash (must remain stable across the upgrade)
 - Supabase Auth session refresh logic (Work Package C — must still work)
-- CSP policy (Work Package G — must remain enforcing)
+- CSP policy (Work Package G — current mode behavior must be preserved: admin routes always Report-Only, public routes Report-Only or Enforcing per `CSP_ENFORCING`)
 - Readiness probe contract (Work Package G — must remain stable)
 - Outbox dispatcher (Work Package E — must remain stable)
 - Demo mode behaviour (must remain unchanged)

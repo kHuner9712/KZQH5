@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { createServer, type Server } from "node:http";
 import { resolve } from "node:path";
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 const scriptPath = resolve(process.cwd(), "scripts/check-release-readiness.mjs");
@@ -834,5 +835,57 @@ describe("check-release-readiness.mjs — Phase 7 schema RPC states", () => {
     } finally {
       await stopServer(server);
     }
+  });
+});
+
+// ============================================================
+// KZQ-P1-001: CSP implementation vs docs/comments source-of-truth
+//
+// Verifies that the release-readiness script source code no longer
+// contains stale comments describing `CSP_ENFORCING=true` as a BLOCK
+// condition. The actual implementation (lines ~495-506) PASSes
+// CSP_ENFORCING=true because admin routes are always Report-Only
+// and public routes only enforce non-script directives.
+//
+// This is a static source-code contract test. It reads the script
+// file directly (not via subprocess) so that any future contributor
+// who reverts the comment to the stale "BLOCK" wording immediately
+// fails the test, regardless of runtime behavior.
+// ============================================================
+
+describe("KZQ-P1-001: CSP docs/comments source-of-truth", () => {
+  const scriptSource = readFileSync(scriptPath, "utf-8");
+
+  it("script source does NOT list CSP_ENFORCING=true as a BLOCK condition", () => {
+    // The stale wording described CSP_ENFORCING=true without nonce-based
+    // CSP as unsafe/BLOCK. The actual contract PASSes CSP_ENFORCING=true.
+    // Reject the specific stale phrases that were removed.
+    expect(scriptSource).not.toContain(
+      "CSP_ENFORCING=true without nonce-based CSP",
+    );
+    expect(scriptSource).not.toContain(
+      "enforcing with 'unsafe-inline' is unsafe",
+    );
+  });
+
+  it("script source documents CSP_ENFORCING as NOT a BLOCK condition", () => {
+    // The corrected header must explicitly state that CSP_ENFORCING is
+    // NOT a BLOCK condition, so future contributors cannot reintroduce
+    // the stale wording by accident.
+    expect(scriptSource).toContain("CSP_ENFORCING is NOT a BLOCK condition");
+  });
+
+  it("script source documents admin routes as ALWAYS Report-Only", () => {
+    // The header must document that admin routes are unconditionally
+    // Report-Only regardless of CSP_ENFORCING.
+    expect(scriptSource).toContain("ALWAYS Report-Only");
+  });
+
+  it("script source documents public routes switch on CSP_ENFORCING=true", () => {
+    // The header must document that public routes switch to enforcing
+    // when CSP_ENFORCING=true.
+    expect(scriptSource).toContain(
+      "CSP_ENFORCING=true switches",
+    );
   });
 });
