@@ -274,4 +274,54 @@ EdgeOne WAF 必须配置全局 fallback 限流，防止未知客户端绕过路�
 - [ ] 为 `/api/internal/storage/audit-reconcile` 配置 IP 白名单 + SECRET 鉴权
 - [ ] 配置全局 fallback 限流
 - [ ] 配置可信 IP Header (`eo-connecting-ip`)
+- [ ] 在 EdgeOne 边缘层配置 HSTS（详见 §9）
+- [ ] 设置 `WAF_RATE_LIMIT_VERIFIED=true`（KZQ-P1-011-a，详见 §0）
+- [ ] 设置 `CANONICAL_APP_ORIGIN=https://<生产域名>`（KZQ-P1-012/P1-013）
 - [ ] 执行验收测试并记录证据
+
+## 9. HSTS 边缘配置（KZQ-P1-013）
+
+### 背景
+
+EdgeOne 终止 TLS 并以 HTTP 转发到源站。应用中间件 (`middleware.ts`)
+通过 `x-forwarded-proto` 头判断用户侧协议并设置 HSTS——这覆盖了
+请求到达源站的场景。但部分请求可能在 EdgeOne 边缘直接响应（缓存
+命中、WAF 拦截、边缘重定向），永远不到达源站，因此中间件的
+HSTS 头不会被设置。
+
+### 要求
+
+HSTS **必须**在 EdgeOne 边缘层也配置，确保所有 HTTPS 响应（无论
+是否到达源站）都携带 `Strict-Transport-Security` 头。
+
+| 配置项 | 值 |
+|--------|-----|
+| Header 名称 | `Strict-Transport-Security` |
+| Header 值 | `max-age=31536000; includeSubDomains` |
+| 适用条件 | 仅 HTTPS 响应（EdgeOne 边缘自动按协议设置） |
+| 适用范围 | 所有域名（主域 + 备用域名） |
+
+### 两层 HSTS 模型
+
+| 层级 | 位置 | 覆盖场景 |
+|------|------|----------|
+| EdgeOne 边缘层 | EdgeOne 控制台规则 | 所有 HTTPS 响应（含缓存命中、WAF 拦截、边缘重定向） |
+| 应用中间件层 | `middleware.ts` `getUserFacingProtocol()` | 到达源站的请求（通过 `x-forwarded-proto` 判断用户侧 HTTPS） |
+
+两层独立运作，互不冲突。EdgeOne 边缘层是主防线，应用中间件层是
+补充。
+
+### 验收方法
+
+1. 使用 `curl -I https://<生产域名>/products` 检查响应头是否包含
+   `Strict-Transport-Security: max-age=31536000; includeSubDomains`
+2. 使用 `curl -I http://<生产域名>/products` 检查 HTTP 响应是否
+   **不**包含 HSTS 头（HSTS 仅在 HTTPS 上有效）
+3. 访问一个会被 EdgeOne 缓存的页面，验证 HSTS 头仍存在（证明
+   边缘层配置生效，不依赖源站）
+
+### 证据记录
+
+- EdgeOne 控制台截图（HSTS 规则配置页面）
+- curl 验收测试输出
+- 变更时间、操作人
