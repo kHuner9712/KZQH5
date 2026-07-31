@@ -13,7 +13,7 @@ blindly — re-verify against real code before starting any task.
 - Node version (engines): `20.x` (local runtime v24.15.0 used for tooling only)
 - Next.js version: `15.5.21`
 - Supabase client version: `@supabase/supabase-js 2.109.0`, `@supabase/ssr 0.12.0`
-- Last updated: 2026-07-31 (KZQ-P1-004-a completed)
+- Last updated: 2026-07-31 (KZQ-P1-004-c completed)
 
 ## Status Values
 
@@ -57,7 +57,7 @@ column records the file and line where the decision was made.
 | KZQ-P1-004 | P1 | Epic C 后台 CSP | Auth cookie & XSS risk assessment (workstream — split into 5 atomic sub-tasks below) | superseded | — | — | per sub-task | Workstream split into KZQ-P1-004-a through KZQ-P1-004-e. Original row kept for traceability |
 | KZQ-P1-004-a | P1 | Epic C 后台 CSP | Supabase SSR cookie compatibility audit (establish facts before any cookie attribute changes) | completed | `trae/p1-004a-supabase-cookie-audit` | (this commit) | `npm run typecheck && npm run lint` → PASS | Audit deliverable: `docs/SECURITY_AUDIT_SUPABASE_COOKIE.md`. Verified against installed `@supabase/ssr` v0.12.0 source (`node_modules/@supabase/ssr/src/cookies.ts:93-106, 195-198` + `types.ts:70-83`): `createBrowserClient` reads/writes cookies via `document.cookie` API when no custom adapter is provided; `document.cookie` CANNOT read httpOnly cookies (HTML spec). Therefore `httpOnly: false` is a HARD REQUIREMENT — setting `httpOnly: true` breaks `getSession()`, `getUser()`, auto-refresh, and admin login. Project's `lib/supabase/middleware-session.ts:128` correctly sets `httpOnly: false` to match @supabase/ssr defaults. XSS mitigation must NOT modify cookie httpOnly — must use CSP enforcement (KZQ-P1-004-b), output encoding (KZQ-P1-004-c), dependency audit (KZQ-P1-004-d), Trusted Types (KZQ-P1-004-e) instead. No code change, no migration, no behavior change — pure audit deliverable |
 | KZQ-P1-004-b | P1 | Epic C 后台 CSP | CSP enforce for admin routes (depends on KZQ-P1-002 unblock) | pending | — | — | per sub-task | Blocked by KZQ-P1-002 (CSP violation audit precondition). Cannot proceed until operator provides EdgeOne CSP violation report |
-| KZQ-P1-004-c | P1 | Epic C 后台 CSP | Output encoding / ban dangerous HTML (dangerouslySetInnerHTML audit) | pending | — | — | per sub-task | `dangerouslySetInnerHTML` used in 5 places for JSON-LD; audit if any user-controllable data flows into these; add sanitization or replace with safe serialization |
+| KZQ-P1-004-c | P1 | Epic C 后台 CSP | Output encoding / ban dangerous HTML (dangerouslySetInnerHTML audit) | completed | `trae/p1-004c-output-encoding-dangerouslysetinnerhtml` | (this commit) | `npm run typecheck && npm run lint && npx vitest run tests/unit/serialize-json-ld.test.ts` → PASS | AUDIT RESULT: 5 `dangerouslySetInnerHTML` sites found, ALL for JSON-LD via `serializeJsonLd()` (`ProductDetailPage.tsx:437,442`, `HomePage.tsx:559`, `AboutPage.tsx:183`, `DocumentsPage.tsx:281`). Data sources are CMS-managed fields (product name/description/FAQ, company info, catalog topics) — NOT directly user-controllable, but admin-editable so XSS defense still required. Previous `serializeJsonLd` only escaped `<` → `\u003c` (core defense against `</script>` injection). Hardened to also escape `>` → `\u003e`, `&` → `\u0026`, U+2028 → `\u2028`, U+2029 → `\u2029` (defense-in-depth per OWASP JSON-LD guidance). Updated `lib/utils.ts:76-98` with full security analysis comment. Added 24 unit tests in `tests/unit/serialize-json-ld.test.ts` covering: basic serialization, XSS injection defense (`</script>` in string/nested/array), defense-in-depth escaping (`>`, `&`, U+2028, U+2029), CMS data scenarios (Product/FAQ/Organization/CollectionPage JSON-LD), JSON parseability (escaped output still valid JSON), boundary values (null/undefined/empty/quotes/backslashes). No other `dangerouslySetInnerHTML` usages exist in codebase. No CSP change, no migration, no behavior change for valid JSON-LD consumers |
 | KZQ-P1-004-d | P1 | Epic C 后台 CSP | Client-side dependency audit (verify no eval/Function in production bundles) | pending | — | — | per sub-task | Audit all runtime dependencies for eval/new Function usage; verify production bundle is clean |
 | KZQ-P1-004-e | P1 | Epic C 后台 CSP | Trusted Types feasibility assessment | pending | — | — | per sub-task | Assess Trusted Types adoption: CSP `require-trusted-types-for 'script'`; trusted-types policy; compatibility with Next.js 15 App Router and pdfjs-dist worker |
 | KZQ-P1-010 | P1 | Epic D 限流与 Origin | Pre-auth coarse rate limiting | pending | — | — | `npx vitest run tests/unit/admin-write-boundary.test.ts` | `lib/security/admin-write-boundary.ts:159` `getVerifiedAdmin()` (runs `auth.getUser()` at `admin-auth.ts:66` + profile query at :100) runs BEFORE global rate limit at `:176` and per-admin limit at `:198`; unauthenticated attackers consume no quota |
@@ -102,8 +102,8 @@ suffix such as `-a`, `-b`) and is executed one per round.
 Per the priority order `P0 → P1 → P2 → Framework Upgrade`, and within each
 priority by Task ID order, the next atomic task to execute is:
 
-**KZQ-P1-004-c** — Output encoding / ban dangerous HTML
-(`dangerouslySetInnerHTML` audit).
+**KZQ-P1-004-d** — Client-side dependency audit (verify no eval/Function in
+production bundles).
 
 Status summary:
 - All P0 tasks complete (Epic A and Epic B fully done)
@@ -116,11 +116,12 @@ Status summary:
   `docs/SECURITY_AUDIT_SUPABASE_COOKIE.md`)
 - KZQ-P1-004-b BLOCKED (depends on KZQ-P1-002 unblock — CSP violation
   audit precondition)
-- KZQ-P1-004-c is the next unblocked sub-task: audit all
-  `dangerouslySetInnerHTML` usage (5 sites for JSON-LD), verify no
-  user-controllable data flows into HTML injection points, add
-  sanitization or replace with safe serialization.
-- KZQ-P1-004-d and KZQ-P1-004-e follow in ID order after KZQ-P1-004-c.
+- KZQ-P1-004-c completed (dangerouslySetInnerHTML audit — all 5 sites use
+  `serializeJsonLd()` for JSON-LD; hardened with `>`/`&`/U+2028/U+2029
+  escaping + 24 unit tests)
+- KZQ-P1-004-d is the next unblocked sub-task: audit all runtime
+  dependencies for eval/new Function usage; verify production bundle is clean.
+- KZQ-P1-004-e follows after KZQ-P1-004-d.
 
 After KZQ-P1-004 workstream, the next P1 tasks are KZQ-P1-010 through
 KZQ-P1-022 (Epic D 限流与 Origin and Epic E 管理员身份).
