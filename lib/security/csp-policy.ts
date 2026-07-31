@@ -151,15 +151,35 @@ export function buildAdminCspPolicy(): string {
 /**
  * Build the CSP policy for PUBLIC routes (everything except /admin/**).
  *
- * Returns the policy string. The middleware decides whether to emit it
- * as Content-Security-Policy-Report-Only (default) or
- * Content-Security-Policy (enforcing, when CSP_ENFORCING=true).
+ * This is a static CSP (no per-request nonce). The actual header
+ * (Report-Only vs Enforcing) is chosen by `middleware.ts` based on
+ * `CSP_ENFORCING`:
+ *   - `CSP_ENFORCING=true`  → middleware sets `Content-Security-Policy`
+ *   - unset / "false"      → middleware sets `Content-Security-Policy-Report-Only`
  *
- *   - Retains 'unsafe-inline' for script-src and style-src (ISR compat)
- *   - Retains 'unsafe-eval' (PDF.js / Next.js runtime may need it)
+ * Directive choices:
+ *   - Retains 'unsafe-inline' for script-src and style-src (ISR compat —
+ *     Next.js 15 App Router generates internal inline scripts that do not
+ *     accept a nonce)
+ *   - Does NOT include 'unsafe-eval' (KZQ-P1-003, removed 2026-07-31).
+ *     Audit confirmed no real dependency: project source has zero
+ *     eval/new Function calls; pdfjs-dist worker has `new Function` for
+ *     PostScript calculator JIT but `isEvalSupported()` probe is
+ *     try/catch-wrapped and `PostScriptEvaluator` interpreter fallback
+ *     exists (pdf.worker.mjs:30173-30182) — CSP blocking eval auto-
+ *     falls-back with no function loss, only minor perf degrade for
+ *     PostScript calculator PDFs (rare in product catalogs); WeChat
+ *     JS-SDK loaded via external `<script src>`, whitelisted by host
+ *     `https://res.wx.qq.com`, does NOT need unsafe-eval; Next.js 15
+ *     production runtime does not need unsafe-eval (dev-only React
+ *     Refresh does).
  *   - Allows WeChat JS-SDK (https://res.wx.qq.com)
  *   - No Google Fonts CDN (project uses system fonts only)
  *   - Supabase host is allowed
+ *
+ * Other directives (img-src allowlist, connect-src allowlist,
+ * frame-ancestors 'none', object-src 'none', etc.) ARE enforced when
+ * middleware emits the enforcing header.
  *
  * This policy is intentionally permissive to avoid breaking ISR pages.
  * It will be tightened in a future phase after migrating to next/font
@@ -168,7 +188,7 @@ export function buildAdminCspPolicy(): string {
 export function buildPublicCspPolicy(): string {
   const directives = [
     "default-src 'self'",
-    "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://res.wx.qq.com",
+    "script-src 'self' 'unsafe-inline' https://res.wx.qq.com",
     "style-src 'self' 'unsafe-inline'",
     "font-src 'self' data:",
     `img-src ${imgSrcAllowlist}`,
