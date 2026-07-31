@@ -73,9 +73,28 @@ export function siteUrl(path: string = ""): string {
   return `${base}${path}`;
 }
 
-// JSON-LD 会写入 <script> 文本节点；转义小于号可阻止 CMS 文本闭合 script 标签。
+// JSON-LD 会写入 <script type="application/ld+json"> 文本节点。
+// 安全分析：
+//   - 所有 5 处 dangerouslySetInnerHTML 调用点均使用本函数（KZQ-P1-004-c 审计）
+//   - 数据源为 CMS 管理字段（产品名/描述/FAQ/公司信息），非用户直接可控
+//   - 但管理员可编辑这些字段，因此必须防御通过 CMS 注入的 XSS
+//
+// 转义策略（遵循 OWASP JSON-LD 安全指南 + 防御深度）：
+//   1. JSON.stringify 处理 JSON 语法转义（引号、反斜杠、换行等）
+//   2. < → \u003c：阻止 </script> 闭合标签注入（核心防御）
+//   3. > → \u003e：防御深度，阻止某些边缘上下文中的标签注入
+//   4. & → \u0026：防御深度，阻止 HTML 实体解析
+//   5. U+2028/U+2029 → \u2028/\u2029：JavaScript 行/段落分隔符，
+//      ES2019 前 JSON.stringify 不转义这两个字符，可能导致 JS 解析中断
+//
+// 所有转义在 JSON 字符串中均合法，搜索引擎和浏览器正确解析。
 export function serializeJsonLd(value: unknown): string {
-  return JSON.stringify(value).replace(/</g, "\\u003c");
+  return JSON.stringify(value)
+    .replace(/</g, "\\u003c")
+    .replace(/>/g, "\\u003e")
+    .replace(/&/g, "\\u0026")
+    .replace(/\u2028/g, "\\u2028")
+    .replace(/\u2029/g, "\\u2029");
 }
 
 // 搜索关键词清洗：用于安全拼入 Supabase PostgREST .or() 表达式
