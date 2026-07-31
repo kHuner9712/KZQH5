@@ -931,6 +931,26 @@ async function checkSupabaseSchema() {
     }
   }
 
+  // --- Detect unexpected extra checks (RPC returned more checks than expected) ---
+  // (KZQ-P0-011-b) This guards against a RPC change that silently adds a
+  // new check, or a buggy/tampered RPC that returns unexpected data. The
+  // EXPECTED_SCHEMA_CHECKS allowlist is the contract between the script and
+  // the RPC body; any check name outside this list is a contract violation
+  // because the release-readiness script would emit an unreviewed PASS/BLOCK
+  // line that no one signed off on. We emit a single BLOCK line listing the
+  // unexpected names (no secrets — these are check-name strings) so the
+  // operator can either update the allowlist intentionally or fix the RPC.
+  const expectedSet = new Set(EXPECTED_SCHEMA_CHECKS);
+  const unexpectedChecks = rpcChecks
+    .map((c) => c.name)
+    .filter((n) => !expectedSet.has(n));
+  if (unexpectedChecks.length > 0) {
+    block(
+      "schema: unexpected checks",
+      `RPC returned ${unexpectedChecks.length} check(s) not in the EXPECTED_SCHEMA_CHECKS allowlist: ${unexpectedChecks.join(", ")} — either update the allowlist intentionally or verify migration 20260724160000 was not modified`,
+    );
+  }
+
   // --- Top-level ok flag ---
   // We re-derive ok from the checks array rather than trusting body.ok, so a
   // buggy RPC that returns ok=true with a failed check is still caught.
