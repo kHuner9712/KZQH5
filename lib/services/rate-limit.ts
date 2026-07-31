@@ -388,3 +388,48 @@ export function getInquiryExportRateLimiter(): RateLimiter {
     inquiryExportLimiter = new MemoryRateLimiter(5, 60 * 1000);
   return inquiryExportLimiter;
 }
+
+// ============================================================
+// KZQ-P1-010: Pre-auth coarse rate limiting for admin endpoints
+// ------------------------------------------------------------
+// requireAdminWrite() and requireAdminRead() historically called
+// getVerifiedAdmin() (which performs a REMOTE auth.getUser() call +
+// a DB profile query) BEFORE any rate limiting. An unauthenticated
+// attacker could send unlimited requests to /api/admin/* endpoints,
+// each triggering expensive remote Supabase Auth calls, without
+// consuming any rate-limit quota.
+//
+// This limiter is checked BEFORE getVerifiedAdmin() in both
+// requireAdminWrite and requireAdminRead. It uses the two-layer
+// ephemeralRateKeySet model:
+//   - Trusted IP available (EdgeOne TRUSTED_PROXY_HEADER configured):
+//     per-IP bucket "ip:<addr>" — each IP gets its own 30-req budget.
+//   - No trusted IP: "fallback:global" floor (all unknown-IP clients
+//     share a single 30-req budget) + optional "fallback:<hmac>"
+//     sub-bucket when RATE_LIMIT_FALLBACK_SECRET is set.
+//
+// Limit: 30 / 60s per key. This is:
+//   - Generous enough for legitimate admin users whose session expired
+//     (they send 1-2 unauthenticated requests before being redirected
+//     to login).
+//   - Strict enough to block brute-force/probing/flood attacks against
+//     admin endpoints.
+//   - Lower than the post-auth per-admin limit (60/60s) so the pre-auth
+//     layer is the more restrictive floor for unauthenticated traffic.
+//
+// This limiter is a SEPARATE MemoryRateLimiter instance from the
+// post-auth global/per-admin limiters — its key map is independent,
+// so pre-auth and post-auth buckets do not interfere. The post-auth
+// limiters (getGlobalRateLimiter + getAdminApiRateLimiter) continue
+// to run after successful authentication, unchanged.
+//
+// Multi-instance caveat applies (see MemoryRateLimiter header).
+// EdgeOne WAF provides the cross-instance floor in production.
+// ============================================================
+let adminPreAuthLimiter: RateLimiter | null = null;
+
+export function getAdminPreAuthRateLimiter(): RateLimiter {
+  if (!adminPreAuthLimiter)
+    adminPreAuthLimiter = new MemoryRateLimiter(30, 60 * 1000);
+  return adminPreAuthLimiter;
+}
