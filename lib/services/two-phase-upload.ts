@@ -12,7 +12,13 @@
 //   2. finalizeTempUpload — claims the temp_uploads row (RPC),
 //      verifies the uploaded object via Storage HEAD + range-
 //      download of Magic Bytes, moves the object to its final
-//      path, registers a storage_object_ref, completes the RPC.
+//      path, completes the RPC. Storage object references are
+//      registered by business table RPCs (e.g. catalog/certificate
+//      save flows) in the database layer, NOT by this application
+//      layer. The application layer does NOT register storage_object_refs
+//      directly. See migration
+//      20260725250000_wire_storage_object_refs_into_asset_lifecycle.sql
+//      and 20260729020000_temp_uploads_two_phase_upload.sql.
 //
 // The single-phase route (POST /api/admin/storage/upload) remains
 // as a fallback for non-Supabase-Storage backends and for clients
