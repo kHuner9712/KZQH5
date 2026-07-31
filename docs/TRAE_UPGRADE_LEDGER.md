@@ -13,7 +13,7 @@ blindly — re-verify against real code before starting any task.
 - Node version (engines): `20.x` (local runtime v24.15.0 used for tooling only)
 - Next.js version: `15.5.21`
 - Supabase client version: `@supabase/supabase-js 2.109.0`, `@supabase/ssr 0.12.0`
-- Last updated: 2026-07-31 (KZQ-P1-003 completed)
+- Last updated: 2026-07-31 (KZQ-P1-004-a completed)
 
 ## Status Values
 
@@ -54,7 +54,12 @@ column records the file and line where the decision was made.
 | KZQ-P1-001 | P1 | Epic C 后台 CSP | Clean up CSP implementation vs docs conflict (fix source of truth, do not switch mode) | completed | `trae/p1-001-csp-docs-cleanup` | (this commit) | `npm run typecheck && npm run lint && npx vitest run tests/unit/release-readiness.test.ts tests/unit/csp-policy.test.ts tests/unit/csp-headers.test.ts` → PASS (typecheck OK, lint OK; csp-policy.test.ts + csp-headers.test.ts ALL PASS; release-readiness CSP tests 4/4 PASS with CI=false; 3 pre-existing Windows STATUS_STACK_BUFFER_OVERRUN baseline failures in Phase 7 schema RPC tests unrelated to this task, no increase from baseline, verified 2026-07-31) | Source-of-truth cleanup only — NO security mode switch. Fixed 3 stale contradictions: (1) `scripts/check-release-readiness.mjs:314-339` Section 2b header comment listed `CSP_ENFORCING=true without nonce-based CSP` as a BLOCK condition, but actual code at `:495-506` PASSes it — removed the stale BLOCK claim, added accurate "CSP_ENFORCING=true is ALLOWED (PASS, not BLOCK)" section explaining admin=always Report-Only, public=enforcing with 'unsafe-inline' retained for ISR; (2) `docs/LAUNCH_CHECKLIST.md:138` listed "CSP enforcing-without-nonce" among BLOCK conditions — replaced with accurate note that CSP_ENFORCING=true is NOT a BLOCK; (3) `lib/security/csp-policy.ts:16-25` docblock claimed "Both admin and public policies are served as Report-Only" but public CAN be enforcing via CSP_ENFORCING=true — corrected to "Admin policy is ALWAYS Report-Only; Public policy is Report-Only by default, may switch to enforcing via CSP_ENFORCING=true"; also fixed `buildPublicCspPolicy()` docblock which mislabeled the policy string as "Report-Only" (the function returns the string, middleware decides the header). Existing tests already locked the correct contract (release-readiness.test.ts:362-399 asserts CSP_ENFORCING=true→PASS, csp-policy.test.ts asserts admin always Report-Only + public mode switch) — no new tests needed. Did NOT switch CSP to enforcing (KZQ-P1-002), did NOT remove unsafe-eval (KZQ-P1-003), did NOT modify Auth cookies (KZQ-P1-004) |
 | KZQ-P1-002 | P1 | Epic C 后台 CSP | Switch admin CSP to Enforcing | blocked | — | — | `npm run typecheck && npm run lint && npm run test:e2e:demo` | BLOCKED by precondition: CSP violation report audit not yet completed. No documented evidence of CSP violation collection from EdgeOne target environment. Historical context: admin CSP was switched FROM enforcing TO Report-Only (commits 3d2d842, 2206fca) to fix black screen caused by nonce-based CSP blocking Next.js 15 App Router internal inline scripts. Switching back to enforcing requires (1) collecting real CSP violation reports from EdgeOne production/staging, (2) confirming zero blocking violations, (3) verifying admin pages still hydrate. This is a human verification step that cannot be completed via code alone. Unblocked when: operator provides documented CSP violation audit confirming no blocking violations in EdgeOne environment |
 | KZQ-P1-003 | P1 | Epic C 后台 CSP | Remove unnecessary `unsafe-eval` in public CSP | completed | `trae/p1-003-remove-unsafe-eval` | `4a148ce` + follow-up | `npm run typecheck && npm run lint && npx vitest run tests/unit/csp-policy.test.ts tests/unit/csp-headers.test.ts tests/unit/upgrade-next15-react19.test.ts tests/unit/documents-ssr-boundary.test.ts` → PASS (103 tests, including KZQ-P1-003 regression tests) | Removed `'unsafe-eval'` from `buildPublicCspPolicy()` script-src in `lib/security/csp-policy.ts:188`. Updated docblock with full audit evidence. Added regression test in `tests/unit/csp-policy.test.ts`. FOLLOW-UP COMMIT: completed "优先隔离 PDF.js worker" goal by passing `isEvalSupported: false` to `pdfjs.getDocument()` in `components/public/product-asset-viewer/hooks/usePdfDocument.ts:133` — explicitly disables PostScript calculator JIT path (`new Function`), forces `PostScriptEvaluator` interpreter fallback, suppresses CSP violation report noise in Report-Only mode, and ensures deterministic behavior if CSP later switched to enforcing. Updated `PdfjsModule` interface at `:30` to include `isEvalSupported?: boolean`. Added regression test in `tests/unit/documents-ssr-boundary.test.ts:113-126` verifying `isEvalSupported:\s*false` is present in source. No behavior change for admin CSP. Public CSP default mode unchanged (Report-Only). Recommended runtime verification: PDF preview E2E (`tests/e2e/demo-documents.spec.ts`) before production deployment |
-| KZQ-P1-004 | P1 | Epic C 后台 CSP | Auth cookie & XSS risk assessment (workstream — split into atomic sub-tasks) | pending | — | — | per sub-task | `lib/supabase/middleware-session.ts:128` `httpOnly:false` (matches @supabase/ssr defaults); CSP Report-Only default (`middleware.ts:86`); `dangerouslySetInnerHTML` used in 5 places for JSON-LD; no Trusted Types. Must split before execution |
+| KZQ-P1-004 | P1 | Epic C 后台 CSP | Auth cookie & XSS risk assessment (workstream — split into 5 atomic sub-tasks below) | superseded | — | — | per sub-task | Workstream split into KZQ-P1-004-a through KZQ-P1-004-e. Original row kept for traceability |
+| KZQ-P1-004-a | P1 | Epic C 后台 CSP | Supabase SSR cookie compatibility audit (establish facts before any cookie attribute changes) | completed | `trae/p1-004a-supabase-cookie-audit` | (this commit) | `npm run typecheck && npm run lint` → PASS | Audit deliverable: `docs/SECURITY_AUDIT_SUPABASE_COOKIE.md`. Verified against installed `@supabase/ssr` v0.12.0 source (`node_modules/@supabase/ssr/src/cookies.ts:93-106, 195-198` + `types.ts:70-83`): `createBrowserClient` reads/writes cookies via `document.cookie` API when no custom adapter is provided; `document.cookie` CANNOT read httpOnly cookies (HTML spec). Therefore `httpOnly: false` is a HARD REQUIREMENT — setting `httpOnly: true` breaks `getSession()`, `getUser()`, auto-refresh, and admin login. Project's `lib/supabase/middleware-session.ts:128` correctly sets `httpOnly: false` to match @supabase/ssr defaults. XSS mitigation must NOT modify cookie httpOnly — must use CSP enforcement (KZQ-P1-004-b), output encoding (KZQ-P1-004-c), dependency audit (KZQ-P1-004-d), Trusted Types (KZQ-P1-004-e) instead. No code change, no migration, no behavior change — pure audit deliverable |
+| KZQ-P1-004-b | P1 | Epic C 后台 CSP | CSP enforce for admin routes (depends on KZQ-P1-002 unblock) | pending | — | — | per sub-task | Blocked by KZQ-P1-002 (CSP violation audit precondition). Cannot proceed until operator provides EdgeOne CSP violation report |
+| KZQ-P1-004-c | P1 | Epic C 后台 CSP | Output encoding / ban dangerous HTML (dangerouslySetInnerHTML audit) | pending | — | — | per sub-task | `dangerouslySetInnerHTML` used in 5 places for JSON-LD; audit if any user-controllable data flows into these; add sanitization or replace with safe serialization |
+| KZQ-P1-004-d | P1 | Epic C 后台 CSP | Client-side dependency audit (verify no eval/Function in production bundles) | pending | — | — | per sub-task | Audit all runtime dependencies for eval/new Function usage; verify production bundle is clean |
+| KZQ-P1-004-e | P1 | Epic C 后台 CSP | Trusted Types feasibility assessment | pending | — | — | per sub-task | Assess Trusted Types adoption: CSP `require-trusted-types-for 'script'`; trusted-types policy; compatibility with Next.js 15 App Router and pdfjs-dist worker |
 | KZQ-P1-010 | P1 | Epic D 限流与 Origin | Pre-auth coarse rate limiting | pending | — | — | `npx vitest run tests/unit/admin-write-boundary.test.ts` | `lib/security/admin-write-boundary.ts:159` `getVerifiedAdmin()` (runs `auth.getUser()` at `admin-auth.ts:66` + profile query at :100) runs BEFORE global rate limit at `:176` and per-admin limit at `:198`; unauthenticated attackers consume no quota |
 | KZQ-P1-011 | P1 | Epic D 限流与 Origin | Production distributed rate limiting boundary | pending | — | — | `npm run check:release-readiness && npx vitest run tests/unit/rate-limit.test.ts` | `lib/services/rate-limit.ts:58-190` only `MemoryRateLimiter`; all factories return memory instances; no Redis/KV/Postgres RPC; header comment defers to EdgeOne WAF which is not code-verified |
 | KZQ-P1-012 | P1 | Epic D 限流与 Origin | Strict canonical origin validation (`CANONICAL_APP_ORIGIN`) | pending | — | — | `npx vitest run tests/unit/http-security.test.ts` | `lib/security/http-security.ts:251-298` `isSameOrigin` compares Origin against `x-forwarded-host`/`host`; NO `CANONICAL_APP_ORIGIN` env var exists; port-mismatch bug IS handled (:292-297) but no canonical allowlist |
@@ -97,8 +102,8 @@ suffix such as `-a`, `-b`) and is executed one per round.
 Per the priority order `P0 → P1 → P2 → Framework Upgrade`, and within each
 priority by Task ID order, the next atomic task to execute is:
 
-**KZQ-P1-004** — Auth cookie & XSS risk assessment (workstream — must be
-split into atomic sub-tasks before execution).
+**KZQ-P1-004-c** — Output encoding / ban dangerous HTML
+(`dangerouslySetInnerHTML` audit).
 
 Status summary:
 - All P0 tasks complete (Epic A and Epic B fully done)
@@ -106,13 +111,16 @@ Status summary:
 - KZQ-P1-002 BLOCKED (admin CSP enforcing switch — requires human CSP
   violation audit in EdgeOne environment, cannot be done via code alone)
 - KZQ-P1-003 completed (unsafe-eval removed from public CSP)
-- KZQ-P1-004 is the next P1 task in ID order, but it is a workstream that
-  MUST be split into atomic sub-tasks first: (1) Supabase SSR cookie
-  compatibility audit, (2) CSP enforce task, (3) output encoding /
-  dangerous HTML ban, (4) client-side dependency audit, (5) Trusted Types
-  feasibility. The first sub-task (KZQ-P1-004-a) should be the Supabase
-  SSR cookie compatibility audit to establish facts before any cookie
-  attribute changes.
+- KZQ-P1-004-a completed (Supabase SSR cookie compatibility audit —
+  `httpOnly: false` confirmed as hard requirement; see
+  `docs/SECURITY_AUDIT_SUPABASE_COOKIE.md`)
+- KZQ-P1-004-b BLOCKED (depends on KZQ-P1-002 unblock — CSP violation
+  audit precondition)
+- KZQ-P1-004-c is the next unblocked sub-task: audit all
+  `dangerouslySetInnerHTML` usage (5 sites for JSON-LD), verify no
+  user-controllable data flows into HTML injection points, add
+  sanitization or replace with safe serialization.
+- KZQ-P1-004-d and KZQ-P1-004-e follow in ID order after KZQ-P1-004-c.
 
 After KZQ-P1-004 workstream, the next P1 tasks are KZQ-P1-010 through
 KZQ-P1-022 (Epic D 限流与 Origin and Epic E 管理员身份).
