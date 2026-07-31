@@ -109,4 +109,19 @@ describe("/documents SSR import boundary", () => {
       /from\s+["']\.\/product-asset-viewer\/ProductAssetViewer["']/,
     );
   });
+
+  it("usePdfDocument passes isEvalSupported:false to getDocument (KZQ-P1-003)", () => {
+    // The public CSP no longer includes 'unsafe-eval' (KZQ-P1-003).
+    // PDF.js's PostScript calculator JIT uses `new Function`, which would
+    // generate CSP violation reports in Report-Only mode and fail in
+    // enforcing mode. Passing isEvalSupported:false explicitly disables
+    // the JIT path and forces the PostScriptEvaluator interpreter fallback,
+    // which renders identical canvas output. This test locks the flag
+    // against regression — if someone removes it, CSP violation reports
+    // will reappear when PDFs are viewed.
+    const usePdfSource = readFile(
+      "components/public/product-asset-viewer/hooks/usePdfDocument.ts",
+    );
+    expect(usePdfSource).toMatch(/isEvalSupported:\s*false/);
+  });
 });
