@@ -248,9 +248,15 @@ export async function finalizeTempUpload(
   }
 
   // 1. Claim the temp_uploads row (atomic: authorized → finalizing)
+  //
+  // KZQ-P0-003: p_actor_id is now required by the claim RPC. The
+  // function verifies that the caller's actor_id matches the row's
+  // actor_id, so only the admin who authorized the upload can
+  // finalize it. A null or mismatched actor_id is rejected with a
+  // fixed error code ('invalid_actor' or 'actor_mismatch').
   const { data: claimResult, error: claimError } = await client.rpc(
     "claim_temp_upload_for_finalize",
-    { p_token: input.uploadToken },
+    { p_token: input.uploadToken, p_actor_id: input.actorId ?? null },
   );
 
   const claimData = claimResult as { ok?: boolean; error?: string; row?: TempUploadRow } | null;

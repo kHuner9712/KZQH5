@@ -149,6 +149,11 @@ function mapErrorCode(code?: string): number {
       return 410;
     case "invalid_status":
       return 409;
+    // KZQ-P0-003: actor binding errors are authorization failures.
+    case "invalid_actor":
+    case "actor_not_bound":
+    case "actor_mismatch":
+      return 403;
     case "OBJECT_NOT_FOUND":
     case "SIZE_MISMATCH":
     case "MAGIC_BYTES_MISMATCH":
