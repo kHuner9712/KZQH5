@@ -679,6 +679,13 @@ const EXPECTED_SCHEMA_CHECKS = [
   "revoke_dml_project_products_authenticated",
   "revoke_dml_inquiries_authenticated",
   "revoke_dml_inquiry_items_authenticated",
+  // --- KZQ-P0-011-d: service_role EXECUTE on critical service-role-only RPCs ---
+  "grant_service_role_count_unread_inquiries",
+  "grant_service_role_get_admin_dashboard_snapshot",
+  "grant_service_role_create_inquiry_with_items",
+  "grant_service_role_save_product_with_images",
+  "grant_service_role_save_project_with_relations",
+  "grant_service_role_verify_schema_readiness",
 ];
 
 /**
