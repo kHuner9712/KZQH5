@@ -2,6 +2,12 @@ import { isIP } from "node:net";
 import { createHmac, timingSafeEqual as nodeTimingSafeEqual } from "node:crypto";
 import type { NextRequest } from "next/server";
 
+import {
+  defaultPortFor,
+  getCanonicalOriginConfig,
+  originsEqual,
+} from "@/lib/config/canonical-origin";
+
 export const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -264,37 +270,47 @@ export function isSameOrigin(request: NextRequest): boolean {
     return false;
   }
 
+  // ---- KZQ-P1-012: canonical-origin path (production) ----
+  // When CANONICAL_APP_ORIGIN (and optional alternates) is configured,
+  // compare the browser Origin directly against the server-configured
+  // canonical origin(s). The browser Origin is browser-controlled and
+  // cannot be spoofed by JavaScript, so this is the strongest CSRF
+  // defense. The client-injectable x-forwarded-host / host headers are
+  // NOT consulted here — they are irrelevant once a canonical origin is
+  // declared. A malicious x-forwarded-host cannot bypass this check
+  // because it is never read in this branch.
+  const canonical = getCanonicalOriginConfig();
+  if (canonical.origins.length > 0) {
+    return canonical.origins.some((c) => originsEqual(originUrl, c));
+  }
+
+  // ---- Dev fallback (no canonical origin configured) ----
+  // Compares the browser Origin against the forwarded host. This
+  // preserves localhost/dev behavior. Behind a CDN / TLS-terminating
+  // proxy (EdgeOne, Cloudflare) the protocol is intentionally NOT
+  // compared: x-forwarded-proto may be "http" internally while the
+  // browser Origin is "https". Ports ARE normalized against the Origin
+  // protocol default so that a request with a non-default explicit
+  // port on one side only cannot slip through (e.g. Origin
+  // "https://example.com:8080" vs host "example.com" is now rejected,
+  // previously it was accepted). Production SHOULD set
+  // CANONICAL_APP_ORIGIN to avoid relying on forwarded headers.
   const host =
     request.headers.get("x-forwarded-host") || request.headers.get("host");
   if (!host) return false;
 
-  // Compare hostnames case-insensitively. We intentionally compare ONLY
-  // the hostname (not the protocol) because CDN/reverse-proxy deployments
-  // (EdgeOne, Cloudflare, etc.) terminate TLS at the edge and forward
-  // HTTP internally — so x-forwarded-proto may be "http" while the
-  // browser's Origin is "https". The Origin header is browser-set and
-  // cannot be spoofed by JavaScript, so if the hostname matches, the
-  // request is genuinely same-origin regardless of the internal protocol.
-  //
-  // We also compare the port: if both Origin and host specify a port,
-  // they must match. If only one specifies a port, we compare against
-  // the default port for the Origin's protocol (e.g. origin "https://
-  // example.com" vs host "example.com:443" → match).
   const requestHost = host.toLowerCase();
   const originHost = originUrl.hostname.toLowerCase();
-  const originPort = originUrl.port;
   const requestPort = requestHost.split(":")[1] || "";
   const requestHostname = requestHost.split(":")[0];
 
   if (requestHostname !== originHost) return false;
 
-  // Port comparison: if both have explicit ports, they must match.
-  if (originPort && requestPort) {
-    return originPort === requestPort;
-  }
-  // If neither has an explicit port, or only one does, the hostname
-  // match is sufficient (the default port is implied by the protocol).
-  return true;
+  const originProtocol = originUrl.protocol.toLowerCase();
+  const normalizedRequestPort =
+    requestPort || defaultPortFor(originProtocol);
+  const normalizedOriginPort = originUrl.port || defaultPortFor(originProtocol);
+  return normalizedRequestPort === normalizedOriginPort;
 }
 
 /**
