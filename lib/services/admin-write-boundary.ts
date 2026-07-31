@@ -7,8 +7,9 @@ import {
   isAllowedFetchSite,
   isSameSiteRequest,
   readJsonBody,
+  checkRateLimitKeys,
 } from "@/lib/services/http-security";
-import { getAdminApiRateLimiter, getGlobalRateLimiter } from "@/lib/services/rate-limit";
+import { getAdminApiRateLimiter, getGlobalRateLimiter, getAdminPreAuthRateLimiter } from "@/lib/services/rate-limit";
 
 /**
  * Fixed error codes for admin write endpoints. These are the ONLY strings
@@ -113,13 +114,14 @@ export interface RequireAdminWriteOptions {
 
 /**
  * Centralized pre-flight check for every admin write endpoint:
- *   1. Verify the admin session + profile (service_role client).
- *   2. RBAC: enforce the minimum required admin role (deny-by-default).
- *   3. Phase 6: Combined CSRF defense (Origin + Sec-Fetch-Site).
+ *   1. KZQ-P1-010: Pre-auth coarse rate limiting (before expensive auth).
+ *   2. Verify the admin session + profile (service_role client).
+ *   3. RBAC: enforce the minimum required admin role (deny-by-default).
+ *   4. Phase 6: Combined CSRF defense (Origin + Sec-Fetch-Site).
  *      Origin MUST be present and match (fail-closed for missing Origin).
- *   4. Enforce application/json Content-Type.
- *   5. Enforce a maximum request body size.
- *   6. Parse the JSON body.
+ *   5. Enforce application/json Content-Type.
+ *   6. Enforce a maximum request body size.
+ *   7. Parse the JSON body.
  *
  * On any failure returns a ready-to-send {@link NextResponse} carrying only a
  * fixed error code. On success returns the verified admin context plus the
@@ -155,6 +157,35 @@ export async function requireAdminWrite<T = unknown>(
     typeof optionsOrMaxBytes === "number"
       ? { maxBytes: optionsOrMaxBytes }
       : optionsOrMaxBytes;
+
+  // KZQ-P1-010: Pre-auth coarse rate limiting.
+  // Check BEFORE getVerifiedAdmin() so unauthenticated attackers consume
+  // rate-limit quota. Without this, an attacker could send unlimited
+  // requests to /api/admin/* endpoints, each triggering a remote
+  // auth.getUser() call + DB profile query, without ever touching the
+  // rate limiters (which run only after successful auth).
+  // Uses the two-layer ephemeralRateKeySet model: trusted IP → per-IP
+  // bucket; no trusted IP → fallback:global floor + optional HMAC
+  // sub-bucket. x-forwarded-for is NEVER trusted.
+  const preAuthResult = await checkRateLimitKeys(
+    request,
+    getAdminPreAuthRateLimiter(),
+  );
+  if (!preAuthResult.allowed) {
+    return {
+      ok: false,
+      response: NextResponse.json(
+        { error: "ADMIN_WRITE_RATE_LIMITED" },
+        {
+          status: 429,
+          headers: {
+            "Retry-After": String(preAuthResult.retryAfterSeconds),
+            "Cache-Control": "no-store",
+          },
+        },
+      ),
+    };
+  }
 
   const admin = await getVerifiedAdmin();
   if (!admin.ok) {
@@ -422,11 +453,12 @@ export interface RequireAdminReadOptions {
  * Centralized pre-flight check for admin READ endpoints (GET list/detail).
  *
  * Pipeline (mirrors requireAdminWrite minus body parsing):
- *   1. Verify the admin session + profile (service_role client).
- *   2. Global fallback rate-limit bucket (1000 req/60s shared).
- *   3. Per-admin rate limiting (60 req/60s/admin user).
- *   4. RBAC: enforce the minimum required admin role (deny-by-default).
- *   5. CSRF defense: isSameSiteRequest (allows missing Origin for GET
+ *   1. KZQ-P1-010: Pre-auth coarse rate limiting (before expensive auth).
+ *   2. Verify the admin session + profile (service_role client).
+ *   3. Global fallback rate-limit bucket (1000 req/60s shared).
+ *   4. Per-admin rate limiting (60 req/60s/admin user).
+ *   5. RBAC: enforce the minimum required admin role (deny-by-default).
+ *   6. CSRF defense: isSameSiteRequest (allows missing Origin for GET
  *      navigations, rejects cross-site Sec-Fetch-Site).
  *
  * On any failure returns a ready-to-send {@link NextResponse} carrying
@@ -444,6 +476,31 @@ export async function requireAdminRead(
   request: NextRequest,
   options?: RequireAdminReadOptions,
 ): Promise<RequireAdminReadResult> {
+  // KZQ-P1-010: Pre-auth coarse rate limiting (same as requireAdminWrite).
+  // Check BEFORE getVerifiedAdmin() so unauthenticated attackers consume
+  // rate-limit quota. GET admin endpoints (list/detail views) also trigger
+  // remote auth.getUser() + DB profile query, so they need the same
+  // pre-auth protection as write endpoints.
+  const preAuthResult = await checkRateLimitKeys(
+    request,
+    getAdminPreAuthRateLimiter(),
+  );
+  if (!preAuthResult.allowed) {
+    return {
+      ok: false,
+      response: NextResponse.json(
+        { error: "ADMIN_WRITE_RATE_LIMITED" },
+        {
+          status: 429,
+          headers: {
+            "Retry-After": String(preAuthResult.retryAfterSeconds),
+            "Cache-Control": "no-store",
+          },
+        },
+      ),
+    };
+  }
+
   const admin = await getVerifiedAdmin();
   if (!admin.ok) {
     return {
