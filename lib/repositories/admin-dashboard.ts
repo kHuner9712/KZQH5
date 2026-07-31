@@ -5,6 +5,10 @@ import {
   classifyAdminDataError,
   type AdminDataFailureCause,
 } from "@/lib/services/admin-data-error";
+import {
+  SCHEMA_COMPAT_DISABLED_LOG_CODE,
+  shouldUseSchemaCompatFallback,
+} from "@/lib/config/schema-compat";
 
 type DashboardClient = Awaited<ReturnType<typeof createServerSupabaseClient>>;
 
@@ -135,8 +139,11 @@ export function createAdminDashboardQueries(
   return {
     async getSnapshot() {
       // Try the snapshot RPC first. If it is not deployed (schema error)
-      // or permission-denied, fall back to direct table count queries.
-      // This handles databases where migrations were not fully applied.
+      // or permission-denied, fall back to direct table count queries
+      // ONLY when the schema-compat fallback is explicitly allowed
+      // (KZQ-P0-010). In production the fallback defaults OFF so an
+      // undeployed RPC surfaces as a fixed error instead of silently
+      // masking a missing migration.
       try {
         const result = await client.rpc("get_admin_dashboard_snapshot");
         const { data, error } = result;
@@ -145,9 +152,12 @@ export function createAdminDashboardQueries(
         }
         // If the error is NOT a schema/permission issue, treat as a real
         // failure. Schema/permission errors (RPC not deployed, or
-        // execute privilege missing) fall through to the fallback.
+        // execute privilege missing) fall through to the gated fallback.
         const cause = classifyAdminDataError(error);
-        if (cause !== "schema" && cause !== "permission") {
+        if (!shouldUseSchemaCompatFallback(cause)) {
+          if (cause === "schema" || cause === "permission") {
+            console.warn(SCHEMA_COMPAT_DISABLED_LOG_CODE);
+          }
           throw new DashboardSnapshotError(cause);
         }
       } catch (err) {
@@ -156,13 +166,17 @@ export function createAdminDashboardQueries(
         // Network/abort/client throw — classify and check if fallback is
         // appropriate. Connection errors should NOT fall back.
         const cause = classifyAdminDataError(err);
-        if (cause !== "schema" && cause !== "permission") {
+        if (!shouldUseSchemaCompatFallback(cause)) {
+          if (cause === "schema" || cause === "permission") {
+            console.warn(SCHEMA_COMPAT_DISABLED_LOG_CODE);
+          }
           throw new DashboardSnapshotError(cause);
         }
       }
 
       // Fallback: direct table count queries using service_role (bypasses
-      // RLS). Used when the snapshot RPC is not deployed to the database.
+      // RLS). Used when the snapshot RPC is not deployed to the database
+      // AND the schema-compat fallback is explicitly allowed.
       return getSnapshotViaDirectQueries(client);
     },
 

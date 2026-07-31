@@ -505,6 +505,44 @@ function checkSecurityAndOperations() {
     );
   }
 
+  // --- ALLOW_SCHEMA_COMPATIBILITY_FALLBACK (KZQ-P0-010) ---
+  // Schema-compat fallback lets repositories fall back to direct table
+  // queries when a required RPC is undeployed. That masks missing
+  // migrations in production, so it MUST default OFF in deployment mode.
+  //   - Production: unset / "false" / anything other than "true" -> PASS
+  //   - Production: "true" -> BLOCK (operator must fix the migration
+  //     contract instead of relying on the fallback)
+  //   - Staging: "true" -> WARN (allowed for break-glass compatibility,
+  //     but operator should resolve the schema drift)
+  //   - Local/dev: not checked
+  const schemaCompatRaw = process.env.ALLOW_SCHEMA_COMPATIBILITY_FALLBACK;
+  const schemaCompatExplicitTrue = schemaCompatRaw === "true";
+  if (productionMode) {
+    if (schemaCompatExplicitTrue) {
+      block(
+        "env: ALLOW_SCHEMA_COMPATIBILITY_FALLBACK",
+        'true in production — schema/permission mismatches would be silently masked by direct-table fallback; fix the migration contract instead',
+      );
+    } else {
+      pass(
+        "env: ALLOW_SCHEMA_COMPATIBILITY_FALLBACK",
+        "false / unset (production fail-closed — RPC contract enforced)",
+      );
+    }
+  } else if (stagingMode) {
+    if (schemaCompatExplicitTrue) {
+      warn(
+        "env: ALLOW_SCHEMA_COMPATIBILITY_FALLBACK",
+        "true in staging — schema drift is being masked; resolve before production",
+      );
+    } else {
+      pass(
+        "env: ALLOW_SCHEMA_COMPATIBILITY_FALLBACK",
+        "false / unset (staging fail-closed)",
+      );
+    }
+  }
+
   // --- WARN conditions (deployment mode only) ---
 
   if (deploymentMode) {

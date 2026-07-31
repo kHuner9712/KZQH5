@@ -836,3 +836,147 @@ describe("check-release-readiness.mjs — Phase 7 schema RPC states", () => {
     }
   });
 });
+
+// ============================================================
+// KZQ-P0-010: ALLOW_SCHEMA_COMPATIBILITY_FALLBACK release gate
+//
+// Verifies the release-readiness script enforces the schema-compat
+// fallback gate in deployment modes:
+//   - production + "true" -> BLOCK
+//   - production + unset/"false" -> PASS
+//   - staging + "true" -> WARN
+//   - staging + unset/"false" -> PASS
+//   - default (dev) -> not checked (no PASS/BLOCK/WARN line)
+// ============================================================
+describe("KZQ-P0-010: ALLOW_SCHEMA_COMPATIBILITY_FALLBACK release gate", () => {
+  it("BLOCKs in production mode when ALLOW_SCHEMA_COMPATIBILITY_FALLBACK=true", async () => {
+    const { exitCode, stdout } = await runScript(
+      {
+        NEXT_PUBLIC_SITE_URL: "https://example.com",
+        NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:1",
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon-key",
+        NEXT_PUBLIC_DEMO_MODE: "false",
+        NEXT_PUBLIC_SITE_INDEXING_ENABLED: "false",
+        TRUSTED_PROXY_HEADER: "eo-connecting-ip",
+        RATE_LIMIT_FALLBACK_SECRET: "a".repeat(32),
+        OUTBOX_DISPATCH_SECRET: "a".repeat(16),
+        ALLOW_SCHEMA_COMPATIBILITY_FALLBACK: "true",
+      },
+      ["--", "--mode=production"],
+    );
+    expect(exitCode).toBe(1);
+    expect(stdout).toContain("ALLOW_SCHEMA_COMPATIBILITY_FALLBACK");
+    expect(stdout).toContain("BLOCK");
+    expect(stdout).toContain("production");
+  });
+
+  it("PASSes in production mode when ALLOW_SCHEMA_COMPATIBILITY_FALLBACK is unset", async () => {
+    const { stdout } = await runScript(
+      {
+        NEXT_PUBLIC_SITE_URL: "https://example.com",
+        NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:1",
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon-key",
+        NEXT_PUBLIC_DEMO_MODE: "false",
+        NEXT_PUBLIC_SITE_INDEXING_ENABLED: "false",
+        TRUSTED_PROXY_HEADER: "eo-connecting-ip",
+        RATE_LIMIT_FALLBACK_SECRET: "a".repeat(32),
+        OUTBOX_DISPATCH_SECRET: "a".repeat(16),
+      },
+      ["--", "--mode=production"],
+    );
+    const line = stdout
+      .split("\n")
+      .find((l) => l.includes("ALLOW_SCHEMA_COMPATIBILITY_FALLBACK"));
+    expect(line).toBeTruthy();
+    expect(line!.toUpperCase()).toContain("PASS");
+    expect(line!.toUpperCase()).not.toContain("BLOCK");
+  });
+
+  it("PASSes in production mode when ALLOW_SCHEMA_COMPATIBILITY_FALLBACK=false", async () => {
+    const { stdout } = await runScript(
+      {
+        NEXT_PUBLIC_SITE_URL: "https://example.com",
+        NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:1",
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon-key",
+        NEXT_PUBLIC_DEMO_MODE: "false",
+        NEXT_PUBLIC_SITE_INDEXING_ENABLED: "false",
+        TRUSTED_PROXY_HEADER: "eo-connecting-ip",
+        RATE_LIMIT_FALLBACK_SECRET: "a".repeat(32),
+        OUTBOX_DISPATCH_SECRET: "a".repeat(16),
+        ALLOW_SCHEMA_COMPATIBILITY_FALLBACK: "false",
+      },
+      ["--", "--mode=production"],
+    );
+    const line = stdout
+      .split("\n")
+      .find((l) => l.includes("ALLOW_SCHEMA_COMPATIBILITY_FALLBACK"));
+    expect(line).toBeTruthy();
+    expect(line!.toUpperCase()).toContain("PASS");
+  });
+
+  it("does NOT accept 'TRUE' (case variant) as opt-in in production", async () => {
+    const { stdout } = await runScript(
+      {
+        NEXT_PUBLIC_SITE_URL: "https://example.com",
+        NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:1",
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon-key",
+        NEXT_PUBLIC_DEMO_MODE: "false",
+        NEXT_PUBLIC_SITE_INDEXING_ENABLED: "false",
+        TRUSTED_PROXY_HEADER: "eo-connecting-ip",
+        RATE_LIMIT_FALLBACK_SECRET: "a".repeat(32),
+        OUTBOX_DISPATCH_SECRET: "a".repeat(16),
+        ALLOW_SCHEMA_COMPATIBILITY_FALLBACK: "TRUE",
+      },
+      ["--", "--mode=production"],
+    );
+    const line = stdout
+      .split("\n")
+      .find((l) => l.includes("ALLOW_SCHEMA_COMPATIBILITY_FALLBACK"));
+    expect(line).toBeTruthy();
+    // "TRUE" must NOT opt in — should PASS (treated as not-true)
+    expect(line!.toUpperCase()).toContain("PASS");
+  });
+
+  it("WARNs in staging mode when ALLOW_SCHEMA_COMPATIBILITY_FALLBACK=true", async () => {
+    const { stdout } = await runScript(
+      {
+        NEXT_PUBLIC_SITE_URL: "https://staging.example.com",
+        NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:1",
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon-key",
+        NEXT_PUBLIC_DEMO_MODE: "false",
+        NEXT_PUBLIC_SITE_INDEXING_ENABLED: "false",
+        TRUSTED_PROXY_HEADER: "eo-connecting-ip",
+        RATE_LIMIT_FALLBACK_SECRET: "a".repeat(32),
+        OUTBOX_DISPATCH_SECRET: "a".repeat(16),
+        ALLOW_SCHEMA_COMPATIBILITY_FALLBACK: "true",
+      },
+      ["--", "--mode=staging"],
+    );
+    const line = stdout
+      .split("\n")
+      .find((l) => l.includes("ALLOW_SCHEMA_COMPATIBILITY_FALLBACK"));
+    expect(line).toBeTruthy();
+    expect(line!.toUpperCase()).toContain("WARN");
+  });
+
+  it("PASSes in staging mode when ALLOW_SCHEMA_COMPATIBILITY_FALLBACK is unset", async () => {
+    const { stdout } = await runScript(
+      {
+        NEXT_PUBLIC_SITE_URL: "https://staging.example.com",
+        NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:1",
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon-key",
+        NEXT_PUBLIC_DEMO_MODE: "false",
+        NEXT_PUBLIC_SITE_INDEXING_ENABLED: "false",
+        TRUSTED_PROXY_HEADER: "eo-connecting-ip",
+        RATE_LIMIT_FALLBACK_SECRET: "a".repeat(32),
+        OUTBOX_DISPATCH_SECRET: "a".repeat(16),
+      },
+      ["--", "--mode=staging"],
+    );
+    const line = stdout
+      .split("\n")
+      .find((l) => l.includes("ALLOW_SCHEMA_COMPATIBILITY_FALLBACK"));
+    expect(line).toBeTruthy();
+    expect(line!.toUpperCase()).toContain("PASS");
+  });
+});
