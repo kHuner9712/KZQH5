@@ -21,12 +21,11 @@ import type { Database } from "@/types/database";
 import type { AdminWriteErrorCode } from "@/lib/services/admin-write-boundary";
 import { createAdminClient } from "@/lib/supabase/admin";
 import {
-  extractFileExtension,
-  getExtensionForMimeType,
   sanitizeStoragePath,
   validateFileSize,
   validateMimeExtensionConsistency,
   validateMimeType,
+  validateUploadFile,
   verifyMagicBytes,
 } from "@/lib/validation/storage";
 
@@ -143,52 +142,42 @@ function isAllowedCategory(value: string): value is PrivateAssetCategory {
 /**
  * 校验上传文件的 MIME / 大小 / Magic Bytes / 扩展名一致性。
  * 最终扩展名由 MIME 决定，不信任客户端文件名。
+ *
+ * KZQ-P0-005-a: Delegates to the shared `validateUploadFile` from
+ * `lib/validation/storage.ts` so that single-stage and two-stage
+ * upload paths use the SAME validation pipeline and cannot drift.
+ * This wrapper maps the shared fixed error codes to the
+ * `AdminWriteErrorCode` union expected by the single-stage route.
  */
-function validateUploadFile(input: {
+function validateSingleStageUploadFile(input: {
   mimeType: string;
   size: number;
   filename: string;
   bytes: Uint8Array;
 }): { ok: true; mimeType: string; ext: string } | { ok: false; code: AdminWriteErrorCode } {
-  // 1. MIME 白名单 —— SVG / HTML / JS / 可执行内容在此被拒绝
-  const mimeResult = validateMimeType(input.mimeType, PRIVATE_ASSETS_ALLOWED_MIME);
-  if (!mimeResult.ok) {
-    return { ok: false, code: "ADMIN_WRITE_UNSUPPORTED_MEDIA" };
+  const result = validateUploadFile({
+    mimeType: input.mimeType,
+    size: input.size,
+    filename: input.filename,
+    bytes: input.bytes,
+    allowedMime: PRIVATE_ASSETS_ALLOWED_MIME,
+    maxSizeByMime: MIME_MAX_SIZE,
+  });
+
+  if (!result.ok) {
+    // Map shared validation error codes to AdminWriteErrorCode.
+    const code: AdminWriteErrorCode =
+      result.error === "MIME_NOT_ALLOWED"
+        ? "ADMIN_WRITE_UNSUPPORTED_MEDIA"
+        : result.error === "SIZE_EXCEEDS_LIMIT"
+          ? "ADMIN_WRITE_PAYLOAD_TOO_LARGE"
+          : result.error === "MAGIC_BYTES_MISMATCH"
+            ? "ADMIN_WRITE_UNSUPPORTED_MEDIA"
+            : "ADMIN_WRITE_BAD_REQUEST"; // EXTENSION_MIME_INCONSISTENT
+    return { ok: false, code };
   }
 
-  const mimeType = input.mimeType.toLowerCase().trim();
-  const maxSize = MIME_MAX_SIZE[mimeType];
-
-  // 2. 大小校验（按类型上限）
-  const sizeResult = validateFileSize(input.size, maxSize);
-  if (!sizeResult.ok) {
-    return { ok: false, code: "ADMIN_WRITE_PAYLOAD_TOO_LARGE" };
-  }
-
-  // 3. Magic Bytes —— 必须在读取实际字节后执行，防止 MIME 伪造
-  const magicResult = verifyMagicBytes(input.bytes, mimeType);
-  if (!magicResult.ok) {
-    return { ok: false, code: "ADMIN_WRITE_UNSUPPORTED_MEDIA" };
-  }
-
-  // 4. KZQ-P0-004: Final extension comes from the verified MIME type,
-  //    NOT from the user-supplied filename. The filename extension is
-  //    still cross-checked for consistency (defense in depth: a mismatch
-  //    is rejected), but the final object path uses the MIME-canonical
-  //    extension. This prevents an attacker from controlling the final
-  //    object extension via a crafted filename (e.g. "evil.html" with
-  //    an image/jpeg MIME is rejected at the consistency check; a
-  //    filename without an extension still produces a ".jpg" object).
-  const fileExt = extractFileExtension(input.filename);
-  if (fileExt) {
-    const consistency = validateMimeExtensionConsistency(mimeType, fileExt);
-    if (!consistency.ok) {
-      return { ok: false, code: "ADMIN_WRITE_BAD_REQUEST" };
-    }
-  }
-  const ext = getExtensionForMimeType(mimeType);
-
-  return { ok: true, mimeType, ext };
+  return { ok: true, mimeType: result.mimeType, ext: result.ext };
 }
 
 /**
@@ -426,7 +415,7 @@ export async function uploadToPrivateAssets(
     return { ok: false, code: "ADMIN_WRITE_BAD_REQUEST" };
   }
 
-  const validated = validateUploadFile(input);
+  const validated = validateSingleStageUploadFile(input);
   if (!validated.ok) return validated;
 
   const path = generatePrivateStoragePath(input.category, validated.ext);
@@ -581,7 +570,7 @@ export async function uploadToPublicAssets(
     return { ok: false, code: "ADMIN_WRITE_BAD_REQUEST" };
   }
 
-  const validated = validateUploadFile(input);
+  const validated = validateSingleStageUploadFile(input);
   if (!validated.ok) return validated;
 
   const path = generatePublicStoragePath(input.category, validated.ext);
