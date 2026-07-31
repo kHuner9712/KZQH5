@@ -13,7 +13,7 @@ blindly — re-verify against real code before starting any task.
 - Node version (engines): `20.x` (local runtime v24.15.0 used for tooling only)
 - Next.js version: `15.5.21`
 - Supabase client version: `@supabase/supabase-js 2.109.0`, `@supabase/ssr 0.12.0`
-- Last updated: 2026-08-01 (KZQ-P1-011-b completed)
+- Last updated: 2026-08-01 (KZQ-P1-012 completed)
 
 ## Status Values
 
@@ -64,7 +64,7 @@ column records the file and line where the decision was made.
 | KZQ-P1-011 | P1 | Epic D 限流与 Origin | Production distributed rate limiting boundary (workstream — split into atomic sub-tasks) | in_progress | — | — | per sub-task | Workstream split: a (release-readiness distributed rate-limit gate + WAF docs hardening + fail-closed decision) DONE; b (PostgreSQL atomic rate-limit RPC + PostgresRateLimiter implementation) DONE; c (EdgeOne WAF manual verification evidence gate) pending |
 | KZQ-P1-011-a | P1 | Epic D 限流与 Origin | Release-readiness distributed rate-limit gate + WAF docs hardening + fail-closed decision | completed | `trae/p1-011a-distributed-rate-limit-boundary` | (this commit) | `npm run typecheck && npm run lint && npx vitest run tests/unit/release-readiness.test.ts` → PASS (2 new tests) | `scripts/check-release-readiness.mjs` now BLOCKs production deployments when `WAF_RATE_LIMIT_VERIFIED` is not exactly `"true"` (fail-closed decision: the per-process `MemoryRateLimiter` is not a production-grade cross-instance rate limit; EdgeOne WAF / Rate Limiting rules per `docs/EDGEONE_WAF_RULES.md` provide the floor). Staging WARNs when unset. `docs/EDGEONE_WAF_RULES.md` hardened with acceptance criteria; `docs/LAUNCH_CHECKLIST.md` documents the manual verification step. 2 new tests: production missing → BLOCK, staging missing → WARN |
 | KZQ-P1-011-b | P1 | Epic D 限流与 Origin | PostgreSQL atomic rate-limit RPC + PostgresRateLimiter driver | completed | `trae/p1-011b-postgres-rate-limiter` | (this commit) | `npm run typecheck && npm run lint && npx vitest run tests/unit/rate-limit.test.ts tests/unit/migration-distributed-rate-limit-safety.test.ts` → PASS (75 tests); `npm run test:database` → PASS (fresh install + incremental upgrade); `node scripts/check-migration-immutability.mjs --verify-against-ref=origin/main` → PASS (53 unchanged + 1 new appended) | New forward-only migration `supabase/migrations/20260801000000_distributed_rate_limit_rpc.sql` (DB ledger row #55): `rate_limit_counters` table (PK bucket/key/window_start, RLS enabled, revoke ALL from public/anon/authenticated) + `rate_limit_check(text,text,integer,integer)` atomic fixed-window increment RPC + `rate_limit_cleanup_expired(integer)` best-effort cleanup RPC. Both RPCs SECURITY INVOKER + `search_path=''` + EXECUTE to service_role ONLY; fixed error codes (`invalid_bucket`/`invalid_key`/`invalid_max_count`/`invalid_window_seconds`/`invalid_older_than_seconds`); fixed-window `floor(epoch/window)*window`; atomic `INSERT ... ON CONFLICT DO UPDATE`. `lib/services/rate-limit.ts`: new `PostgresRateLimiter` (strict RPC parsing — transport error/null/malformed/`ok!==true` → fail-open per P1-011-a decision matrix, never throws), `getRateLimitDriver()`, `createRateLimiter()` factory, admin client lazy dynamic import. `.env.example` adds `RATE_LIMIT_DRIVER` (only exact `"postgres"` enables the driver; unknown values fall back to memory). 15 new unit tests (PostgresRateLimiter fail-open/RPC forwarding/driver selection) + 20 static migration-safety tests (forward-only, RLS, service_role-only grants, fixed-window semantics). 3 pre-existing Windows release-readiness baseline failures reproduced (STATUS_STACK_BUFFER_OVERRUN), unchanged by this task |
-| KZQ-P1-012 | P1 | Epic D 限流与 Origin | Strict canonical origin validation (`CANONICAL_APP_ORIGIN`) | pending | — | — | `npx vitest run tests/unit/http-security.test.ts` | `lib/security/http-security.ts:251-298` `isSameOrigin` compares Origin against `x-forwarded-host`/`host`; NO `CANONICAL_APP_ORIGIN` env var exists; port-mismatch bug IS handled (:292-297) but no canonical allowlist |
+| KZQ-P1-012 | P1 | Epic D 限流与 Origin | Strict canonical origin validation (`CANONICAL_APP_ORIGIN`) | completed | `trae/p1-012-canonical-origin-validation` | (this commit) | `npm run typecheck && npm run lint && npx vitest run tests/unit/http-security-origin.test.ts tests/unit/canonical-origin.test.ts` → PASS (76 tests: 43 origin incl. 20 new canonical-path + 33 config). Consumer regression check: `npx vitest run tests/unit/admin-rbac.test.ts tests/unit/rate-limit.test.ts` → PASS (57 tests) | New pure config module `lib/config/canonical-origin.ts` (no Next.js runtime dep) reads `CANONICAL_APP_ORIGIN` + `CANONICAL_APP_ORIGIN_ALTERNATES` (comma-separated), parses each into a normalized `{protocol, hostname, port}` where port is resolved to the protocol default (https→443, http→80); exports `getCanonicalOriginConfig()`, `isCanonicalOriginConfigured()`, `originsEqual()`, `defaultPortFor()`, `normalizePort()`. Invalid entries silently dropped (one-time production `CANONICAL_ORIGIN_CONFIG_WARNING` when primary is set but yields zero valid origins). `lib/services/http-security.ts:257-314` `isSameOrigin` now has TWO paths: (1) canonical path (production) — when ≥1 valid canonical origin is configured, compares the browser Origin directly against the canonical origin(s) with STRICT protocol + case-insensitive hostname + normalized port; the client-injectable `x-forwarded-host`/`host` headers are NOT consulted at all, so a malicious forwarded host cannot bypass CSRF; (2) dev fallback (no canonical configured) — preserves the existing forwarded-host comparison so localhost/dev is unaffected, BUT fixes the port-normalization bug: `https://example.com:8080` vs host `example.com` (no port) previously passed, now 8080≠443→rejected. `isSameOriginOrTrustedReader`/`isSameSiteRequest` delegate to `isSameOrigin` so they inherit both paths. `.env.example` documents both vars with Chinese comments. Added 33 config-module tests (`tests/unit/canonical-origin.test.ts`) + 20 canonical-path tests appended to `tests/unit/http-security-origin.test.ts` (TLS termination with http internal proto, malicious x-forwarded-host ignored both directions, host-missing accepted, port normalization explicit/implicit default 443 + non-default 8443, alternates allowlist, protocol/hostname/subdomain mismatch, case-insensitive host, fail-closed missing/malformed Origin, http localhost dev canonical). All 23 pre-existing dev-fallback tests still pass unchanged. No migration, no CSP change, no HSTS/Reporting-Endpoint change (KZQ-P1-013), no middleware change |
 | KZQ-P1-013 | P1 | Epic D 限流与 Origin | HSTS & CSP reporting endpoint external protocol | pending | — | — | `npx vitest run tests/unit/middleware.test.ts` | `middleware.ts:113-118` HSTS set on HTTPS only (good); `:106` `new URL(CSP_REPORT_PATH, request.url)` derives Reporting-Endpoints from forwarded host, NOT canonical origin — can produce `http://` URLs |
 | KZQ-P1-020 | P1 | Epic E 管理员身份 | Admin login error standardization | pending | — | — | `npx vitest run tests/unit/login-form.test.ts` (to be added) | `components/admin/LoginForm.tsx:46` `setError(signInError.message \|\| "登录失败…")` leaks raw Supabase error to UI; `:53` leaks exception `err.message`; login is client-side only (no server route to standardize) |
 | KZQ-P1-021 | P1 | Epic E 管理员身份 | Admin login brute force protection | pending | — | — | `npm run check:release-readiness` | No server-side login API route; login via client-side `supabase.auth.signInWithPassword` in `LoginForm.tsx:40`; no dedicated login rate-limit bucket in `rate-limit.ts`; no captcha |
@@ -108,14 +108,15 @@ suffix such as `-a`, `-b`) and is executed one per round.
 Per the priority order `P0 → P1 → P2 → Framework Upgrade`, and within each
 priority by Task ID order, the next atomic task to execute is:
 
-**KZQ-P1-012** — Strict canonical origin validation (`CANONICAL_APP_ORIGIN`).
+**KZQ-P1-013** — HSTS & CSP Reporting Endpoint external protocol.
 
-KZQ-P1-011-a (release-readiness distributed rate-limit gate) is complete.
-KZQ-P1-011-b (PostgreSQL atomic rate-limit RPC + PostgresRateLimiter driver)
-is complete. KZQ-P1-011-c (EdgeOne WAF manual verification evidence gate)
-remains pending as the last sub-task of the KZQ-P1-011 workstream, but
-KZQ-P1-012 is the next unblocked P1 task by Task ID order. The workstream
-sub-task c can be revisited when prioritized.
+All P0 tasks are complete (Epic A and Epic B fully done). Within P1,
+KZQ-P1-001 / P1-003 / P1-004(a,c,d,e) / P1-010 / P1-011-a / P1-012 are
+completed. KZQ-P1-002 (and its dependent KZQ-P1-004-b) remain BLOCKED on a
+human CSP violation audit. KZQ-P1-013 is the next unblocked P1 task by Task
+ID order. The remaining KZQ-P1-011 workstream sub-tasks (b: PostgreSQL
+atomic RPC, c: EdgeOne WAF evidence gate) stay pending and can be
+revisited when prioritized; they do not block KZQ-P1-013.
 
 Status summary:
 - All P0 tasks complete (Epic A and Epic B fully done)
@@ -142,16 +143,19 @@ Status summary:
 - KZQ-P1-004 workstream complete (a/c/d/e done; only b remains BLOCKED by
   KZQ-P1-002)
 - KZQ-P1-010 completed (pre-auth coarse rate limiting — 30/60s limiter
+  checked BEFORE getVerifiedAdmin in both requireAdminWrite and
+  requireAdminRead; unauthenticated attackers now consume quota)
 - KZQ-P1-011-a completed (release-readiness WAF gate + fail-closed matrix)
 - KZQ-P1-011-b completed (PostgreSQL atomic rate-limit RPC + PostgresRateLimiter
   driver; migration 20260801000000 registered in manifest, DB fresh/upgrade PASS)
 - KZQ-P1-011-c pending (EdgeOne WAF manual verification evidence gate —
   requires human console config + evidence, see docs/EDGEONE_WAF_RULES.md)
-  checked BEFORE getVerifiedAdmin in both requireAdminWrite and
-  requireAdminRead; unauthenticated attackers now consume quota)
-- KZQ-P1-011 is the next unblocked P1 task: production distributed rate
-  limiting boundary (EdgeOne WAF / Postgres RPC / Redis) — the in-memory
-  limiter is per-process only and needs a cross-instance floor.
+- KZQ-P1-012 completed (strict canonical origin validation —
+  `CANONICAL_APP_ORIGIN` config + canonical-path `isSameOrigin` that
+  ignores client-injectable forwarded host; port-normalization bug fixed
+  in the dev fallback)
+- KZQ-P1-013 is the next unblocked P1 task: HSTS & CSP Reporting Endpoint
+  external protocol.
 
 ## Acceptance Commands Reference
 
