@@ -75,7 +75,25 @@ export function LoginForm() {
         return;
       }
 
-      router.push("/admin");
+      // KZQ-P1-022-c: after password sign-in (aal1), check whether the
+      // account has a verified MFA factor. If nextLevel is "aal2", the
+      // session must be upgraded via the MFA challenge before the admin
+      // can enter the dashboard. Fail-closed: an AAL probe error also
+      // routes to the challenge page — it re-evaluates the AAL itself
+      // and redirects accounts without MFA back to /admin, so no
+      // MFA-protected account is silently admitted.
+      let needsMfaChallenge = true;
+      try {
+        const { data: aal, error: aalError } =
+          await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+        needsMfaChallenge = aalError
+          ? true
+          : aal?.nextLevel === "aal2";
+      } catch {
+        needsMfaChallenge = true;
+      }
+
+      router.push(needsMfaChallenge ? "/admin/mfa/challenge" : "/admin");
       router.refresh();
     } catch {
       // KZQ-P1-020: never surface the raw exception message (it may

@@ -58,6 +58,48 @@ describe("KZQ-P1-022-b: MFA enrollment integration exists (supersedes the no-int
   });
 });
 
+describe("KZQ-P1-022-c: MFA challenge gate integration exists", () => {
+  const challenge = read("components/admin/MfaChallenge.tsx");
+  const loginForm = read("app/admin/login/LoginForm.tsx");
+
+  it("the challenge page exists outside the (protected) group", () => {
+    // The (protected) layout runs getVerifiedAdmin() (aal1 passes) — the
+    // challenge gate MUST live outside it, or an admin would reach the
+    // dashboard without completing the challenge.
+    const page = read("app/admin/mfa/challenge/page.tsx");
+    expect(page).toContain("MfaChallenge");
+  });
+
+  it("the challenge component calls challenge and verify", () => {
+    expect(challenge).toContain("mfa.challenge");
+    expect(challenge).toContain("mfa.verify");
+  });
+
+  it("the challenge component evaluates the assurance level before gating", () => {
+    expect(challenge).toContain("getAuthenticatorAssuranceLevel");
+    expect(challenge).toContain("aal.currentLevel === \"aal2\"");
+  });
+
+  it("the login form routes to the challenge page when a factor exists", () => {
+    expect(loginForm).toContain("/admin/mfa/challenge");
+    expect(loginForm).toContain("getAuthenticatorAssuranceLevel");
+    expect(loginForm).toMatch(/nextLevel === "aal2"/);
+  });
+
+  it("the login form routes fail-closed to the challenge page on AAL probe failure", () => {
+    // A thrown or errored AAL probe must NOT admit the admin to /admin —
+    // the challenge page re-evaluates the AAL and redirects non-MFA
+    // accounts back, so fail-closed is safe.
+    expect(loginForm).toMatch(/needsMfaChallenge = true/);
+  });
+
+  it("getVerifiedAdmin still has no AAL check (server guard is sub-task d)", () => {
+    const adminAuth = read("lib/services/admin-auth.ts");
+    expect(adminAuth).not.toContain("getAuthenticatorAssuranceLevel");
+    expect(adminAuth).not.toMatch(/\baal\b/i);
+  });
+});
+
 describe("KZQ-P1-022-a: no AAL gate in the SSR session middleware", () => {
   it("does not reference the aal claim in the SSR session middleware", () => {
     const middleware = read("lib/supabase/middleware-session.ts");

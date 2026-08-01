@@ -99,8 +99,19 @@ RBAC + CSRF），但当前**均不要求 AAL2**。step-up 应优先覆盖：
    错误全部经 `lib/security/mfa-errors.ts` `mapMfaError()` 映射为固定中文文案，
    qr_code/secret/uri 仅在绑定步骤展示、绝不写日志。
    AdminShell 导航新增「账号安全」入口。
-2. **c（Challenge）**：`auth.mfa.challenge()` 后进入 challenge 输入页，验证
-   TOTP 码；未通过不进入后台。
+2. **c（Challenge）** ✅ 已完成（`trae/p1-022c-mfa-challenge`）：
+   `app/admin/mfa/challenge/page.tsx` + `components/admin/MfaChallenge.tsx`
+   在密码登录后建立 MFA challenge 门控——`LoginForm.tsx` 登录成功后调用
+   `mfa.getAuthenticatorAssuranceLevel()` 分流：`nextLevel === "aal2"`
+   （存在已验证因子）→ 跳转 `/admin/mfa/challenge`；探测失败 fail-closed
+   同样路由到 challenge 页（该页自行评估并回跳无因子账号），不绕过 MFA。
+   challenge 页位于 `(protected)` 分组之外（避免 `getVerifiedAdmin()` 在
+   challenge 前放行）：无 session → `/admin/login`；已 aal2 → `/admin`；
+   无已验证因子 → `/admin`；有因子 → `mfa.challenge()` 发一次性 challenge →
+   输入 6 位码 → `mfa.verify()` 成功后 SDK 保存 aal2 会话进入后台；
+   verify 失败时 challenge id 已消费，重新签发再试。错误全部经
+   `mapMfaError()` 映射为固定中文文案。verify/challenge/enroll 的 code
+   仅发送至 Supabase Auth，绝不经过自有 API。
 3. **d（Server guard）**：在 `getVerifiedAdmin()` 增加 AAL 检查：
    `sessionClient.auth.mfa.getAuthenticatorAssuranceLevel()`，
    `currentLevel !== "aal2"` → 重定向到 MFA challenge（返回固定 stage 值，
