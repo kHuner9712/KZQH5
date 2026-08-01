@@ -227,3 +227,4 @@
 - [ ] **平台侧（人工验收）**: 同一页面 **Push protection** 为 Enabled；推送含测试密钥的 commit 会被 GitHub 拒绝——KZQ-P2-012-b
 - [ ] **平台侧（人工验收）**: `Security → Secret scanning` 页面有扫描记录；历史泄露密钥（如 `Import .env`）已定位并轮换——KZQ-P2-012-b
 - [ ] 详细步骤见 `docs/SECRET_SCANNING_CONFIG.md`；**不得在仓库中伪造不存在的 secret-scanning 配置文件假装已启用**——KZQ-P2-012-b
+- [ ] **SBOM 已配置**：`.github/workflows/sbom.yml` 存在（main push 时用内置 `npm sbom` 生成 CycloneDX + SPDX，上传 `sbom` artifact，含重建 diff 重现性验证）——KZQ-P2-012-c
