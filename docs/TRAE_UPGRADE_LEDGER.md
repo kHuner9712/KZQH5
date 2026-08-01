@@ -13,7 +13,7 @@ blindly — re-verify against real code before starting any task.
 - Node version (engines): `20.x` (local runtime v24.15.0 used for tooling only)
 - Next.js version: `15.5.21`
 - Supabase client version: `@supabase/supabase-js 2.109.0`, `@supabase/ssr 0.12.0`
-- Last updated: 2026-08-01 (KZQ-P1-021 completed)
+- Last updated: 2026-08-01 (KZQ-P1-022-a completed)
 
 ## Status Values
 
@@ -68,7 +68,8 @@ column records the file and line where the decision was made.
 | KZQ-P1-013 | P1 | Epic D 限流与 Origin | HSTS & CSP reporting endpoint external protocol | completed | `trae/p1-013-hsts-csp-reporting-protocol` | (this commit) | `npm run typecheck && npm run lint && npx vitest run tests/unit/middleware-hsts-reporting.test.ts tests/unit/middleware-session.test.ts` → PASS (25 new + 41 existing = 66 tests) | `middleware.ts` now has two helpers: `getUserFacingProtocol(request)` checks `x-forwarded-proto` (trusted EdgeOne proxy header, first value of comma-separated list, case-insensitive) and falls back to `request.nextUrl.protocol` — HSTS now set on user-facing HTTPS even when internal origin protocol is http (TLS termination fix); `buildCspReportEndpointUrl(request)` uses canonical origin `canonical.origins[0].display + CSP_REPORT_PATH` when configured (always `https://`, never mixed-content) and falls back to user-facing proto + forwarded host in dev. Both fixes import `getCanonicalOriginConfig` from `@/lib/config/canonical-origin` (KZQ-P1-012). `docs/EDGEONE_WAF_RULES.md` §9 added: two-layer HSTS model (EdgeOne edge = primary for cache hits/WAF/redirects that never reach origin; app middleware = supplement for origin-reaching requests), console checklist updated with HSTS + `CANONICAL_APP_ORIGIN` items. 25 new tests cover: TLS termination HSTS (internal http + x-forwarded-proto https), direct HTTPS, direct HTTP (no HSTS), comma-separated proxy chain (first value wins), case-insensitive, invalid proto fallback, admin+public HSTS, canonical origin reporting endpoint (always https, ignores x-forwarded-host, explicit/default port, primary-not-alternates), dev fallback (forwarded proto+host, request.url, localhost), mixed-content prevention (never http:// on https pages), header format, regression (other security headers present). Existing `middleware-session.test.ts` 41 tests still pass — the HSTS test at line 519 (`new NextRequest("https://kzq.test/admin")`) still passes because `getUserFacingProtocol` returns "https" (no x-forwarded-proto header → falls back to request.nextUrl.protocol which is "https:"). Stacked on KZQ-P1-012 branch (canonical-origin module dependency). No migration, no CSP mode change, no rate-limit change |
 | KZQ-P1-020 | P1 | Epic E 管理员身份 | Admin login error standardization | completed | `trae/p1-020-admin-login-error-standardization` | (this commit) | `npm run typecheck && npm run lint && npx vitest run tests/unit/login-errors.test.ts tests/unit/login-form.test.tsx` → PASS (16 + 6 = 22 tests) | New pure mapping module `lib/security/login-errors.ts` — the ONLY place that maps any login error to a fixed Chinese message. `mapLoginError(err)` classifies via `error.code` (preferred: `invalid_credentials`, `email_not_confirmed`) then message keywords (case-insensitive: invalid credentials / wrong password / email not confirmed / too many / rate limit / for security purposes); anything unrecognized → generic fixed message. The raw provider text is NEVER returned. `app/admin/login/LoginForm.tsx:46` now calls `mapLoginError(signInError)` instead of showing `signInError.message`; `:53` catch branch now shows fixed `LOGIN_ERROR_MESSAGES.UNEXPECTED` instead of leaking `err.message`. Fixed whitelist: `INVALID_CREDENTIALS`（邮箱或密码错误，请重新输入）, `EMAIL_NOT_CONFIRMED`（邮箱尚未验证…）, `RATE_LIMITED`（尝试次数过多，请稍后再试）, `GENERIC`（登录失败，请检查邮箱和密码后重试）, `UNEXPECTED`（登录异常，请稍后重试）. Tests: `tests/unit/login-errors.test.ts` (16 pure-function tests: code/message classification, null/undefined/string/non-string fallback, raw-text-leak assertion that returned strings never contain provider phrases and always belong to the whitelist) + `tests/unit/login-form.test.tsx` (6 UI tests in jsdom: fixed Chinese message for invalid credentials / unconfirmed email / unknown error, unexpected-message on client-init throw, success redirect to /admin, empty-field local validation before calling Supabase). No migration, no server route, no CSP change |
 | KZQ-P1-021 | P1 | Epic E 管理员身份 | Admin login brute force protection | completed | `trae/p1-021-admin-login-brute-force` | (this commit) | `npm run typecheck && npm run lint && npx vitest run tests/unit/admin-login-guard.test.ts tests/unit/login-form.test.tsx tests/unit/login-errors.test.ts` → PASS (5 + 8 + 16 = 29 tests) | New server-side login guard endpoint `app/api/admin/login-guard/route.ts` (POST, body ignored — credentials NEVER sent/parsed). Guard uses new `getLoginRateLimiter()` (`lib/services/rate-limit.ts`, 5 req/min) via `checkRateLimitKeys` (trusted IP → per-IP bucket; no trusted IP → shared `fallback:global` floor + optional HMAC sub-bucket) — counting and over-limit decision are entirely server-side, never client counters. Over-limit → 429 + fixed Chinese message (`LOGIN_ERROR_MESSAGES.RATE_LIMITED`) + Retry-After + Cache-Control: no-store; logs only coarse `ADMIN_LOGIN_RATE_LIMITED`. `LoginForm.tsx` calls the guard BEFORE `signInWithPassword`; 429 blocks sign-in, guard outage → fail-open (real floor is Supabase Auth built-in login rate limiting + EdgeOne WAF). Docs: `docs/EDGEONE_WAF_RULES.md` §2.12 (guard policy + honest boundary: direct Supabase Auth calls bypass the app — Auth dashboard per-IP/per-email limits + WAF rule are the real floor) + WAF rule suggestions + acceptance; `docs/LAUNCH_CHECKLIST.md` 后台检查 adds 4 acceptance items (incl. 2 platform-side manual items). Tests: `tests/unit/admin-login-guard.test.ts` (5: under-limit 200 no-store, 6th 429 + fixed message + Retry-After, per-IP independence, unknown-IP global floor header-rotation bypass prevention, body ignored) + `login-form.test.tsx` +2 (guard 429 blocks sign-in with fixed message and no Supabase call; guard unreachable → fail-open continues). No migration, no CAPTCHA, no server-side login proxy refactor (avoids breaking the existing browser cookie session model) |
-| KZQ-P1-022 | P1 | Epic E 管理员身份 | Admin MFA / AAL2 (workstream — split into 6 atomic sub-tasks) | pending | — | — | per sub-task | Grep for `mfa\|aal2\|totp\|enrolled_factors\|authenticator-assurance` found 0 real matches; MFA completely absent. Must split: 1) audit, 2) enrollment, 3) challenge, 4) server guard, 5) step-up, 6) E2E+docs |
+| KZQ-P1-022 | P1 | Epic E 管理员身份 | Admin MFA / AAL2 (workstream — split into 6 atomic sub-tasks) | in_progress | — | — | per sub-task | Workstream split: a (数据与 Auth 能力审计) completed, b (Enrollment) pending, c (Challenge) pending, d (Server guard) pending, e (敏感操作 step-up) pending, f (E2E 与文档) pending. 审计交付物 `docs/SECURITY_AUDIT_MFA_AAL2.md` 确认：数据模型无缺口（MFA 状态由 auth schema 管理，无需 migration）；SDK 能力完备（auth-js 内建 enroll/challenge/getAuthenticatorAssuranceLevel）；`getVerifiedAdmin()` 当前不检查 AAL（aal1 密码会话即可访问全部后台）——真实缺口，继续子任务 b-f；Supabase Auth Dashboard 启用 MFA 为人工配置前提 |
+| KZQ-P1-022-a | P1 | Epic E 管理员身份 | MFA/AAL2 数据与 Auth 能力审计（只读） | completed | `trae/p1-022a-mfa-auth-audit` | (this commit) | `npm run typecheck && npm run lint && npx vitest run tests/unit/mfa-aal2-audit.test.ts` → PASS (18 tests) | AUDIT RESULT (交付物 `docs/SECURITY_AUDIT_MFA_AAL2.md`, 98 行): (1) 数据模型—`admin_profiles` 仅 id/email/role，**无需** MFA 列（MFA 状态由 auth schema 的 mfa_factors/mfa_challenges 管理，不建 migration）；(2) Auth 能力—`@supabase/auth-js` 2.x（supabase-js 2.109.0 内建）已含 `mfa.enroll()`/`challenge()`/`verify()`/`listFactors()`/`getAuthenticatorAssuranceLevel()`，**无需升级依赖**；(3) 当前集成—全库 grep 零命中，`getVerifiedAdmin()`（`lib/services/admin-auth.ts`）仅 `auth.getUser()` + admin_profiles 查询，**不检查 AAL**（aal1 密码会话可访问全部后台）；`middleware-session.ts` 无 aal 解析；(4) step-up 目标清单—询盘导出 `/api/admin/inquiries/export`、存储 `/storage/upload|authorize|finalize|object|publish|cleanup`、资料 `product-assets/certificates publish`、CMS 写路由；(5) 平台前提—Supabase Auth Dashboard 启用 MFA（TOTP，Enrollment Optional/Required）为人工配置，未虚假标记已部署；(6) 实施路线—子任务 b（Enrollment）、c（Challenge）、d（Server guard: getVerifiedAdmin 增加 AAL 检查）、e（step-up）、f（E2E+文档）。TESTS: `tests/unit/mfa-aal2-audit.test.ts` 18 静态契约测试（源码无 MFA 关键词、admin-auth 无 AAL 检查、schema 无 MFA 列、敏感端点存在、SDK 能力基线、middleware 无 aal）。无 UI 占位、无功能代码、无 migration、无 Auth 配置变更 |
 | KZQ-P2-001 | P2 | Epic F 性能结构 | Admin verify request-level dedup | pending | — | — | `npx vitest run tests/unit/admin-auth.test.ts` (to be added) | `app/admin/(protected)/layout.tsx:31` + `app/admin/(protected)/page.tsx:28` both call `getVerifiedAdmin()`; `admin-auth.ts` has no React `cache()` or request-scoped memoization; `auth.getUser()` + `admin_profiles` query run multiple times per request |
 | KZQ-P2-002 | P2 | Epic F 性能结构 | Dashboard query convergence | in_progress | — | — | `npx vitest run tests/unit/admin-dashboard.test.ts` | Primary path uses single `get_admin_dashboard_snapshot` RPC (`admin-dashboard.ts:141`); 5-query fallback at `:193-237` still retained for schema/permission error — fallback removal pending KZQ-P0-010 |
 | KZQ-P2-003 | P2 | Epic F 性能结构 | Unified media domain config | pending | — | — | `npx vitest run tests/unit/media-domain-config.test.ts` (to be added) | No shared config module; `next.config.mjs:134-135`, `lib/security/csp-policy.ts:33,54`, `scripts/check-release-readiness.mjs:706` each independently read `NEXT_PUBLIC_SUPABASE_URL`/`MEDIA_CDN_DOMAINS`; no `lib/config/media-domains.ts` |
@@ -107,22 +108,23 @@ suffix such as `-a`, `-b`) and is executed one per round.
 
 Per the priority order `P0 → P1 → P2 → Framework Upgrade`, and within each
 priority by Task ID order, the next atomic task to execute is:
-**KZQ-P1-022** — Admin MFA / AAL2 (workstream — first sub-task: data & Auth
-capability audit).
+**KZQ-P1-022-b** — Admin MFA / AAL2 enrollment (TOTP factor enrollment UI +
+`auth.mfa.enroll` flow).
 
 All P0 tasks are complete (Epic A and Epic B fully done). Within P1,
 KZQ-P1-001 / P1-003 / P1-004(a,c,d,e) / P1-010 / P1-011-a / P1-011-b /
-P1-012 / P1-013 / P1-020 / P1-021 are completed. KZQ-P1-002 (and its
-dependent KZQ-P1-004-b) remain BLOCKED on a human CSP violation audit.
-Epic D (限流与 Origin 安全边界) core P1 tasks are complete. Epic E (管理员
-身份安全): P1-020 (error standardization) and P1-021 (login brute-force
-protection — server-side guard + platform-side Auth/WAF floor) are done.
-KZQ-P1-022 is the next unblocked P1 task by Task ID order — a workstream
-that MUST be split into 6 atomic sub-tasks (audit, enrollment, challenge,
-server guard, step-up, E2E+docs); the next round executes only the first
-sub-task (data & Auth capability audit). The remaining KZQ-P1-011 workstream
-sub-task c (EdgeOne WAF evidence gate) stays pending and can be revisited
-when prioritized; it does not block KZQ-P1-022.
+P1-012 / P1-013 / P1-020 / P1-021 / P1-022-a are completed. KZQ-P1-002
+(and its dependent KZQ-P1-004-b) remain BLOCKED on a human CSP violation
+audit. Epic D (限流与 Origin 安全边界) core P1 tasks are complete. Epic E
+(管理员身份安全): P1-020/P1-021 done; P1-022 workstream sub-task a (数据与
+Auth 能力审计) completed — audit confirmed data model needs no migration,
+SDK has full MFA API, and `getVerifiedAdmin()` does not yet check AAL.
+P1-022-b (Enrollment) is the next atomic sub-task by workstream order.
+Platform prerequisite (manual): Supabase Auth Dashboard must enable MFA
+(TOTP) before b/f can be validated — see
+`docs/SECURITY_AUDIT_MFA_AAL2.md` §7. The remaining KZQ-P1-011 workstream
+sub-task c (EdgeOne WAF evidence gate) stays pending; it does not block
+P1-022-b.
 
 Status summary:
 - All P0 tasks complete (Epic A and Epic B fully done)
@@ -172,6 +174,10 @@ Status summary:
   `/api/admin/login-guard` (5 req/min per IP + global floor) + fixed 429
   message; platform floor: Supabase Auth built-in login limits + EdgeOne
   WAF rule documented as manual acceptance items)
+- KZQ-P1-022-a completed (MFA/AAL2 data & Auth capability audit — data
+  model needs no migration, SDK has full MFA API, getVerifiedAdmin lacks
+  AAL check; see `docs/SECURITY_AUDIT_MFA_AAL2.md`; next sub-task b:
+  Enrollment)
 
 ## Acceptance Commands Reference
 
