@@ -69,6 +69,12 @@
 - [ ] 登录 / 退出正常
 - [ ] 登录错误不显示 Supabase 原始英文报错（仅显示固定中文文案）——KZQ-P1-020
 - [ ] 同 IP 连续超过 5 次登录尝试后，页面显示固定限流文案且不再发起 Auth 调用——KZQ-P1-021
+- [ ] 启用 MFA 的管理员：密码登录后跳转 `/admin/mfa/challenge`，输入身份验证器验证码后进入后台——KZQ-P1-022
+- [ ] 未绑定 MFA 的管理员登录后直接进入后台（不锁死未启用账号）——KZQ-P1-022
+- [ ] `/admin/security` 可查看 MFA 状态、绑定 TOTP 因子；绑定后状态显示"已启用"——KZQ-P1-022
+- [ ] aal1 会话（登录后未完成 MFA challenge）调用敏感 API（如询盘导出）返回 401 + 固定码 `ADMIN_WRITE_MFA_REQUIRED`；完成 challenge 后同一接口返回 200——KZQ-P1-022
+- [ ] **平台侧（人工验收）**: Supabase Auth Dashboard → Authentication → Multi-factor Authentication 已启用 TOTP（Enrollment 策略明确为 Optional/Required）——KZQ-P1-022
+- [ ] **平台侧（人工验收）**: `npm run test:e2e:staging` 的 `staging-mfa.spec.ts` 全部通过（测试账号已绑定因子且提供 `STAGING_MFA_SECRET`）——KZQ-P1-022-f
 - [ ] **平台侧（人工验收）**: Supabase Auth Dashboard 已配置登录限流（Auth → Rate Limits，按 IP / 邮箱），直接调用 Auth API 超限返回 429——KZQ-P1-021
 - [ ] **平台侧（人工验收）**: EdgeOne WAF 已为 `/api/admin/login-guard` 与 `/admin/login` 配置限流规则（见 `docs/EDGEONE_WAF_RULES.md` §2.12）——KZQ-P1-021
 - [ ] `/admin/site-settings` 站点设置可保存

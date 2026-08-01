@@ -269,11 +269,13 @@ KZQ 采用**两层限流模型**，各层职责明确，不可互相替代：
 **WAF 规则建议**:
 - 对 `/api/admin/login-guard` 与 `/admin/login` 页面请求限流（例如 30 req/min/IP），防止闸门端点与登录页本身被高频扫描
 - 将 `/api/admin/login-guard` 的 POST 请求纳入全局 fallback 限流（见第 4 节）
+- **MFA（KZQ-P1-022-f）**: 将 `/admin/mfa/challenge` 页面请求纳入与登录页相同的限流规则——TOTP 验证码为 6 位数字、每 30 秒窗口一个有效码，WAF 按 IP 限流可显著抬高对 challenge 的暴力尝试成本（应用层 challenge 页本身不新增限流端点，验证码只发往 Supabase Auth；Supabase Auth 的 MFA challenge 限流为平台侧根防线）
 
 **验收方法**:
 - 连续超过 5 次登录尝试（同 IP），第 6 次在页面显示固定限流文案且不再调用 Supabase Auth
 - 无可信 IP 场景（未配置 `TRUSTED_PROXY_HEADER`）下，轮换 User-Agent 等 header 仍被全局 floor 拦截
 - 直接调用 Supabase Auth 的请求在 Auth Dashboard 达到限流阈值后返回 `429`（平台侧验收）
+- MFA 账号登录后必须落在 `/admin/mfa/challenge`（不直接进入后台）；aal1 会话调用敏感 API 返回 `401 ADMIN_WRITE_MFA_REQUIRED`，完成验证码后放行——见 `docs/LAUNCH_CHECKLIST.md` 与 `tests/e2e/staging-mfa.spec.ts`
 
 ## 3. 可信 IP Header 配置
 
