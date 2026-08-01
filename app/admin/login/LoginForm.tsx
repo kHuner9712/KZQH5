@@ -3,6 +3,10 @@
 import { useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createBrowserSupabaseClient } from "@/lib/supabase/client";
+import {
+  LOGIN_ERROR_MESSAGES,
+  mapLoginError,
+} from "@/lib/security/login-errors";
 import { Button } from "@/components/ui/Button";
 import { AlertCircle, Lock, Mail } from "lucide-react";
 
@@ -43,14 +47,18 @@ export function LoginForm() {
       });
 
       if (signInError) {
-        setError(signInError.message || "登录失败，请检查邮箱和密码");
+        // KZQ-P1-020: never surface the raw Supabase error message —
+        // map it to a fixed Chinese message.
+        setError(mapLoginError(signInError));
         return;
       }
 
       router.push("/admin");
       router.refresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "登录异常，请稍后重试");
+    } catch {
+      // KZQ-P1-020: never surface the raw exception message (it may
+      // contain provider/internal detail); show a fixed message.
+      setError(LOGIN_ERROR_MESSAGES.UNEXPECTED);
     } finally {
       setLoading(false);
     }
