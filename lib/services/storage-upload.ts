@@ -21,11 +21,11 @@ import type { Database } from "@/types/database";
 import type { AdminWriteErrorCode } from "@/lib/services/admin-write-boundary";
 import { createAdminClient } from "@/lib/supabase/admin";
 import {
-  extractFileExtension,
   sanitizeStoragePath,
   validateFileSize,
   validateMimeExtensionConsistency,
   validateMimeType,
+  validateUploadFile,
   verifyMagicBytes,
 } from "@/lib/validation/storage";
 
@@ -93,14 +93,6 @@ const MIME_MAX_SIZE: Readonly<Record<string, number>> = {
 
 const PRIVATE_ASSETS_ALLOWED_MIME: readonly string[] = Object.keys(MIME_MAX_SIZE);
 
-/** MIME → 默认扩展名（文件名无可用扩展名时由服务端决定）。 */
-const MIME_DEFAULT_EXT: Readonly<Record<string, string>> = {
-  "image/jpeg": ".jpg",
-  "image/png": ".png",
-  "image/webp": ".webp",
-  "application/pdf": ".pdf",
-};
-
 export interface UploadFileBytes {
   /** 实际文件字节（完整内容；Magic Bytes 校验读取前若干字节）。 */
   bytes: Uint8Array;
@@ -150,45 +142,42 @@ function isAllowedCategory(value: string): value is PrivateAssetCategory {
 /**
  * 校验上传文件的 MIME / 大小 / Magic Bytes / 扩展名一致性。
  * 最终扩展名由 MIME 决定，不信任客户端文件名。
+ *
+ * KZQ-P0-005-a: Delegates to the shared `validateUploadFile` from
+ * `lib/validation/storage.ts` so that single-stage and two-stage
+ * upload paths use the SAME validation pipeline and cannot drift.
+ * This wrapper maps the shared fixed error codes to the
+ * `AdminWriteErrorCode` union expected by the single-stage route.
  */
-function validateUploadFile(input: {
+function validateSingleStageUploadFile(input: {
   mimeType: string;
   size: number;
   filename: string;
   bytes: Uint8Array;
 }): { ok: true; mimeType: string; ext: string } | { ok: false; code: AdminWriteErrorCode } {
-  // 1. MIME 白名单 —— SVG / HTML / JS / 可执行内容在此被拒绝
-  const mimeResult = validateMimeType(input.mimeType, PRIVATE_ASSETS_ALLOWED_MIME);
-  if (!mimeResult.ok) {
-    return { ok: false, code: "ADMIN_WRITE_UNSUPPORTED_MEDIA" };
+  const result = validateUploadFile({
+    mimeType: input.mimeType,
+    size: input.size,
+    filename: input.filename,
+    bytes: input.bytes,
+    allowedMime: PRIVATE_ASSETS_ALLOWED_MIME,
+    maxSizeByMime: MIME_MAX_SIZE,
+  });
+
+  if (!result.ok) {
+    // Map shared validation error codes to AdminWriteErrorCode.
+    const code: AdminWriteErrorCode =
+      result.error === "MIME_NOT_ALLOWED"
+        ? "ADMIN_WRITE_UNSUPPORTED_MEDIA"
+        : result.error === "SIZE_EXCEEDS_LIMIT"
+          ? "ADMIN_WRITE_PAYLOAD_TOO_LARGE"
+          : result.error === "MAGIC_BYTES_MISMATCH"
+            ? "ADMIN_WRITE_UNSUPPORTED_MEDIA"
+            : "ADMIN_WRITE_BAD_REQUEST"; // EXTENSION_MIME_INCONSISTENT
+    return { ok: false, code };
   }
 
-  const mimeType = input.mimeType.toLowerCase().trim();
-  const maxSize = MIME_MAX_SIZE[mimeType];
-
-  // 2. 大小校验（按类型上限）
-  const sizeResult = validateFileSize(input.size, maxSize);
-  if (!sizeResult.ok) {
-    return { ok: false, code: "ADMIN_WRITE_PAYLOAD_TOO_LARGE" };
-  }
-
-  // 3. Magic Bytes —— 必须在读取实际字节后执行，防止 MIME 伪造
-  const magicResult = verifyMagicBytes(input.bytes, mimeType);
-  if (!magicResult.ok) {
-    return { ok: false, code: "ADMIN_WRITE_UNSUPPORTED_MEDIA" };
-  }
-
-  // 4. 扩展名 ↔ MIME 一致性；无扩展名时使用 MIME 默认扩展名
-  const fileExt = extractFileExtension(input.filename);
-  if (fileExt) {
-    const consistency = validateMimeExtensionConsistency(mimeType, fileExt);
-    if (!consistency.ok) {
-      return { ok: false, code: "ADMIN_WRITE_BAD_REQUEST" };
-    }
-  }
-  const ext = fileExt || MIME_DEFAULT_EXT[mimeType] || "";
-
-  return { ok: true, mimeType, ext };
+  return { ok: true, mimeType: result.mimeType, ext: result.ext };
 }
 
 /**
@@ -226,8 +215,13 @@ function computeSha256Hex(bytes: Uint8Array): string {
  *   2. 才能执行实际 Storage 上传/删除
  *   3. 操作结束后调用 completeStorageAudit
  *   4. 若 completeStorageAudit 失败 → 补偿删除已上传对象（上传场景）
+ *
+ * KZQ-P0-005-c: Exported so the two-stage upload path can share the
+ * SAME fail-closed audit saga as the single-stage path. Both paths
+ * record a pending `admin_storage_operations` row BEFORE the object
+ * operation and complete it AFTER, preventing drift.
  */
-type AuditStartedResult =
+export type AuditStartedResult =
   | { ok: true; operationId: string }
   | { ok: false; code: AdminWriteErrorCode };
 
@@ -238,7 +232,7 @@ type AuditStartedResult =
  * fail-closed：若审计开始失败，返回 { ok: false }，调用方必须 NOT 执行
  * 实际业务操作。这避免「业务操作成功但审计缺失」的不一致状态。
  */
-async function recordStorageAuditStarted(input: {
+export async function recordStorageAuditStarted(input: {
   client: SupabaseClient<Database>;
   actorId?: string | null;
   actorRole?: string | null;
@@ -288,7 +282,7 @@ async function recordStorageAuditStarted(input: {
  * fail-closed 语义：若完成审计失败，调用方必须执行补偿（删除已上传对象
  * 或重新加入 cleanup queue），并返回错误而非沉默成功。
  */
-type AuditCompleteResult =
+export type AuditCompleteResult =
   | { ok: true }
   | { ok: false; code: AdminWriteErrorCode };
 
@@ -298,7 +292,7 @@ type AuditCompleteResult =
  * fail-closed：返回结果给调用方，调用方在失败时执行补偿。
  * 不再静默吞错。
  */
-async function completeStorageAudit(
+export async function completeStorageAudit(
   client: SupabaseClient<Database>,
   operationId: string,
   success: boolean,
@@ -330,6 +324,21 @@ async function completeStorageAudit(
 }
 
 /**
+ * 补偿删除结果。
+ *
+ * KZQ-P0-005-e: Exported so the two-stage upload path can share the
+ * SAME compensation semantics as the single-stage path. Both paths
+ * now call this function (instead of the two-stage path using inline
+ * `client.storage.from(...).remove(...)`) so that:
+ *   - exceptions are caught (no uncaught throw during compensation)
+ *   - fixed log codes are emitted (no silent swallow)
+ *   - a discriminated union is returned (no inline `.error` check drift)
+ */
+export type CompensateDeleteResult =
+  | { ok: true }
+  | { ok: false };
+
+/**
  * 补偿：删除已上传对象（用于审计完成失败场景）。
  *
  * fail-closed 语义：
@@ -339,12 +348,16 @@ async function completeStorageAudit(
  *     让 dispatcher 后续重新检查引用后再删除
  *   - 不宣称对象已删除（除非 `.remove()` 明确返回无 error）
  *   - 调用方根据返回值决定是否入队 reconciliation
+ *
+ * KZQ-P0-005-e: Exported so the two-stage upload path shares the SAME
+ * compensation function as the single-stage path, preventing drift in
+ * try/catch coverage, fixed log codes, and return-shape contract.
  */
-async function compensateDeleteUploadedObject(
+export async function compensateDeleteUploadedObject(
   client: SupabaseClient<Database>,
   bucket: string,
   path: string,
-): Promise<{ ok: true } | { ok: false }> {
+): Promise<CompensateDeleteResult> {
   try {
     const { error } = await client.storage.from(bucket).remove([path]);
     if (error) {
@@ -369,39 +382,18 @@ async function compensateDeleteUploadedObject(
   }
 }
 
-/**
- * 补偿失败后入队 storage_cleanup_queue 让 dispatcher 后续处理。
- *
- * 调用时机：compensateDeleteUploadedObject 返回 { ok: false } 时，
- * 调用方应调用此函数把残留对象入队。入队失败时仅记录日志，
- * 由 read-only inventory 脚本兜底发现。
- */
-async function enqueueResidualObjectForCleanup(
-  client: SupabaseClient<Database>,
-  bucket: string,
-  path: string,
-  reason: "form_cancelled" | "replaced" | "row_deleted" | "orphan_detected",
-  sourceType?: string | null,
-  sourceId?: string | null,
-): Promise<void> {
-  try {
-    await client.rpc("enqueue_storage_cleanup", {
-      p_bucket: bucket,
-      p_object_path: path,
-      p_reason: reason,
-      p_source_type: sourceType ?? null,
-      p_source_id: sourceId ?? null,
-    });
-  } catch {
-    // 入队失败时仅记录日志；read-only inventory 脚本可发现残留对象
-    console.error("STORAGE_RESIDUAL_ENQUEUE_FAILED", {
-      bucket,
-      path,
-      reason,
-      code: "STORAGE_RESIDUAL_ENQUEUE_FAILED",
-    });
-  }
-}
+// KZQ-P0-005-f: The private `enqueueResidualObjectForCleanup` wrapper has
+// been REMOVED. The single-stage path now calls the SAME public
+// `enqueueStorageCleanup` function that the two-stage path already uses.
+// This unifies: (1) input validation (bucket whitelist + non-empty path),
+// (2) discriminated union return (`{ ok: true; cleanupId } | { ok: false; code }`),
+// (3) fixed log codes (`STORAGE_CLEANUP_ENQUEUE_FAILED` /
+// `STORAGE_CLEANUP_ENQUEUE_EXCEPTION`). Both paths now share the same
+// domain service for cleanup enqueue, preventing validation and error-
+// handling drift. Note: `enqueueStorageCleanup` creates its own admin
+// client internally; the previously-passed-in `client` argument is no
+// longer needed because cleanup enqueue is an edge case (only when
+// compensation fails), not a hot path.
 
 /**
  * 使用 service_role 将文件字节上传到 private-assets bucket。
@@ -426,7 +418,7 @@ export async function uploadToPrivateAssets(
     return { ok: false, code: "ADMIN_WRITE_BAD_REQUEST" };
   }
 
-  const validated = validateUploadFile(input);
+  const validated = validateSingleStageUploadFile(input);
   if (!validated.ok) return validated;
 
   const path = generatePrivateStoragePath(input.category, validated.ext);
@@ -498,14 +490,14 @@ export async function uploadToPrivateAssets(
     );
     if (!compensate.ok) {
       // 补偿删除失败 → 对象残留，入队 cleanup queue
-      await enqueueResidualObjectForCleanup(
-        client,
-        PRIVATE_ASSETS_BUCKET,
-        path,
-        "orphan_detected",
-        "storage.upload",
-        operationId,
-      );
+      // KZQ-P0-005-f: Use shared `enqueueStorageCleanup` (same as two-stage path)
+      await enqueueStorageCleanup({
+        bucket: PRIVATE_ASSETS_BUCKET,
+        objectPath: path,
+        reason: "orphan_detected",
+        sourceType: "storage.upload",
+        sourceId: operationId,
+      });
     }
     return { ok: false, code: "ADMIN_WRITE_FAILED" };
   }
@@ -581,7 +573,7 @@ export async function uploadToPublicAssets(
     return { ok: false, code: "ADMIN_WRITE_BAD_REQUEST" };
   }
 
-  const validated = validateUploadFile(input);
+  const validated = validateSingleStageUploadFile(input);
   if (!validated.ok) return validated;
 
   const path = generatePublicStoragePath(input.category, validated.ext);
@@ -652,14 +644,14 @@ export async function uploadToPublicAssets(
     );
     if (!compensate.ok) {
       // 补偿删除失败 → 对象残留，入队 cleanup queue
-      await enqueueResidualObjectForCleanup(
-        client,
-        PUBLIC_ASSETS_BUCKET,
-        path,
-        "orphan_detected",
-        "storage.upload",
-        operationId,
-      );
+      // KZQ-P0-005-f: Use shared `enqueueStorageCleanup` (same as two-stage path)
+      await enqueueStorageCleanup({
+        bucket: PUBLIC_ASSETS_BUCKET,
+        objectPath: path,
+        reason: "orphan_detected",
+        sourceType: "storage.upload",
+        sourceId: operationId,
+      });
     }
     return { ok: false, code: "ADMIN_WRITE_FAILED" };
   }
@@ -1465,14 +1457,14 @@ export async function publishCatalogAssetFlow(input: {
     );
     if (!compensate.ok) {
       // 补偿删除失败 → 入队 cleanup queue 让 dispatcher 后续处理
-      await enqueueResidualObjectForCleanup(
-        client,
-        PUBLIC_ASSETS_BUCKET,
-        uploadResult.path,
-        "orphan_detected",
-        "catalog_publish",
-        input.assetId,
-      );
+      // KZQ-P0-005-f: Use shared `enqueueStorageCleanup` (same as two-stage path)
+      await enqueueStorageCleanup({
+        bucket: PUBLIC_ASSETS_BUCKET,
+        objectPath: uploadResult.path,
+        reason: "orphan_detected",
+        sourceType: "catalog_publish",
+        sourceId: input.assetId,
+      });
     }
   };
 
@@ -1846,14 +1838,14 @@ export async function publishCertificateFlow(input: {
     );
     if (!compensate.ok) {
       // 补偿删除失败 → 入队 cleanup queue 让 dispatcher 后续处理
-      await enqueueResidualObjectForCleanup(
-        client,
-        PUBLIC_ASSETS_BUCKET,
-        uploadResult.path,
-        "orphan_detected",
-        "certificate_publish",
-        input.certificateId,
-      );
+      // KZQ-P0-005-f: Use shared `enqueueStorageCleanup` (same as two-stage path)
+      await enqueueStorageCleanup({
+        bucket: PUBLIC_ASSETS_BUCKET,
+        objectPath: uploadResult.path,
+        reason: "orphan_detected",
+        sourceType: "certificate_publish",
+        sourceId: input.certificateId,
+      });
     }
   };
 

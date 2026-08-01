@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   extractFileExtension,
   generateStoragePath,
+  getExtensionForMimeType,
   IMAGE_ALLOWED_MIME,
   IMAGE_MAX_SIZE,
   PUBLIC_ASSETS_ALLOWED_MIME,
@@ -11,6 +12,7 @@ import {
   validateFileSize,
   validateMimeExtensionConsistency,
   validateMimeType,
+  validateUploadFile,
   verifyMagicBytes,
 } from "@/lib/validation/storage";
 
@@ -497,6 +499,245 @@ describe("Phase 4: storage validation", () => {
     it("returns empty string for no extension", () => {
       expect(extractFileExtension("noextension")).toBe("");
       expect(extractFileExtension("")).toBe("");
+    });
+  });
+
+  // ----------------------------------------------------------
+  // 8b. KZQ-P0-004: getExtensionForMimeType
+  // ----------------------------------------------------------
+  // The final object extension MUST come from the server-verified MIME
+  // type, not from the user-supplied filename. This is the shared
+  // mapping used by both the single-stage and two-stage upload paths.
+  describe("getExtensionForMimeType", () => {
+    it("returns canonical extension for each allowed MIME type", () => {
+      expect(getExtensionForMimeType("application/pdf")).toBe(".pdf");
+      expect(getExtensionForMimeType("image/jpeg")).toBe(".jpg");
+      expect(getExtensionForMimeType("image/png")).toBe(".png");
+      expect(getExtensionForMimeType("image/webp")).toBe(".webp");
+    });
+
+    it("canonicalizes JPEG to .jpg (not .jpeg)", () => {
+      // .jpg is the canonical shorter form; both .jpg and .jpeg are
+      // ACCEPTED as consistent by validateMimeExtensionConsistency, but
+      // the final object path uses .jpg.
+      expect(getExtensionForMimeType("image/jpeg")).toBe(".jpg");
+      expect(getExtensionForMimeType("image/jpeg")).not.toBe(".jpeg");
+    });
+
+    it("is case-insensitive", () => {
+      expect(getExtensionForMimeType("IMAGE/JPEG")).toBe(".jpg");
+      expect(getExtensionForMimeType("Application/PDF")).toBe(".pdf");
+      expect(getExtensionForMimeType("Image/PNG")).toBe(".png");
+    });
+
+    it("trims whitespace", () => {
+      expect(getExtensionForMimeType("  image/jpeg  ")).toBe(".jpg");
+      expect(getExtensionForMimeType("\tapplication/pdf\n")).toBe(".pdf");
+    });
+
+    it("returns empty string for empty or null MIME", () => {
+      expect(getExtensionForMimeType("")).toBe("");
+      expect(getExtensionForMimeType(null as unknown as string)).toBe("");
+      expect(getExtensionForMimeType(undefined as unknown as string)).toBe("");
+    });
+
+    it("returns empty string for unknown MIME type", () => {
+      // Unknown MIME types should never reach this function (the allowlist
+      // + magic-bytes checks run first), but returning "" is safe —
+      // generatePrivateStoragePath handles an empty extension gracefully.
+      expect(getExtensionForMimeType("text/html")).toBe("");
+      expect(getExtensionForMimeType("image/svg+xml")).toBe("");
+      expect(getExtensionForMimeType("application/octet-stream")).toBe("");
+    });
+
+    it("extension always starts with a dot", () => {
+      for (const mime of PUBLIC_ASSETS_ALLOWED_MIME) {
+        const ext = getExtensionForMimeType(mime);
+        expect(ext.startsWith(".")).toBe(true);
+        expect(ext.length).toBeGreaterThan(1);
+      }
+    });
+  });
+
+  // ----------------------------------------------------------
+  // 8c. KZQ-P0-005-a: validateUploadFile (unified shared function)
+  // ----------------------------------------------------------
+  // This is the shared validation function used by BOTH the single-stage
+  // and two-stage upload paths. Tests verify it produces the correct
+  // MIME-derived extension and rejects each invalid scenario with a
+  // fixed error code.
+  describe("validateUploadFile (KZQ-P0-005-a unified)", () => {
+    const ALLOWED_MIME = [
+      "application/pdf",
+      "image/jpeg",
+      "image/png",
+      "image/webp",
+    ];
+    const MAX_SIZE: Record<string, number> = {
+      "application/pdf": 20 * 1024 * 1024,
+      "image/jpeg": 5 * 1024 * 1024,
+      "image/png": 5 * 1024 * 1024,
+      "image/webp": 5 * 1024 * 1024,
+    };
+    const JPEG_MAGIC = new Uint8Array([0xff, 0xd8, 0xff, 0xe0]);
+    const PNG_MAGIC = new Uint8Array([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+    ]);
+    const PDF_MAGIC = new Uint8Array([
+      0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x35,
+    ]);
+
+    it("succeeds for valid JPEG and returns .jpg ext from MIME", () => {
+      const result = validateUploadFile({
+        mimeType: "image/jpeg",
+        size: 1024,
+        filename: "photo.jpeg",
+        bytes: JPEG_MAGIC,
+        allowedMime: ALLOWED_MIME,
+        maxSizeByMime: MAX_SIZE,
+      });
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.mimeType).toBe("image/jpeg");
+        expect(result.ext).toBe(".jpg");
+      }
+    });
+
+    it("succeeds for valid PNG and returns .png ext from MIME", () => {
+      const result = validateUploadFile({
+        mimeType: "image/png",
+        size: 2048,
+        filename: "screenshot.png",
+        bytes: PNG_MAGIC,
+        allowedMime: ALLOWED_MIME,
+        maxSizeByMime: MAX_SIZE,
+      });
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.ext).toBe(".png");
+      }
+    });
+
+    it("succeeds for valid PDF and returns .pdf ext from MIME", () => {
+      const result = validateUploadFile({
+        mimeType: "application/pdf",
+        size: 5 * 1024 * 1024,
+        filename: "catalog.pdf",
+        bytes: PDF_MAGIC,
+        allowedMime: ALLOWED_MIME,
+        maxSizeByMime: MAX_SIZE,
+      });
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.ext).toBe(".pdf");
+      }
+    });
+
+    it("returns MIME_NOT_ALLOWED for disallowed MIME type", () => {
+      const result = validateUploadFile({
+        mimeType: "text/html",
+        size: 100,
+        filename: "evil.html",
+        bytes: new Uint8Array([0x3c, 0x68, 0x74, 0x6d]),
+        allowedMime: ALLOWED_MIME,
+        maxSizeByMime: MAX_SIZE,
+      });
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error).toBe("MIME_NOT_ALLOWED");
+      }
+    });
+
+    it("returns SIZE_EXCEEDS_LIMIT when size exceeds per-MIME cap", () => {
+      const result = validateUploadFile({
+        mimeType: "image/jpeg",
+        size: 10 * 1024 * 1024, // 10MB > 5MB cap
+        filename: "big.jpg",
+        bytes: JPEG_MAGIC,
+        allowedMime: ALLOWED_MIME,
+        maxSizeByMime: MAX_SIZE,
+      });
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error).toBe("SIZE_EXCEEDS_LIMIT");
+      }
+    });
+
+    it("returns MAGIC_BYTES_MISMATCH when content does not match MIME", () => {
+      // Declares JPEG but sends PDF magic bytes
+      const result = validateUploadFile({
+        mimeType: "image/jpeg",
+        size: 1024,
+        filename: "fake.jpg",
+        bytes: PDF_MAGIC,
+        allowedMime: ALLOWED_MIME,
+        maxSizeByMime: MAX_SIZE,
+      });
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error).toBe("MAGIC_BYTES_MISMATCH");
+      }
+    });
+
+    it("returns EXTENSION_MIME_INCONSISTENT when filename ext mismatches MIME", () => {
+      // JPEG content but filename says .png (ext cross-check fails)
+      const result = validateUploadFile({
+        mimeType: "image/jpeg",
+        size: 1024,
+        filename: "misnamed.png",
+        bytes: JPEG_MAGIC,
+        allowedMime: ALLOWED_MIME,
+        maxSizeByMime: MAX_SIZE,
+      });
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error).toBe("EXTENSION_MIME_INCONSISTENT");
+      }
+    });
+
+    it("succeeds when filename has no extension (ext from MIME only)", () => {
+      const result = validateUploadFile({
+        mimeType: "image/jpeg",
+        size: 1024,
+        filename: "noextension",
+        bytes: JPEG_MAGIC,
+        allowedMime: ALLOWED_MIME,
+        maxSizeByMime: MAX_SIZE,
+      });
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.ext).toBe(".jpg");
+      }
+    });
+
+    it("succeeds when filename has wrong extension but MIME+magic match (no cross-check possible without ext)", () => {
+      // No ext in filename → no consistency check → succeeds
+      const result = validateUploadFile({
+        mimeType: "image/png",
+        size: 1024,
+        filename: "file",
+        bytes: PNG_MAGIC,
+        allowedMime: ALLOWED_MIME,
+        maxSizeByMime: MAX_SIZE,
+      });
+      expect(result.ok).toBe(true);
+    });
+
+    it("always returns ext from MIME, never from filename", () => {
+      // Filename says .jpeg but MIME is image/jpeg → ext is .jpg (canonical)
+      const result = validateUploadFile({
+        mimeType: "image/jpeg",
+        size: 1024,
+        filename: "photo.jpeg",
+        bytes: JPEG_MAGIC,
+        allowedMime: ALLOWED_MIME,
+        maxSizeByMime: MAX_SIZE,
+      });
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.ext).toBe(".jpg");
+        expect(result.ext).not.toBe(".jpeg");
+      }
     });
   });
 

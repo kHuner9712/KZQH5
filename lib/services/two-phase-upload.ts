@@ -12,7 +12,13 @@
 //   2. finalizeTempUpload — claims the temp_uploads row (RPC),
 //      verifies the uploaded object via Storage HEAD + range-
 //      download of Magic Bytes, moves the object to its final
-//      path, registers a storage_object_ref, completes the RPC.
+//      path, completes the RPC. Storage object references are
+//      registered by business table RPCs (e.g. catalog/certificate
+//      save flows) in the database layer, NOT by this application
+//      layer. The application layer does NOT register storage_object_refs
+//      directly. See migration
+//      20260725250000_wire_storage_object_refs_into_asset_lifecycle.sql
+//      and 20260729020000_temp_uploads_two_phase_upload.sql.
 //
 // The single-phase route (POST /api/admin/storage/upload) remains
 // as a fallback for non-Supabase-Storage backends and for clients
@@ -39,13 +45,16 @@ import {
   PUBLIC_ASSETS_BUCKET,
   generatePrivateStoragePath,
   generatePublicStoragePath,
+  recordStorageAuditStarted,
+  completeStorageAudit,
+  compensateDeleteUploadedObject,
   type PrivateAssetCategory,
 } from "@/lib/services/storage-upload";
 import {
   resolvePurposeConfig,
   type StoragePurpose,
 } from "@/lib/services/storage-purpose";
-import { validateMimeType, verifyMagicBytes } from "@/lib/validation/storage";
+import { getExtensionForMimeType, validateFileSize, validateMimeType, verifyMagicBytes } from "@/lib/validation/storage";
 import { enqueueStorageCleanup } from "@/lib/services/storage-upload";
 
 // ============================================================
@@ -158,9 +167,15 @@ export async function authorizeTempUpload(
     return { ok: false, code: "MIME_NOT_ALLOWED_FOR_PURPOSE" };
   }
 
-  // 3. Validate size against per-MIME two-phase cap
+  // 3. Validate size against per-MIME two-phase cap.
+  // KZQ-P0-005-a: Uses the shared validateFileSize from lib/validation/storage.ts
+  // so single-stage and two-stage size checks share the same implementation.
   const maxSize = TWO_PHASE_MAX_SIZE[input.mimeType];
-  if (!maxSize || input.size <= 0 || input.size > maxSize) {
+  if (!maxSize) {
+    return { ok: false, code: "SIZE_EXCEEDS_LIMIT" };
+  }
+  const sizeValidation = validateFileSize(input.size, maxSize);
+  if (!sizeValidation.ok) {
     return { ok: false, code: "SIZE_EXCEEDS_LIMIT" };
   }
 
@@ -358,8 +373,14 @@ export async function finalizeTempUpload(
     return { ok: false, code: "MAGIC_BYTES_MISMATCH" };
   }
 
-  // 5. Generate the final object path
-  const ext = getExtensionFromFilename(row.declared_filename);
+  // 5. Generate the final object path.
+  // KZQ-P0-004: The final extension is derived from the server-verified
+  // MIME type (magic bytes verified at step 4), NOT from the user-supplied
+  // filename. The original filename is stored on the temp_uploads row for
+  // display/audit only. This prevents an attacker from controlling the final
+  // object extension via a crafted filename (e.g. "evil.html" with an
+  // image/jpeg MIME would still produce a ".jpg" object).
+  const ext = getExtensionForMimeType(declaredMimeType);
   let finalObjectPath: string;
   if (finalBucket === PRIVATE_ASSETS_BUCKET) {
     finalObjectPath = generatePrivateStoragePath(
@@ -380,12 +401,42 @@ export async function finalizeTempUpload(
     finalObjectPath = publicPath;
   }
 
+  // 5b. KZQ-P0-005-c: Record audit-start (fail-closed saga, shared with
+  //     the single-stage path). The two-stage path now creates a pending
+  //     `admin_storage_operations` row BEFORE the object is moved to its
+  //     final path, exactly like the single-stage path does before upload.
+  //     This row is completed at step 8b. Both paths share the SAME
+  //     audit functions imported from storage-upload.ts.
+  const auditStart = await recordStorageAuditStarted({
+    client,
+    actorId: row.actor_id ?? null,
+    actorRole: row.actor_role ?? null,
+    action: "storage.upload",
+    bucket: finalBucket,
+    objectPath: finalObjectPath,
+    mimeType: declaredMimeType,
+    sizeBytes: declaredSize,
+    sha256: null, // Two-stage doesn't hold full bytes; sha256 not available
+  });
+  if (!auditStart.ok) {
+    await failFinalize(client, input.uploadToken, "audit_start_failed");
+    await enqueueStorageCleanup({
+      bucket: PRIVATE_ASSETS_BUCKET,
+      objectPath: tempObjectPath,
+      reason: "orphan_detected",
+    });
+    return { ok: false, code: auditStart.code };
+  }
+  const auditOperationId = auditStart.operationId;
+
   // 6. Copy the object from temp/ to its final path WITHIN private-assets
   const { error: copyError } = await client.storage
     .from(PRIVATE_ASSETS_BUCKET)
     .copy(tempObjectPath, finalObjectPath);
 
   if (copyError) {
+    // KZQ-P0-005-c: Mark audit as failed before existing compensation.
+    await completeStorageAudit(client, auditOperationId, false, "COPY_FAILED");
     await failFinalize(client, input.uploadToken, `copy_failed:${copyError.message}`);
     await enqueueStorageCleanup({
       bucket: PRIVATE_ASSETS_BUCKET,
@@ -404,6 +455,13 @@ export async function finalizeTempUpload(
       .download(finalObjectPath);
 
     if (downloadError || !downloadData) {
+      // KZQ-P0-005-c: Mark audit as failed before existing compensation.
+      await completeStorageAudit(
+        client,
+        auditOperationId,
+        false,
+        "CROSS_BUCKET_MOVE_FAILED",
+      );
       await client.storage.from(PRIVATE_ASSETS_BUCKET).remove([finalObjectPath]);
       await failFinalize(client, input.uploadToken, "cross_bucket_download_failed");
       await enqueueStorageCleanup({
@@ -423,6 +481,13 @@ export async function finalizeTempUpload(
       });
 
     if (publicUploadError) {
+      // KZQ-P0-005-c: Mark audit as failed before existing compensation.
+      await completeStorageAudit(
+        client,
+        auditOperationId,
+        false,
+        "CROSS_BUCKET_MOVE_FAILED",
+      );
       await client.storage.from(PRIVATE_ASSETS_BUCKET).remove([finalObjectPath]);
       await failFinalize(client, input.uploadToken, "cross_bucket_upload_failed");
       await enqueueStorageCleanup({
@@ -441,6 +506,47 @@ export async function finalizeTempUpload(
       .getPublicUrl(finalObjectPath);
 
     finalPublicUrl = publicUrlData?.publicUrl ?? null;
+  }
+
+  // 8b. KZQ-P0-005-c/d: Complete audit as success (fail-closed saga).
+  //     The final object now exists in finalBucket. If audit-complete
+  //     fails, we must compensate by deleting the final object (same as
+  //     the single-stage path). The temp delete (step 9) and complete
+  //     RPC (step 10) are post-audit cleanup that only runs when the
+  //     audit saga succeeds.
+  //
+  // KZQ-P0-005-e: Use the shared `compensateDeleteUploadedObject`
+  //     (imported from storage-upload.ts) instead of inline
+  //     `client.storage.from(...).remove(...)`. This unifies the
+  //     compensation semantics with the single-stage path: exceptions
+  //     are caught, fixed log codes are emitted, and a discriminated
+  //     union is returned (no inline `.error` drift).
+  const auditEnd = await completeStorageAudit(client, auditOperationId, true);
+  if (!auditEnd.ok) {
+    // Compensate: delete the final object from finalBucket.
+    // For cross-bucket: object is in PUBLIC_ASSETS_BUCKET (private copy
+    // already deleted at step 7). For same-bucket: object is in
+    // PRIVATE_ASSETS_BUCKET.
+    const compensate = await compensateDeleteUploadedObject(
+      client,
+      finalBucket,
+      finalObjectPath,
+    );
+    if (!compensate.ok) {
+      // Compensation failed — enqueue cleanup for the final object.
+      await enqueueStorageCleanup({
+        bucket: finalBucket,
+        objectPath: finalObjectPath,
+        reason: "orphan_detected",
+      });
+    }
+    await failFinalize(client, input.uploadToken, "audit_complete_failed");
+    await enqueueStorageCleanup({
+      bucket: PRIVATE_ASSETS_BUCKET,
+      objectPath: tempObjectPath,
+      reason: "orphan_detected",
+    });
+    return { ok: false, code: "ADMIN_WRITE_FAILED" };
   }
 
   // 8. Delete the original temp object
@@ -501,12 +607,6 @@ function isValidFilename(filename: string): boolean {
   if (filename.startsWith(".")) return false;
   if (/[\x00-\x1f]/.test(filename)) return false;
   return true;
-}
-
-function getExtensionFromFilename(filename: string): string {
-  const lastDot = filename.lastIndexOf(".");
-  if (lastDot === -1 || lastDot === filename.length - 1) return "";
-  return filename.substring(lastDot + 1).toLowerCase();
 }
 
 async function failFinalize(
