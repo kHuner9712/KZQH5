@@ -1,0 +1,74 @@
+name: CodeQL
+
+on:
+  push:
+    branches: [main, "review/**"]
+  pull_request:
+  schedule:
+    # Weekly CodeQL scan (Monday 02:00 UTC) independent of code pushes.
+    - cron: "0 2 * * 1"
+
+# Least-privilege permissions: CodeQL needs to write SARIF results to
+# security-events and read the repo; nothing else.
+permissions:
+  security-events: write
+  actions: read
+  contents: read
+
+# ============================================================
+# KZQ-P2-012-a: CodeQL static analysis (JavaScript / TypeScript).
+#
+# Pinned actions (SHA-pinned for supply-chain security), consistent with
+# ci.yml. SHA-to-tag provenance verified via the GitHub API
+# (repos/github/codeql-action/git/refs/tags) on 2026-08-01:
+#   - github/codeql-action@v4.37.4 → f205ea1c3313d32999d8d6a48b4f6530d4437b38
+# Update by re-verifying the new SHA against the upstream release notes
+# and bumping both the SHA and the version comment.
+# ============================================================
+
+jobs:
+  analyze:
+    name: Analyze (JavaScript/TypeScript)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      # next.config.mjs fail-closes in production (NODE_ENV=production)
+      # when NEXT_PUBLIC_SUPABASE_URL is unset; a canonical placeholder
+      # satisfies the host-shape check without contacting Supabase.
+      NEXT_PUBLIC_SUPABASE_URL: "https://abcdefghijklmnopqrst.supabase.co"
+    steps:
+      # actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      # actions/setup-node@v7.0.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 20
+          cache: npm
+      - name: Show tool versions (after setup-node)
+        run: |
+          node --version
+          npm --version
+          which node
+      - run: npm ci
+      # github/codeql-action/init@v4.37.4
+      # JavaScript + TypeScript analysis with the security-extended query
+      # suite (security + extra experimental rules) on top of the default
+      # set. The autobuild step lets CodeQL discover the Next.js build
+      # graph; no build secrets are required.
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@f205ea1c3313d32999d8d6a48b4f6530d4437b38
+        with:
+          languages: javascript-typescript
+          query-filters: |
+            include:
+              - security-extended
+      # github/codeql-action/autobuild@v4.37.4
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@f205ea1c3313d32999d8d6a48b4f6530d4437b38
+      # github/codeql-action/analyze@v4.37.4
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@f205ea1c3313d32999d8d6a48b4f6530d4437b38
+        with:
+          category: "/language:javascript-typescript"
