@@ -33,6 +33,11 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: Pr
   const resolvedSearchParams = await searchParams;
   const admin = await getVerifiedAdmin();
   if (!admin.ok) {
+    // KZQ-P1-022-d: an aal1 session with a verified MFA factor must
+    // complete the challenge before entering any admin page.
+    if (admin.reason === "aal-insufficient") {
+      redirect("/admin/mfa/challenge");
+    }
     const stage = admin.reason === "session-missing" || admin.reason === "session-verification-failed" ? "session" : "profile";
     redirect(`/admin/login?error=admin_guard&stage=${stage}`);
   }

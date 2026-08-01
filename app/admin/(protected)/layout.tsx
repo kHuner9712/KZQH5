@@ -18,6 +18,7 @@ export const revalidate = 0;
 const STAGE_LOG_CODE = {
   session: "ADMIN_GUARD_SESSION",
   profile: "ADMIN_GUARD_PROFILE",
+  mfa: "ADMIN_GUARD_MFA",
 } as const;
 
 export default async function ProtectedLayout({
@@ -33,6 +34,13 @@ export default async function ProtectedLayout({
   // Stage 1-3 failure: session or profile verification failed.
   // Map the internal reason to a coarse external stage for the redirect URL.
   if (!admin.ok) {
+    // KZQ-P1-022-d: an admin with a verified MFA factor whose session is
+    // still aal1 must complete the MFA challenge before entering the
+    // dashboard — route to the challenge page, not the login page.
+    if (admin.reason === "aal-insufficient") {
+      console.warn(STAGE_LOG_CODE.mfa);
+      redirect("/admin/mfa/challenge");
+    }
     const isSession =
       admin.reason === "session-missing" ||
       admin.reason === "session-verification-failed";

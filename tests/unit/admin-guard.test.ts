@@ -16,24 +16,58 @@ import { failureStage, getVerifiedAdmin } from "@/lib/services/admin-auth";
 const mockUser = { id: "test-user-id", email: null } as any;
 const mockProfile = { id: "test-user-id", email: null } as any;
 
+/**
+ * Build a session client. By default the AAL probe returns aal1 with NO
+ * verified factor (nextLevel "aal1") so existing tests are unaffected.
+ * Pass `aal` to override (KZQ-P1-022-d server guard tests).
+ */
 function makeSessionClient(opts: {
   user?: any;
   error?: any;
   throw?: boolean;
+  aal?: {
+    currentLevel?: string | null;
+    nextLevel?: string | null;
+    error?: any;
+    throw?: boolean;
+  };
 }) {
   if (opts.throw) {
     return {
       auth: {
         getUser: vi.fn().mockRejectedValue(new Error("getUser threw")),
+        mfa: {
+          getAuthenticatorAssuranceLevel: vi.fn().mockResolvedValue({
+            data: { currentLevel: "aal1", nextLevel: "aal1", currentAuthenticationMethods: [] },
+            error: null,
+          }),
+        },
       },
     };
   }
+  const aal = opts.aal;
   return {
     auth: {
       getUser: vi.fn().mockResolvedValue({
         data: { user: opts.user ?? null },
         error: opts.error ?? null,
       }),
+      mfa: {
+        getAuthenticatorAssuranceLevel: aal?.throw
+          ? vi.fn().mockRejectedValue(new Error("AAL probe threw"))
+          : vi.fn().mockResolvedValue(
+              aal?.error
+                ? { data: null, error: aal.error }
+                : {
+                    data: {
+                      currentLevel: aal?.currentLevel ?? "aal1",
+                      nextLevel: aal?.nextLevel ?? "aal1",
+                      currentAuthenticationMethods: [],
+                    },
+                    error: null,
+                  },
+            ),
+      },
     },
   };
 }
@@ -134,6 +168,72 @@ describe("getVerifiedAdmin", () => {
       expect(result.client).toBeDefined();
     }
   });
+
+  it("7. returns aal-insufficient when a verified factor exists but the session is aal1", async () => {
+    vi.mocked(createServerSupabaseClient).mockReturnValue(
+      makeSessionClient({
+        user: mockUser,
+        aal: { currentLevel: "aal1", nextLevel: "aal2" },
+      }) as any,
+    );
+    vi.mocked(createAdminSupabaseClient).mockReturnValue(
+      makeAdminClient({ profile: mockProfile }) as any,
+    );
+    const result = await getVerifiedAdmin();
+    expect(result).toEqual({ ok: false, reason: "aal-insufficient" });
+    // The profile query must NOT run for an aal-insufficient session.
+    expect(createAdminSupabaseClient).not.toHaveBeenCalled();
+  });
+
+  it("8. does NOT block an account without a verified factor (nextLevel aal1)", async () => {
+    vi.mocked(createServerSupabaseClient).mockReturnValue(
+      makeSessionClient({
+        user: mockUser,
+        aal: { currentLevel: "aal1", nextLevel: "aal1" },
+      }) as any,
+    );
+    vi.mocked(createAdminSupabaseClient).mockReturnValue(
+      makeAdminClient({ profile: mockProfile }) as any,
+    );
+    const result = await getVerifiedAdmin();
+    expect(result.ok).toBe(true);
+  });
+
+  it("9. passes an aal2 session through", async () => {
+    vi.mocked(createServerSupabaseClient).mockReturnValue(
+      makeSessionClient({
+        user: mockUser,
+        aal: { currentLevel: "aal2", nextLevel: "aal2" },
+      }) as any,
+    );
+    vi.mocked(createAdminSupabaseClient).mockReturnValue(
+      makeAdminClient({ profile: mockProfile }) as any,
+    );
+    const result = await getVerifiedAdmin();
+    expect(result.ok).toBe(true);
+  });
+
+  it("10. returns aal-insufficient (fail-closed) when the AAL probe returns an error", async () => {
+    vi.mocked(createServerSupabaseClient).mockReturnValue(
+      makeSessionClient({
+        user: mockUser,
+        aal: { error: new Error("AAL probe failed") },
+      }) as any,
+    );
+    const result = await getVerifiedAdmin();
+    expect(result).toEqual({ ok: false, reason: "aal-insufficient" });
+  });
+
+  it("11. returns aal-insufficient (fail-closed) when the AAL probe throws", async () => {
+    vi.mocked(createServerSupabaseClient).mockReturnValue(
+      makeSessionClient({
+        user: mockUser,
+        aal: { throw: true },
+      }) as any,
+    );
+    const result = await getVerifiedAdmin();
+    expect(result).toEqual({ ok: false, reason: "aal-insufficient" });
+  });
 });
 
 describe("failureStage", () => {
@@ -153,12 +253,13 @@ describe("failureStage", () => {
     const reasons = [
       "session-missing",
       "session-verification-failed",
+      "aal-insufficient",
       "admin-client-unavailable",
       "profile-query-failed",
       "profile-missing",
     ] as const;
-    // Only these three external stage values (plus null) are allowed.
-    const allowedStages = new Set(["session", "profile", "data", null]);
+    // Only these four external stage values (plus null) are allowed.
+    const allowedStages = new Set(["session", "profile", "data", "mfa", null]);
 
     for (const reason of reasons) {
       const result = { ok: false, reason } as any;
@@ -179,5 +280,11 @@ describe("failureStage", () => {
       client: {},
     } as any;
     expect(failureStage(okResult, false)).toBeNull();
+  });
+
+  it("9. maps aal-insufficient to the fixed external stage mfa", () => {
+    expect(failureStage({ ok: false, reason: "aal-insufficient" } as any)).toBe(
+      "mfa",
+    );
   });
 });

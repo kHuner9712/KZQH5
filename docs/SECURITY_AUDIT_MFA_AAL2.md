@@ -112,10 +112,24 @@ RBAC + CSRF），但当前**均不要求 AAL2**。step-up 应优先覆盖：
    verify 失败时 challenge id 已消费，重新签发再试。错误全部经
    `mapMfaError()` 映射为固定中文文案。verify/challenge/enroll 的 code
    仅发送至 Supabase Auth，绝不经过自有 API。
-3. **d（Server guard）**：在 `getVerifiedAdmin()` 增加 AAL 检查：
-   `sessionClient.auth.mfa.getAuthenticatorAssuranceLevel()`，
-   `currentLevel !== "aal2"` → 重定向到 MFA challenge（返回固定 stage 值，
-   不泄露内部细节）。middleware 可选解析 access_token 的 `aal` claim 提前分流。
+3. **d（Server guard）** ✅ 已完成（`trae/p1-022d-server-guard`）：
+   `lib/services/admin-auth.ts` `getVerifiedAdmin()` 在 session 验证（Stage 1）后、
+   service-role client 创建前（Stage 2）新增 AAL 检查（Stage 1.5）——
+   调用 `sessionClient.auth.mfa.getAuthenticatorAssuranceLevel()`：
+   - `nextLevel === "aal2" && currentLevel !== "aal2"`（账号有已验证因子但
+     当前会话仍是 aal1）→ 返回 `{ ok: false, reason: "aal-insufficient" }`；
+   - 无已验证因子（`nextLevel === "aal1"`）**不拦截**——强制 aal2 会锁死
+     所有未绑定 MFA 的管理员，也阻断他们去 `/admin/security` 绑定（死锁）；
+   - **fail-closed**：AAL 探测 error/异常同样视为 `aal-insufficient`
+     （无法确认 AAL 级别不得放行，challenge 页兜底显示固定错误）；
+   - 新增 reason `aal-insufficient`，`failureStage()` 映射为固定外部
+     stage `"mfa"`（不泄露内部细节）；
+   - `(protected)/layout.tsx` 与 `analytics/page.tsx` 对
+     `reason === "aal-insufficient"` 重定向到 `/admin/mfa/challenge`
+     （而非登录页），日志仅记 `ADMIN_GUARD_MFA`；
+   - API 层 `requireAdminWrite`/`requireAdminRead` 无需改动——`!admin.ok`
+     已返回固定 401 `ADMIN_WRITE_UNAUTHORIZED`（不泄露 AAL 细节）。
+   middleware 解析 `aal` claim 提前分流仍为可选（本子任务未实现，非必需）。
 4. **e（step-up）**：第 5 节敏感端点要求 AAL2；`aal1` 会话访问时进入
    step-up challenge（复用 c 的挑战流程），通过后短期放行。
 5. **f（E2E 与文档）**：Playwright 覆盖登录 → MFA challenge → 后台访问 →
