@@ -13,7 +13,7 @@ blindly — re-verify against real code before starting any task.
 - Node version (engines): `20.x` (local runtime v24.15.0 used for tooling only)
 - Next.js version: `15.5.21`
 - Supabase client version: `@supabase/supabase-js 2.109.0`, `@supabase/ssr 0.12.0`
-- Last updated: 2026-08-01 (KZQ-P2-011 completed)
+- Last updated: 2026-08-01 (KZQ-P2-012-a completed)
 
 ## Status Values
 
@@ -80,7 +80,8 @@ column records the file and line where the decision was made.
 | KZQ-P2-003 | P2 | Epic F 性能结构 | Unified media domain config | completed | `trae/p2-003-media-domain-config` | (this commit) | `npm run typecheck && npm run lint && npx vitest run tests/unit/media-domain-config.test.ts tests/unit/next-config-image-patterns.test.ts tests/unit/csp-policy.test.ts tests/unit/csp-headers.test.ts tests/unit/site-url.test.ts` → PASS (10+15+42+10+17=94); `npm run build:demo` → PASS; release-readiness 38/41 (3 pre-existing Windows baselines) | New dependency-free pure ESM module `lib/config/media-domains.mjs` + `lib/config/media-domains.d.mts` (type declarations) as the SINGLE source of truth for: `SUPABASE_PROJECT_HOST_PATTERN` (canonical <20-char>.supabase.co), `isLoopbackHost` (case/trailing-dot/IPv6-bracket bypass resistant), `validateCdnDomainEntry`, `parseCdnDomains` (comma list → hostname allowlist), `parseSupabaseUrl` ({protocol, hostname, port}). All 4 consumers now import it instead of re-defining rules: `next.config.mjs` (image remotePatterns; CI mock-backend 3-condition guard preserved: `BUILD_MOCK_BACKEND_FLAG && IS_CI && IS_LOOPBACK_SUPABASE_HOST`), `lib/validation/url.ts` (runtime media URL validator), `lib/security/csp-policy.ts` (img-src/connect-src hosts; production fail-closed to 'self' preserved), `scripts/check-release-readiness.mjs` (loopback deployment checks). New `tests/unit/media-domain-config.test.ts` (10 tests): config matrix (project-host pattern accept/reject, CDN entry normalization + rejection, parseCdnDomains filtering, parseSupabaseUrl protocol/host/port, isLoopbackHost bypass variants) + static consumer-contract tests (every consumer imports the shared module and defines NO duplicate regex/validator/isLoopbackHost; mock-backend guard string preserved). No migration, no behavior change — all 94 related tests green, build passes. NOTE: this branch also carries the KZQ-P0-010 merge (af7f880) + KZQ-P2-002 (62bd753) from the parent chain |
 | KZQ-P2-010 | P2 | Epic H 仓库治理 | Clean up superseded draft PRs #31, #32, #33 | pending | — | — | `gh pr view 31,32,33` | GitHub PRs #31, #32, #33 reportedly still OPEN+DRAFT; their work superseded by merged PRs #34/#35/#41/#42; needs `gh` verification then close with explanation |
 | KZQ-P2-011 | P2 | Epic H 仓库治理 | Remove deprecated Vercel integration & docs | completed | `trae/p2-011-remove-vercel-docs` | (this commit) | `npm run typecheck && npm run lint && npx vitest run tests/unit/vercel-removal.test.ts tests/unit/cookie-protocol-compat.test.ts` → PASS (5+10=15); release-readiness 38/41 (3 pre-existing Windows baselines) | AUDIT RESULT: `.github/workflows/*.yml` (6 files) contain ZERO Vercel references (no vercel-action, no Vercel env) — CI is fully EdgeOne; the GitHub-level Vercel App/Check cannot be removed from code (documented manual step kept). Cleaned 3 stale comments that still paired Vercel with EdgeOne or described Vercel as active: `.env.example:39` (indexing note now EdgeOne Demo/Preview), `lib/supabase/middleware-session.ts:9` (Edge Runtime warning now "EdgeOne build warning"), `tests/unit/cookie-protocol-compat.test.ts:468` (hosting platform now "EdgeOne"). KEPT (audit-valuable / security-relevant): `scripts/check-release-readiness.mjs` vercel.app domain BLOCK (must never deploy to the deprecated domain), `scripts/check-deployed-site.mjs` Vercel Runtime Error detector, `docs/LAUNCH_CHECKLIST.md` §9 manual GitHub-integration cleanup steps, `docs/ADR-001-CHINA-DEPLOYMENT.md` (historical ADR), README/DEPLOYMENT deprecation statements, `.gitignore` defensive `.vercel` ignore, EDGEONE_COMPATIBILITY_MATRIX historical note. New `tests/unit/vercel-removal.test.ts` (5 governance tests): no Vercel in any workflow; release-readiness vercel.app BLOCK preserved; §9 manual cleanup checklist preserved; ADR-001 preserved; README/DEPLOYMENT/.env.example never present Vercel as active platform; middleware-session.ts no longer pairs Vercel/EdgeOne. No migration |
-| KZQ-P2-012 | P2 | Epic H 仓库治理 | Supply chain security (workstream — split into atomic sub-tasks: CodeQL, secret scanning, Dependabot, SBOM, license audit, GH Actions permissions) | in_progress | — | — | per sub-task | `.github/dependabot.yml` PRESENT (npm + github-actions weekly); `.github/workflows/ci.yml:8-9` top-level `permissions: contents: read`; actions SHA-pinned (:46,51). MISSING: `codeql.yml`, `sbom.yml`, secret scanning config, license audit. Dependabot + permissions baseline done; CodeQL/SBOM/secret-scanning sub-tasks pending |
+| KZQ-P2-012 | P2 | Epic H 仓库治理 | Supply chain security (workstream — split into atomic sub-tasks: CodeQL, secret scanning, Dependabot, SBOM, license audit, GH Actions permissions) | in_progress | — | — | per sub-task | `.github/dependabot.yml` PRESENT (npm + github-actions weekly); `.github/workflows/ci.yml:8-9` top-level `permissions: contents: read`; actions SHA-pinned (:46,51). a (CodeQL) completed; b (secret scanning) pending; SBOM/license-audit sub-tasks pending |
+| KZQ-P2-012-a | P2 | Epic H 仓库治理 | Supply chain: CodeQL analysis workflow | completed | `trae/p2-012a-codeql` | (this commit) | `npm run typecheck && npm run lint && npx vitest run tests/unit/supply-chain-codeql.test.ts` → PASS (10/10) | New `.github/workflows/codeql.yml`: CodeQL JavaScript/TypeScript analysis with the `security-extended` query suite; triggers on push (main/review/**), pull_request and a weekly schedule; least-privilege permissions (`security-events: write`, `actions: read`, `contents: read`); SHA-pinned actions — `github/codeql-action/*@v4.37.4 → f205ea1c3313d32999d8d6a48b4f6530d4437b38` (SHA-to-tag provenance verified via GitHub API on 2026-08-01), plus the repo's existing checkout/setup-node pins; Node 20 (matches CI). New `tests/unit/supply-chain-codeql.test.ts` (10 governance tests): workflow exists; init→autobuild→analyze pipeline present; security-extended suite; push/PR/schedule triggers; Node 20; least-privilege permissions block (write only to security-events, no contents/packages/issues write); every codeql-action + checkout/setup-node use is 40-char SHA-pinned with NO moving @vX references. No migration |
 | KZQ-UPG-001 | UPG | Epic G 框架升级 | Node 20 → 22 | pending | — | — | `npm run typecheck && npm run lint && npm run test:unit && npm run build:demo` | `package.json:5-6` engines `node:20.x`; `.github/workflows/ci.yml` uses `node-version:20` in all jobs; `@types/node:^20.16.11`; must confirm EdgeOne Node support first |
 | KZQ-UPG-002 | UPG | Epic G 框架升级 | Migrate ESLint to Flat Config (`eslint.config.mjs`) | pending | — | — | `npm run lint` | `.eslintrc.json` exists (legacy); no `eslint.config.mjs`; `package.json:14` runs `next lint` (removed in Next 16); tracked in `docs/NEXT16_UPGRADE_PLAN.md` Phase 3 |
 | KZQ-UPG-003 | UPG | Epic G 框架升级 | PDF.js & Turbopack compatibility | completed | — | — | `npm run sync:pdfjs-worker && npm run build:demo` | `next.config.mjs:226` `transpilePackages:["pdfjs-dist"]`; :227-243 webpack config only sets `resolve.fallback` for Node builtins (no pdfjs-specific alias); `scripts/sync-pdfjs-worker.mjs` syncs worker to `public/lib/pdfjs/pdf.worker.min.mjs`. Code is Turbopack-compatible. Note: runtime PDF preview verification recommended before Next 16 upgrade |
@@ -114,25 +115,25 @@ suffix such as `-a`, `-b`) and is executed one per round.
 Per the priority order `P0 → P1 → P2 → Framework Upgrade`, and within each
 priority by Task ID order, the next atomic task to execute is:
 
-**KZQ-P2-012-a** — Supply chain security: CodeQL (Epic H). Add a GitHub
-Actions workflow `.github/workflows/codeql.yml` running CodeQL analysis
-(JavaScript/TypeScript, default setup, `security-extended` query suite,
-`actions/upload-sarif` on every push + PR + schedule), with least-privilege
-`permissions: { security-events: write, actions: read, contents: read }` and
-SHA-pinned actions, consistent with the existing CI governance.
+**KZQ-P2-012-b** — Supply chain: secret scanning configuration (Epic H).
+Enable GitHub push-protection secret scanning via a repository config file
+(`.github/secret-scanning.yml`, `push-protection: enabled` — the standard
+GitHub org/repo setting file) plus documentation of the GitHub UI steps
+(push protection cannot be fully configured from a repo file in all plans;
+the manual steps must be documented as acceptance items), and a governance
+test asserting the config file exists.
 
 All P0 tasks are complete (Epic A and Epic B fully done). Within P1, the
 only remaining rows are BLOCKED on human/platform prerequisites and cannot
 be completed by code alone: KZQ-P1-002 + KZQ-P1-004-b (admin CSP enforcing —
 requires a human CSP violation audit in the EdgeOne environment) and
 KZQ-P1-011-c (EdgeOne WAF evidence gate — requires human console
-configuration + evidence). Epic E (管理员身份安全) and Epic F are complete
-(P2-001/002/003 done). Epic H: KZQ-P2-010 (clean up superseded draft PRs
-#31/#32/#33) remains pending as a GitHub workflow item; KZQ-P2-011 (remove
-deprecated Vercel integration & docs) completed this round. Next by
-workstream order: KZQ-P2-012-a (CodeQL) is the first pending supply-chain
-sub-task (Dependabot + Actions permissions baseline already done).
-KZQ-P1-011-c stays pending and does not block P2 work.
+configuration + evidence). Epic E, Epic F and KZQ-P2-011 are complete.
+Epic H: KZQ-P2-010 (superseded draft PRs cleanup) remains pending as a
+GitHub workflow item; KZQ-P2-012 workstream a (CodeQL) completed this
+round. Next: KZQ-P2-012-b (secret scanning configuration) then the
+remaining P2-012 sub-tasks (SBOM, license audit). KZQ-P1-011-c stays
+pending and does not block P2 work.
 
 Status summary:
 - All P0 tasks complete (Epic A and Epic B fully done)
@@ -243,6 +244,11 @@ Status summary:
   domain BLOCK, §9 manual GitHub-integration cleanup steps and ADR-001
   preserved as security/audit artifacts; `vercel-removal.test.ts` locks the
   governance contract)
+- KZQ-P2-012-a completed (supply chain: CodeQL — `.github/workflows/codeql.yml`
+  with security-extended JS/TS analysis, push/PR/weekly triggers,
+  least-privilege permissions and SHA-pinned codeql-action v4.37.4
+  (f205ea1c...); `supply-chain-codeql.test.ts` locks the governance
+  contract)
 
 ## Acceptance Commands Reference
 
