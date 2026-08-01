@@ -217,3 +217,13 @@
 - [ ] 若仓库 `Settings → Secrets and variables → Actions` 中残留 `VERCEL_TOKEN` / `VERCEL_ORG_ID` / `VERCEL_PROJECT_ID` 等 Secret，逐项删除
 - [ ] 验证 `git log --all --oneline -- 'vercel.json'` 仅出现在历史中，当前工作树无 `vercel.json`
 - [ ] 验证 `.github/workflows/*.yml` 中无 `vercel/vercel-action` 等 Vercel Action 引用
+
+---
+
+## 10. 供应链安全（人工操作 + 代码已就绪项）
+
+- [ ] **CodeQL 已配置**：`.github/workflows/codeql.yml` 存在（push/PR/每周调度，security-extended JS/TS 分析）——KZQ-P2-012-a
+- [ ] **平台侧（人工验收）**: GitHub 仓库 `Settings → Code security and analysis` 中 **Secret scanning** 为 Enabled——KZQ-P2-012-b
+- [ ] **平台侧（人工验收）**: 同一页面 **Push protection** 为 Enabled；推送含测试密钥的 commit 会被 GitHub 拒绝——KZQ-P2-012-b
+- [ ] **平台侧（人工验收）**: `Security → Secret scanning` 页面有扫描记录；历史泄露密钥（如 `Import .env`）已定位并轮换——KZQ-P2-012-b
+- [ ] 详细步骤见 `docs/SECRET_SCANNING_CONFIG.md`；**不得在仓库中伪造不存在的 secret-scanning 配置文件假装已启用**——KZQ-P2-012-b
