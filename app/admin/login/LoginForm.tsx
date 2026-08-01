@@ -36,6 +36,28 @@ export function LoginForm() {
 
     setLoading(true);
     try {
+      // KZQ-P1-021: server-side login brute-force guard. The server
+      // counts attempts and returns 429 when the rate limit is hit —
+      // the client never counts attempts itself. The request carries
+      // NO credentials. On a guard outage (network error / non-429)
+      // the sign-in continues (fail-open): the real floor for direct
+      // Supabase Auth calls is Supabase Auth's built-in login rate
+      // limiting + EdgeOne WAF (see docs/EDGEONE_WAF_RULES.md §2.12).
+      let guardBlocked = false;
+      try {
+        const guard = await fetch("/api/admin/login-guard", { method: "POST" });
+        if (guard.status === 429) {
+          const body = (await guard.json().catch(() => null)) as {
+            error?: string;
+          } | null;
+          setError(body?.error || LOGIN_ERROR_MESSAGES.RATE_LIMITED);
+          guardBlocked = true;
+        }
+      } catch {
+        // Guard unreachable — fail-open, do not block the login flow.
+      }
+      if (guardBlocked) return;
+
       // Create the Supabase client lazily on submit, not on render.
       // If this throws (e.g. bad env, CSP violation), the error is
       // caught here and shown inline — instead of crashing the entire

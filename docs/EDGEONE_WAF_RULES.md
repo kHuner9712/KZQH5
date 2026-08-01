@@ -205,6 +205,34 @@
 - 携带错误 token 访问，验证返回 403
 - 使用 OUTBOX_SECRET 访问 storage 路由，验证返回 403（跨用途令牌隔离）
 
+### 2.12 `/api/admin/login-guard` (KZQ-P1-021 新增)
+
+**管理员登录防爆破 — 应用层登录闸门**:
+
+登录表单在调用 `supabase.auth.signInWithPassword` 之前，先 POST 到本端点（无 body、不传输任何凭据）。服务端计数并判定是否超限——客户端从不自行计数。
+
+| 路由 | 方法 | 鉴权 | 应用层限流 |
+|------|------|------|------------|
+| `/api/admin/login-guard` | POST | 无（仅限流闸门） | 5 req/min / 可信 IP；无可信 IP 时共享 `fallback:global` floor |
+
+- 超限返回 `429` + 固定中文文案（`尝试次数过多，请稍后再试`）+ `Retry-After` + `Cache-Control: no-store`
+- 服务端仅记录固定错误码 `ADMIN_LOGIN_RATE_LIMITED`，不记录邮箱、IP 或供应商错误细节
+- 请求体被完全忽略——绝不在该端点接收/解析密码
+
+**边界（如实声明）**: 本闸门只保护**走应用页面**的登录流程（含脚本化浏览器自动化执行页面自身登录 JS 的场景）。客户端若绕过表单直接调用 Supabase Auth（`auth.<ref>.supabase.co`），该请求不经过本应用——此路径的真实防线为:
+
+1. **Supabase Auth 内建登录限流**（Auth Dashboard → Rate Limits，按 IP 与邮箱分别限流）——防爆破的根防线，必须人工配置并验收；
+2. **EdgeOne WAF 规则**（见下方）。
+
+**WAF 规则建议**:
+- 对 `/api/admin/login-guard` 与 `/admin/login` 页面请求限流（例如 30 req/min/IP），防止闸门端点与登录页本身被高频扫描
+- 将 `/api/admin/login-guard` 的 POST 请求纳入全局 fallback 限流（见第 4 节）
+
+**验收方法**:
+- 连续超过 5 次登录尝试（同 IP），第 6 次在页面显示固定限流文案且不再调用 Supabase Auth
+- 无可信 IP 场景（未配置 `TRUSTED_PROXY_HEADER`）下，轮换 User-Agent 等 header 仍被全局 floor 拦截
+- 直接调用 Supabase Auth 的请求在 Auth Dashboard 达到限流阈值后返回 `429`（平台侧验收）
+
 ## 3. 可信 IP Header 配置
 
 EdgeOne 环境必须配置以下可信 IP Header：

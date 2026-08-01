@@ -67,6 +67,10 @@
 
 - [ ] `/admin` 未登录跳转到 `/admin/login`
 - [ ] 登录 / 退出正常
+- [ ] 登录错误不显示 Supabase 原始英文报错（仅显示固定中文文案）——KZQ-P1-020
+- [ ] 同 IP 连续超过 5 次登录尝试后，页面显示固定限流文案且不再发起 Auth 调用——KZQ-P1-021
+- [ ] **平台侧（人工验收）**: Supabase Auth Dashboard 已配置登录限流（Auth → Rate Limits，按 IP / 邮箱），直接调用 Auth API 超限返回 429——KZQ-P1-021
+- [ ] **平台侧（人工验收）**: EdgeOne WAF 已为 `/api/admin/login-guard` 与 `/admin/login` 配置限流规则（见 `docs/EDGEONE_WAF_RULES.md` §2.12）——KZQ-P1-021
 - [ ] `/admin/site-settings` 站点设置可保存
 - [ ] `/admin/homepage` 首页内容可编辑
 - [ ] `/admin/pages` 页面内容可编辑
