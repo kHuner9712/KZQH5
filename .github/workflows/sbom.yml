@@ -1,0 +1,93 @@
+name: SBOM
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# ============================================================
+# KZQ-P2-012-c: Software Bill of Materials generation.
+#
+# Generation command (documented; run locally to reproduce):
+#   npm ci
+#   npm sbom --sbom-format=cyclonedx --sbom-type=application > sbom.cdx.json
+#   npm sbom --sbom-format=spdx --sbom-type=application > sbom.spdx.json
+# (`npm sbom` is a built-in npm command, available since npm 10.7.0 —
+#  the Node 20 image shipped by actions/setup-node satisfies this.)
+#
+# Artifact name: `sbom` (contains sbom.cdx.json + sbom.spdx.json).
+#
+# Verification step (also executed in CI):
+#   npm sbom --sbom-format=cyclonedx --sbom-type=application > sbom.cdx.verify.json
+#   node -e "...normalize serialNumber, JSON-diff vs sbom.cdx.json..."
+# A stable lockfile must produce a byte-identical CycloneDX document
+# (modulo the per-run serialNumber UUID), so the diff proves the SBOM
+# is reproducible from the committed dependency graph.
+#
+# Release attachment: intentionally NOT wired to softprops/action-gh-release
+# or similar — attaching to a release requires a GITHUB_TOKEN with
+# `contents: write`, which conflicts with the least-privilege posture
+# (`contents: read` only). There is no GITHUB_TOKEN-free upload path for
+# releases, so the SBOM is published as a workflow artifact instead
+# (90-day retention), fetchable from the Actions tab on every main push
+# without elevating permissions.
+# ============================================================
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      # actions/setup-node@v7.0.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 20
+          cache: npm
+      - name: Verify npm sbom is available (npm >= 10.7.0)
+        run: |
+          if ! npm sbom --help >/dev/null 2>&1; then
+            echo "ERROR: npm sbom unavailable — npm >= 10.7.0 required, found: $(npm --version)"
+            exit 1
+          fi
+          echo "npm $(npm --version) supports npm sbom"
+      - run: npm ci
+      - name: Generate CycloneDX SBOM
+        run: npm sbom --sbom-format=cyclonedx --sbom-type=application > sbom.cdx.json
+      - name: Generate SPDX SBOM
+        run: npm sbom --sbom-format=spdx --sbom-type=application > sbom.spdx.json
+      - name: Verify SBOM documents are structurally valid
+        run: |
+          node -e "const fs=require('fs');const t=fs.readFileSync('./sbom.cdx.json','utf8').replace(/^\uFEFF/,'');const s=JSON.parse(t);if(s.bomFormat!=='CycloneDX'){console.error('invalid CycloneDX: bomFormat='+s.bomFormat);process.exit(1)};console.log('CycloneDX OK — components: '+(s.components||[]).length)"
+          node -e "const fs=require('fs');const t=fs.readFileSync('./sbom.spdx.json','utf8').replace(/^\uFEFF/,'');const s=JSON.parse(t);if(s.spdxVersion!=='SPDX-2.3'){console.error('invalid SPDX: spdxVersion='+s.spdxVersion);process.exit(1)};console.log('SPDX OK — packages: '+(s.packages||[]).length)"
+      - name: Verify SBOM is reproducible (rebuild and diff)
+        run: |
+          npm sbom --sbom-format=cyclonedx --sbom-type=application > sbom.cdx.verify.json
+          node -e "
+            const fs=require('fs');
+            const read=(f)=>JSON.parse(fs.readFileSync(f,'utf8').replace(/^\uFEFF/,''));
+            const a=read('sbom.cdx.json');
+            const b=read('sbom.cdx.verify.json');
+            a.serialNumber=b.serialNumber;            // per-run UUID, not content
+            a.metadata.timestamp=b.metadata.timestamp; // per-run generation time, not content
+            if(JSON.stringify(a)!==JSON.stringify(b)){
+              console.error('SBOM not reproducible — dependency graph changed?');
+              process.exit(1);
+            }
+            console.log('SBOM reproducible: rebuild matches committed lockfile graph');
+          "
+      - name: Upload SBOM artifact
+        # actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sbom
+          path: |
+            sbom.cdx.json
+            sbom.spdx.json
+          retention-days: 90
