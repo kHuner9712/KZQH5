@@ -5,10 +5,6 @@ import {
   classifyAdminDataError,
   type AdminDataFailureCause,
 } from "@/lib/services/admin-data-error";
-import {
-  SCHEMA_COMPAT_DISABLED_LOG_CODE,
-  shouldUseSchemaCompatFallback,
-} from "@/lib/config/schema-compat";
 
 type DashboardClient = Awaited<ReturnType<typeof createServerSupabaseClient>>;
 
@@ -138,46 +134,31 @@ export function createAdminDashboardQueries(
 ): AdminDashboardQueries {
   return {
     async getSnapshot() {
-      // Try the snapshot RPC first. If it is not deployed (schema error)
-      // or permission-denied, fall back to direct table count queries
-      // ONLY when the schema-compat fallback is explicitly allowed
-      // (KZQ-P0-010). In production the fallback defaults OFF so an
-      // undeployed RPC surfaces as a fixed error instead of silently
-      // masking a missing migration.
+      // KZQ-P2-002: converged on the single snapshot RPC only.
+      //
+      // The former 5-query table-count fallback (getSnapshotViaDirectQueries)
+      // is REMOVED. An undeployed / permission-denied / failing RPC must
+      // surface as a fixed DashboardSnapshotError (explicit failure state)
+      // instead of silently falling back to direct count queries — that
+      // fallback masked databases where migrations had not been applied.
+      //
+      // Failure semantics:
+      //   - RPC error field / transport throw / structurally invalid
+      //     payload → DashboardSnapshotError(causeCode) (fixed coarse
+      //     cause only, never the raw Supabase error).
+      //   - The service layer maps the throw to { ok: false }; the page
+      //     shows the explicit "数据读取失败" state (never a synthetic 0).
       try {
         const result = await client.rpc("get_admin_dashboard_snapshot");
         const { data, error } = result;
-        if (!error) {
-          return parseDashboardSnapshot(data);
+        if (error) {
+          throw new DashboardSnapshotError(classifyAdminDataError(error));
         }
-        // If the error is NOT a schema/permission issue, treat as a real
-        // failure. Schema/permission errors (RPC not deployed, or
-        // execute privilege missing) fall through to the gated fallback.
-        const cause = classifyAdminDataError(error);
-        if (!shouldUseSchemaCompatFallback(cause)) {
-          if (cause === "schema" || cause === "permission") {
-            console.warn(SCHEMA_COMPAT_DISABLED_LOG_CODE);
-          }
-          throw new DashboardSnapshotError(cause);
-        }
+        return parseDashboardSnapshot(data);
       } catch (err) {
-        // If this is already a DashboardSnapshotError from above, re-throw.
         if (err instanceof DashboardSnapshotError) throw err;
-        // Network/abort/client throw — classify and check if fallback is
-        // appropriate. Connection errors should NOT fall back.
-        const cause = classifyAdminDataError(err);
-        if (!shouldUseSchemaCompatFallback(cause)) {
-          if (cause === "schema" || cause === "permission") {
-            console.warn(SCHEMA_COMPAT_DISABLED_LOG_CODE);
-          }
-          throw new DashboardSnapshotError(cause);
-        }
+        throw new DashboardSnapshotError(classifyAdminDataError(err));
       }
-
-      // Fallback: direct table count queries using service_role (bypasses
-      // RLS). Used when the snapshot RPC is not deployed to the database
-      // AND the schema-compat fallback is explicitly allowed.
-      return getSnapshotViaDirectQueries(client);
     },
 
     async recentInquiries() {
@@ -193,60 +174,6 @@ export function createAdminDashboardQueries(
       }
       return data as Inquiry[];
     },
-  };
-}
-
-/**
- * Fallback snapshot implementation using direct table count queries.
- * Used when the get_admin_dashboard_snapshot RPC is not deployed.
- *
- * Uses { count: "exact", head: true } to avoid transferring row data —
- * only the count is needed. service_role bypasses RLS, so this returns
- * true totals even on tables with restrictive policies.
- */
-async function getSnapshotViaDirectQueries(
-  client: DashboardClient,
-): Promise<DashboardSnapshotCounts> {
-  const [products, publishedProducts, certificates, inquiries, unreadInquiries] =
-    await Promise.all([
-      client.from("products").select("*", { count: "exact", head: true }),
-      client
-        .from("products")
-        .select("*", { count: "exact", head: true })
-        .eq("is_published", true),
-      client.from("certificates").select("*", { count: "exact", head: true }),
-      client.from("inquiries").select("*", { count: "exact", head: true }),
-      client
-        .from("inquiries")
-        .select("*", { count: "exact", head: true })
-        .eq("is_read", false),
-    ]);
-
-  const errors = [products, publishedProducts, certificates, inquiries, unreadInquiries]
-    .filter((r) => r.error);
-  if (errors.length > 0) {
-    throw new DashboardSnapshotError(
-      classifyAdminDataError(errors[0].error),
-    );
-  }
-
-  const counts = [
-    products.count,
-    publishedProducts.count,
-    certificates.count,
-    inquiries.count,
-    unreadInquiries.count,
-  ];
-  if (counts.some((c) => c === null)) {
-    throw new DashboardSnapshotError("count-unavailable");
-  }
-
-  return {
-    totalProducts: counts[0] as number,
-    publishedProducts: counts[1] as number,
-    totalCertificates: counts[2] as number,
-    totalInquiries: counts[3] as number,
-    unreadInquiries: counts[4] as number,
   };
 }
 
