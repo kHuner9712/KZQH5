@@ -13,7 +13,7 @@ blindly — re-verify against real code before starting any task.
 - Node version (engines): `20.x` (local runtime v24.15.0 used for tooling only)
 - Next.js version: `15.5.21`
 - Supabase client version: `@supabase/supabase-js 2.109.0`, `@supabase/ssr 0.12.0`
-- Last updated: 2026-08-01 (KZQ-P2-012-c completed)
+- Last updated: 2026-08-01 (KZQ-UPG-002 completed)
 
 ## Status Values
 
@@ -82,7 +82,7 @@ column records the file and line where the decision was made.
 | KZQ-P2-011 | P2 | Epic H 仓库治理 | Remove deprecated Vercel integration & docs | completed | `trae/p2-011-remove-vercel-docs` | (this commit) | `npm run typecheck && npm run lint && npx vitest run tests/unit/vercel-removal.test.ts tests/unit/cookie-protocol-compat.test.ts` → PASS (5+10=15); release-readiness 38/41 (3 pre-existing Windows baselines) | AUDIT RESULT: `.github/workflows/*.yml` (6 files) contain ZERO Vercel references (no vercel-action, no Vercel env) — CI is fully EdgeOne; the GitHub-level Vercel App/Check cannot be removed from code (documented manual step kept). Cleaned 3 stale comments that still paired Vercel with EdgeOne or described Vercel as active: `.env.example:39` (indexing note now EdgeOne Demo/Preview), `lib/supabase/middleware-session.ts:9` (Edge Runtime warning now "EdgeOne build warning"), `tests/unit/cookie-protocol-compat.test.ts:468` (hosting platform now "EdgeOne"). KEPT (audit-valuable / security-relevant): `scripts/check-release-readiness.mjs` vercel.app domain BLOCK (must never deploy to the deprecated domain), `scripts/check-deployed-site.mjs` Vercel Runtime Error detector, `docs/LAUNCH_CHECKLIST.md` §9 manual GitHub-integration cleanup steps, `docs/ADR-001-CHINA-DEPLOYMENT.md` (historical ADR), README/DEPLOYMENT deprecation statements, `.gitignore` defensive `.vercel` ignore, EDGEONE_COMPATIBILITY_MATRIX historical note. New `tests/unit/vercel-removal.test.ts` (5 governance tests): no Vercel in any workflow; release-readiness vercel.app BLOCK preserved; §9 manual cleanup checklist preserved; ADR-001 preserved; README/DEPLOYMENT/.env.example never present Vercel as active platform; middleware-session.ts no longer pairs Vercel/EdgeOne. No migration |
 | KZQ-P2-012 | P2 | Epic H 仓库治理 | Supply chain security (workstream — split into atomic sub-tasks: CodeQL, secret scanning, Dependabot, SBOM, license audit, GH Actions permissions) | completed | — | — | per sub-task | `.github/dependabot.yml` PRESENT (npm + github-actions weekly); `.github/workflows/ci.yml:8-9` top-level `permissions: contents: read`; actions SHA-pinned (:46,51). ALL sub-tasks complete: a (CodeQL) completed; b (secret scanning config docs + acceptance, manual platform enablement pending) completed; c (SBOM) completed; d (license audit) completed; Dependabot and GH Actions least-privilege permissions were pre-existing and verified during the workstream |
 | KZQ-UPG-001 | UPG | Epic G 框架升级 | Node 20 → 22 | pending | — | — | `npm run typecheck && npm run lint && npm run test:unit && npm run build:demo` | `package.json:5-6` engines `node:20.x`; `.github/workflows/ci.yml` uses `node-version:20` in all jobs; `@types/node:^20.16.11`; must confirm EdgeOne Node support first |
-| KZQ-UPG-002 | UPG | Epic G 框架升级 | Migrate ESLint to Flat Config (`eslint.config.mjs`) | pending | — | — | `npm run lint` | `.eslintrc.json` exists (legacy); no `eslint.config.mjs`; `package.json:14` runs `next lint` (removed in Next 16); tracked in `docs/NEXT16_UPGRADE_PLAN.md` Phase 3 |
+| KZQ-UPG-002 | UPG | Epic G 框架升级 | Migrate ESLint to Flat Config (`eslint.config.mjs`) | completed | `trae/upg-002-eslint-flat-config` | (this commit) | `npm run typecheck && npm run lint && npx vitest run tests/unit/eslint-flat-config.test.ts` → PASS (8/8); full `npm run test:unit` → 1708/1711 PASS (3 pre-existing Windows baselines) | New `eslint.config.mjs` (Flat Config, ESLint 9) replacing `.eslintrc.json` (DELETED): `next/core-web-vitals` preset bridged via `FlatCompat` from `@eslint/eslintrc` (eslint-config-next@15 still ships legacy presets); custom rules preserved verbatim (`@next/next/no-img-element: off`, `react/no-unescaped-entities: off`); ignores for `.next/`, `node_modules/`, `playwright-report/`, `test-results/`, `public/lib/` (vendored PDF.js worker) and `**/*.d.ts`; default export via named const (no anonymous default). `package.json:14` lint script `next lint` → `eslint .` (pre-migration for Next.js 16 which removes `next lint`). Cleaned 12 stale "Unused eslint-disable directive" comments across 11 files (rules were already off, so the directives were dead code — ESLint CLI reports them, `next lint` did not): app/admin/(protected)/{certificates,products,projects}/page.tsx, components/admin/{ImageUpload,ProductForm}.tsx, components/public/{PublicDataUnavailable.tsx,PdfViewer.tsx,usePdfDocument.ts}, lib/repositories/public-types.ts, next.config.mjs, scripts/mock-supabase-for-build.mjs. `CertificateGallery.tsx:73` exhaustive-deps disable KEPT (still active). New `tests/unit/eslint-flat-config.test.ts` (8 governance tests): flat config exists; legacy `.eslintrc.json` removed; FlatCompat import + next/core-web-vitals bridge; custom rules preserved; ignores for build/vendor/d.ts; lint script is `eslint .` (not next lint); REAL execution test (eslint . exits 0 with zero errors AND zero warnings). Note: `next lint` deprecation warning is gone from CI output. `docs/LAUNCH_CHECKLIST.md` unaffected (no entry existed). No migration |
 | KZQ-UPG-003 | UPG | Epic G 框架升级 | PDF.js & Turbopack compatibility | completed | — | — | `npm run sync:pdfjs-worker && npm run build:demo` | `next.config.mjs:226` `transpilePackages:["pdfjs-dist"]`; :227-243 webpack config only sets `resolve.fallback` for Node builtins (no pdfjs-specific alias); `scripts/sync-pdfjs-worker.mjs` syncs worker to `public/lib/pdfjs/pdf.worker.min.mjs`. Code is Turbopack-compatible. Note: runtime PDF preview verification recommended before Next 16 upgrade |
 | KZQ-UPG-004 | UPG | Epic G 框架升级 | Next.js 16 upgrade | pending | — | — | Release Gate (full) | `package.json:44` next `15.5.21`; `docs/NEXT16_UPGRADE_PLAN.md:3` "Status: DRAFT — DO NOT EXECUTE YET"; pre-flight checklist unchecked. Blocked by UPG-001, UPG-002, UPG-003 (UPG-003 done) |
 
@@ -114,13 +114,14 @@ suffix such as `-a`, `-b`) and is executed one per round.
 Per the priority order `P0 → P1 → P2 → Framework Upgrade`, and within each
 priority by Task ID order, the next atomic task to execute is:
 
-**KZQ-UPG-001** — Framework Upgrade: Node 20 → 22 (Epic G). Bump
-`engines.node` to `22.x`, switch every CI job (`ci.yml`, `codeql.yml`,
-`sbom.yml`) to `node-version: 22`, update `@types/node` to `^22`.
-PREREQUISITE: confirm EdgeOne Cloud Functions supports Node 22 (check
-`EDGEONE_COMPATIBILITY_MATRIX` / vendor docs) before bumping. Then run
-the full Release Gate (`npm ci && typecheck && lint && test:unit &&
-test:database && build:demo`).
+**KZQ-UPG-004** — Framework Upgrade: Next.js 16 (Epic G). See
+`docs/NEXT16_UPGRADE_PLAN.md` (DRAFT — DO NOT EXECUTE YET; pre-flight
+checklist must be completed and approved before Phase 1). UPG-002
+(ESLint Flat Config, its Phase 2+3 prep) is DONE on this branch. Still
+gated on: KZQ-UPG-001 (Node 20 → 22 — BLOCKED: EdgeOne Cloud Functions
+official docs state Node.js v20.x as the default runtime, no Node 22
+support documented, verified 2026-08-01) and NEXT16_UPGRADE_PLAN
+approval.
 
 All P0 tasks are complete (Epic A and Epic B fully done). Within P1, the
 only remaining rows are BLOCKED on human/platform prerequisites and cannot
@@ -271,6 +272,12 @@ Status summary:
 - KZQ-P2-012 workstream COMPLETE (CodeQL / secret scanning / SBOM /
   license audit done; Dependabot + GH Actions least-privilege permissions
   pre-existing and verified)
+- KZQ-UPG-002 completed (ESLint Flat Config — `eslint.config.mjs`
+  replaces `.eslintrc.json`; `next/core-web-vitals` bridged via
+  FlatCompat; custom rules preserved; `npm run lint` → `eslint .`
+  (removes the `next lint` deprecation warning); 12 stale unused
+  eslint-disable directives cleaned; `eslint-flat-config.test.ts` locks
+  the governance contract incl. a real zero-error/zero-warning run)
 
 ## Acceptance Commands Reference
 

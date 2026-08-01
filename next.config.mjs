@@ -155,7 +155,6 @@ function buildImageRemotePatterns() {
           );
         }
         // Dev: skip but don't fail the build.
-        // eslint-disable-next-line no-console
         console.warn(
           `next.config: skipping non-canonical Supabase host "${host}" in dev mode.`,
         );

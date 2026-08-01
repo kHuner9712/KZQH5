@@ -441,7 +441,6 @@ export default function AdminProductsPage() {
                         <td className="px-4 py-3">
                           <div className="h-12 w-16 overflow-hidden rounded bg-gray-100">
                             {p.cover_image_url ? (
-                              // eslint-disable-next-line @next/next/no-img-element
                               <img
                                 src={p.cover_image_url}
                                 alt={p.name_cn}
@@ -563,7 +562,6 @@ export default function AdminProductsPage() {
                         </button>
                         <div className="h-16 w-20 shrink-0 overflow-hidden rounded bg-gray-100">
                           {p.cover_image_url ? (
-                            // eslint-disable-next-line @next/next/no-img-element
                             <img
                               src={p.cover_image_url}
                               alt={p.name_cn}

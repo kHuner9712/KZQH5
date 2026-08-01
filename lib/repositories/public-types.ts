@@ -116,7 +116,6 @@ export function logPublicDataFailure(
   if (typeof console !== "undefined" && typeof console.warn === "function") {
     // Only emit the fixed coarse code. Do NOT log cause.message, cause.code,
     // cause.details, or any PII — they may contain schema or stack info.
-    // eslint-disable-next-line no-console
     console.warn(code);
   }
   void cause; // cause is preserved on the thrown error, not logged here.

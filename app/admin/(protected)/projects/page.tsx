@@ -1,5 +1,4 @@
 "use client";
-/* eslint-disable @next/next/no-img-element */
 
 import { useCallback, useEffect, useState } from "react";
 import { ChevronDown, ChevronUp, FolderKanban, Loader2, Pencil, Plus, Trash2, Upload } from "lucide-react";
