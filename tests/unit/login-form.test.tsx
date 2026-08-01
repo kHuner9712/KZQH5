@@ -39,12 +39,20 @@ async function submitCredentials(email = "admin@kzq.com", password = "secret") {
 describe("LoginForm — error standardization", () => {
   afterEach(() => {
     cleanup();
+    vi.unstubAllGlobals();
   });
 
   beforeEach(() => {
     pushMock.mockClear();
     refreshMock.mockClear();
     signInMock.mockReset();
+    // Default guard response: allowed (200). Individual tests override.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ ok: true }), { status: 200 }),
+      ),
+    );
   });
 
   it("shows the fixed Chinese message for invalid credentials (no raw Supabase text)", async () => {
@@ -113,5 +121,43 @@ describe("LoginForm — error standardization", () => {
       "请填写邮箱和密码",
     );
     expect(signInMock).not.toHaveBeenCalled();
+  });
+
+  it("blocks sign-in when the server guard returns 429 (fixed message, no Supabase call)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({ ok: false, error: "尝试次数过多，请稍后再试" }),
+          { status: 429 },
+        ),
+      ),
+    );
+    signInMock.mockResolvedValue({
+      data: { user: {}, session: {} },
+      error: null,
+    });
+    render(<LoginForm />);
+    await submitCredentials();
+    const alert = screen.getByTestId("login-auth-error");
+    expect(alert).toHaveTextContent("尝试次数过多，请稍后再试");
+    expect(signInMock).not.toHaveBeenCalled();
+    expect(pushMock).not.toHaveBeenCalled();
+  });
+
+  it("continues sign-in when the guard is unreachable (fail-open)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockRejectedValue(new Error("network down")),
+    );
+    signInMock.mockResolvedValue({
+      data: { user: {}, session: {} },
+      error: null,
+    });
+    render(<LoginForm />);
+    await submitCredentials();
+    // Fail-open: the guard outage must NOT block the login flow.
+    expect(signInMock).toHaveBeenCalledTimes(1);
+    expect(pushMock).toHaveBeenCalledWith("/admin");
   });
 });

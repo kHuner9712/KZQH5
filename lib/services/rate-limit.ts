@@ -616,3 +616,38 @@ export function getAdminPreAuthRateLimiter(): RateLimiter {
     adminPreAuthLimiter = new MemoryRateLimiter(30, 60 * 1000);
   return adminPreAuthLimiter;
 }
+
+// ============================================================
+// KZQ-P1-021: Admin login brute-force protection
+// ------------------------------------------------------------
+// The admin login form calls `supabase.auth.signInWithPassword`
+// directly from the browser — the Auth API request does NOT pass
+// through the application server. This dedicated limiter backs the
+// server-side login guard endpoint (/api/admin/login-guard) which the
+// form calls BEFORE attempting sign-in. Counting and the over-limit
+// decision happen entirely on the server (never client-side counters).
+//
+// Limits:
+//   - 5 attempts / 60s per key. With `checkRateLimitKeys` the key is
+//     the trusted client IP (`ip:<addr>`) when available, otherwise
+//     the shared `fallback:global` floor + optional HMAC sub-bucket.
+//     Legitimate admins type credentials far slower than 5/min; a
+//     scripted brute force is blocked after 5 attempts.
+//
+// Boundary (documented in docs/EDGEONE_WAF_RULES.md §2.12):
+//   The guard only gates the application login flow. A client that
+//   bypasses the form and calls Supabase Auth directly is NOT stopped
+//   here — the real floor for that path is (a) Supabase Auth's built-in
+//   login rate limiting (Auth dashboard, per-IP + per-email) and (b)
+//   an EdgeOne WAF rule on the guard endpoint. The guard is the
+//   application-layer defense for the normal flow and for scripted
+//   browser automation that executes the page's own login JS.
+//
+// Multi-instance caveat applies (see MemoryRateLimiter header).
+// ============================================================
+let loginLimiter: RateLimiter | null = null;
+
+export function getLoginRateLimiter(): RateLimiter {
+  if (!loginLimiter) loginLimiter = new MemoryRateLimiter(5, 60 * 1000);
+  return loginLimiter;
+}
