@@ -465,7 +465,7 @@ describe("Set-Cookie header string format", () => {
   it("does NOT set Secure flag (Supabase cookies are not Secure by default)", async () => {
     // @supabase/ssr's DEFAULT_COOKIE_OPTIONS does not set secure=true
     // by default. The middleware mirrors this behavior. Secure is
-    // typically handled by the hosting platform (Vercel/EdgeOne) at
+    // typically handled by the hosting platform (EdgeOne) at
     // the edge level.
     simulateSuccessfulRefresh({
       access_token: "new-access",

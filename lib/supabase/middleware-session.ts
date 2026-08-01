@@ -6,8 +6,8 @@
 //
 //   1. Edge Runtime compatible — does NOT import @supabase/ssr or
 //      @supabase/supabase-js, which both pull in `process.version`
-//      (a Node.js-only API). This avoids the Vercel/EdgeOne build
-//      warning: "A Node.js module is loaded (@supabase/supabase-js
+//      (a Node.js-only API). This avoids the EdgeOne build warning:
+//      "A Node.js module is loaded (@supabase/supabase-js
 //      uses process.version), which is unsupported in Edge Runtime."
 //      Instead, this module uses only Web APIs (fetch, Headers,
 //      TextEncoder, TextDecoder, atob, btoa) that are available in
