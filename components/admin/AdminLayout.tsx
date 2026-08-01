@@ -23,10 +23,12 @@ import {
   FileArchive,
   FolderKanban,
   BarChart3,
+  ShieldCheck,
 } from "lucide-react";
 
 const navItems = [
   { href: "/admin", label: "Dashboard", icon: LayoutDashboard, exact: true },
+  { href: "/admin/security", label: "账号安全", icon: ShieldCheck },
   { href: "/admin/site-settings", label: "站点设置", icon: Settings },
   { href: "/admin/homepage", label: "首页内容", icon: LayoutTemplate },
   { href: "/admin/pages", label: "页面内容", icon: FileText },

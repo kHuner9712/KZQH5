@@ -3,12 +3,14 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 // ============================================================
-// KZQ-P1-022-a: MFA / AAL2 — data & Auth capability audit
+// KZQ-P1-022-a/b: MFA / AAL2 — data & Auth capability audit
 // ------------------------------------------------------------
 // Static contract tests that pin the AUDIT FACTS (not behaviour):
-//   1. No MFA/AAL2 integration exists anywhere in project source.
+//   1. (a) No MFA integration existed at audit time — since superseded
+//      by (b): the enrollment UI now exists and calls the MFA API.
 //   2. getVerifiedAdmin() does NOT check the authenticator assurance
-//      level (aal1 session passes today — the gap this workstream fixes).
+//      level (aal1 session passes today — the gap this workstream
+//      fixes in sub-task d; enrollment alone must not introduce it).
 //   3. admin_profiles has no MFA columns (MFA state lives in the auth
 //      schema; no migration is needed).
 //   4. The sensitive-operation endpoints targeted by step-up exist.
@@ -23,40 +25,40 @@ function read(rel: string): string {
   return readFileSync(join(ROOT, rel), "utf8");
 }
 
-function collectTsFiles(dir: string, acc: string[] = []): string[] {
-  for (const entry of readdirSync(join(ROOT, dir))) {
-    const full = join(dir, entry);
-    const stat = statSync(join(ROOT, full));
-    if (stat.isDirectory()) {
-      collectTsFiles(full, acc);
-    } else if (/\.(ts|tsx)$/.test(entry)) {
-      acc.push(read(full));
-    }
-  }
-  return acc;
-}
+describe("KZQ-P1-022-b: MFA enrollment integration exists (supersedes the no-integration audit)", () => {
+  const enrollment = read("components/admin/MfaEnrollment.tsx");
+  const errorMap = read("lib/security/mfa-errors.ts");
+  const securityPage = read("app/admin/(protected)/security/page.tsx");
 
-const MFA_KEYWORDS = [
-  "getAuthenticatorAssuranceLevel",
-  "mfa.enroll",
-  "mfa.challenge",
-  "mfa.verify",
-  "mfa.listFactors",
-  "aal2",
-];
-
-describe("KZQ-P1-022-a: no MFA integration in project source", () => {
-  it("does not reference any MFA API in lib/ app/ components/", () => {
-    const sources = [
-      ...collectTsFiles("lib"),
-      ...collectTsFiles("app"),
-      ...collectTsFiles("components"),
-    ].join("\n");
-    for (const keyword of MFA_KEYWORDS) {
-      expect(sources).not.toContain(keyword);
-    }
+  it("the enrollment component calls the MFA enroll API", () => {
+    expect(enrollment).toContain("mfa.enroll");
   });
 
+  it("the enrollment component calls challenge and verify", () => {
+    expect(enrollment).toContain("mfa.challenge");
+    expect(enrollment).toContain("mfa.verify");
+  });
+
+  it("the enrollment component lists existing factors via listFactors", () => {
+    expect(enrollment).toContain("mfa.listFactors");
+  });
+
+  it("the fixed error map never returns raw provider text", () => {
+    expect(errorMap).toContain("mapMfaError");
+    expect(errorMap).toMatch(/The raw message is never surfaced/);
+  });
+
+  it("the account-security page mounts the enrollment component", () => {
+    expect(securityPage).toContain("MfaEnrollment");
+  });
+
+  it("the admin shell nav exposes the security entry", () => {
+    const shell = read("components/admin/AdminLayout.tsx");
+    expect(shell).toMatch(/\/admin\/security/);
+  });
+});
+
+describe("KZQ-P1-022-a: no AAL gate in the SSR session middleware", () => {
   it("does not reference the aal claim in the SSR session middleware", () => {
     const middleware = read("lib/supabase/middleware-session.ts");
     expect(middleware).not.toMatch(/\baal\b/i);
