@@ -29,6 +29,7 @@
     "catalog:download:apply": "node scripts/download-catalog-assets.mjs --apply",
     "check:deployed": "node scripts/check-deployed-site.mjs",
     "check:release-readiness": "node scripts/check-release-readiness.mjs",
+    "check:license-audit": "node scripts/check-license-audit.mjs",
     "check:release-readiness:staging": "node scripts/check-release-readiness.mjs --mode=staging",
     "check:migration-immutability": "node scripts/check-migration-immutability.mjs",
     "check:migration-immutability:ci": "node scripts/check-migration-immutability.mjs",
