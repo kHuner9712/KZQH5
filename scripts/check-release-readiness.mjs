@@ -32,6 +32,10 @@
 
 import { execSync, spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+// KZQ-P2-003: loopback host detection lives in ONE place
+// (lib/config/media-domains.mjs), shared with next.config.mjs,
+// lib/validation/url.ts and lib/security/csp-policy.ts.
+import { isLoopbackHost } from "../lib/config/media-domains.mjs";
 
 // ---------- Argument parsing ----------
 
@@ -349,13 +353,6 @@ const EDGEONE_PROXY_HEADERS = [
   "eo-connecting-ip",
   "x-edgeone-client-ip",
 ];
-
-function isLoopbackHost(hostname) {
-  let h = hostname.toLowerCase();
-  if (h.endsWith(".")) h = h.slice(0, -1);
-  if (h.startsWith("[") && h.endsWith("]")) h = h.slice(1, -1);
-  return h === "localhost" || h === "127.0.0.1" || h === "::1";
-}
 
 function checkSecurityAndOperations() {
   // --- TRUSTED_PROXY_HEADER ---

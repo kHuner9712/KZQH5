@@ -53,26 +53,28 @@
 //   conditions, the build fails immediately with a clear error.
 // ============================================================
 
-const SUPABASE_PROJECT_HOST_PATTERN = /^[a-z0-9]{20}\.supabase\.co$/;
+// KZQ-P2-003: media host rules now live in ONE place
+// (lib/config/media-domains.mjs) shared with lib/validation/url.ts,
+// lib/security/csp-policy.ts and scripts/check-release-readiness.mjs.
+import {
+  SUPABASE_PROJECT_HOST_PATTERN,
+  isLoopbackHost,
+  parseSupabaseUrl,
+  validateCdnDomainEntry,
+} from "./lib/config/media-domains.mjs";
+
 const BUILD_MOCK_BACKEND_FLAG = process.env.BUILD_MOCK_BACKEND === "true";
 const IS_CI = process.env.CI === "true";
 
 // Review #3 WP5: extract the hostname from NEXT_PUBLIC_SUPABASE_URL
 // so we can verify the mock-backend bypass only targets a loopback
 // mock server, never a real Supabase project URL.
-function getSupabaseUrlHostname() {
-  const url = (process.env.NEXT_PUBLIC_SUPABASE_URL || "").trim();
-  if (!url) return null;
-  try {
-    return new URL(url).hostname.toLowerCase();
-  } catch {
-    return null;
-  }
-}
-const SUPABASE_URL_HOSTNAME = getSupabaseUrlHostname();
+const PARSED_SUPABASE_URL = parseSupabaseUrl(
+  process.env.NEXT_PUBLIC_SUPABASE_URL || "",
+);
+const SUPABASE_URL_HOSTNAME = PARSED_SUPABASE_URL?.hostname ?? null;
 const IS_LOOPBACK_SUPABASE_HOST =
-  SUPABASE_URL_HOSTNAME === "localhost" ||
-  SUPABASE_URL_HOSTNAME === "127.0.0.1";
+  SUPABASE_URL_HOSTNAME !== null && isLoopbackHost(SUPABASE_URL_HOSTNAME);
 
 // Review #3 WP5: BUILD_MOCK_BACKEND is only honored when ALL three
 // conditions are met. If the flag is set but the environment is not
@@ -108,23 +110,6 @@ const BUILD_MOCK_BACKEND =
   BUILD_MOCK_BACKEND_FLAG && IS_CI && IS_LOOPBACK_SUPABASE_HOST;
 
 /**
- * Validate a single MEDIA_CDN_DOMAINS entry. Returns the normalized
- * hostname when valid, null when invalid. Mirrors the validation in
- * lib/validation/url.ts so config and runtime share one rule set.
- */
-function validateCdnDomainEntry(raw) {
-  const trimmed = (raw || "").trim().toLowerCase();
-  if (!trimmed) return null;
-  if (/[:/?#@]/.test(trimmed)) return null;
-  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(trimmed)) return null;
-  if (trimmed.startsWith("[") || trimmed.endsWith("]")) return null;
-  if (!/^[a-z0-9.-]+\.[a-z]{2,}$/.test(trimmed)) return null;
-  if (trimmed.startsWith(".") || trimmed.endsWith(".")) return null;
-  if (trimmed.includes("..")) return null;
-  return trimmed;
-}
-
-/**
  * Builds the Next.js image remotePatterns from the same env vars
  * that lib/validation/url.ts uses. Returns an array of pattern
  * objects suitable for `nextConfig.images.remotePatterns`.
@@ -143,24 +128,23 @@ function buildImageRemotePatterns() {
 
   // 1. Exact Supabase project host (e.g. abcdefgh.supabase.co)
   if (supabaseUrl) {
-    try {
-      const parsed = new URL(supabaseUrl);
-      const host = parsed.hostname.toLowerCase();
-      const protocol = parsed.protocol.replace(":", "");
+    const parsed = parseSupabaseUrl(supabaseUrl);
+    const host = parsed?.hostname ?? null;
+    if (host) {
+      const protocol = parsed.protocol;
       if (
-        host &&
         !host.startsWith("example.") &&
         !host.startsWith("placeholder.") &&
         SUPABASE_PROJECT_HOST_PATTERN.test(host)
       ) {
         patterns.push({ protocol: "https", hostname: host });
-      } else if (allowMockHost && (host === "localhost" || host === "127.0.0.1")) {
+      } else if (allowMockHost && isLoopbackHost(host)) {
         // CI build-mock: accept localhost URLs without the canonical
         // host shape check. The mock server never serves images, so
         // this entry is harmless; it satisfies the no-empty-patterns
         // fail-closed guard below.
         patterns.push({ protocol, hostname: host, port: parsed.port || undefined });
-      } else if (host && !SUPABASE_PROJECT_HOST_PATTERN.test(host)) {
+      } else if (!SUPABASE_PROJECT_HOST_PATTERN.test(host)) {
         // Work Package G: refuse non-project-shaped Supabase hosts at
         // build time. Previously any *.supabase.co host was accepted,
         // which allowed cross-tenant image proxying.
@@ -176,9 +160,6 @@ function buildImageRemotePatterns() {
           `next.config: skipping non-canonical Supabase host "${host}" in dev mode.`,
         );
       }
-    } catch (e) {
-      if (e instanceof Error && /next\.config:/.test(e.message)) throw e;
-      // Malformed NEXT_PUBLIC_SUPABASE_URL — skip; release-readiness will flag it.
     }
   }
 
