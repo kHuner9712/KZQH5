@@ -98,6 +98,11 @@ jobs:
           NEXT_PUBLIC_DEMO_MODE: "true"
       - name: Audit production deps (high+ critical, blocking)
         run: npm audit --omit=dev --audit-level=high
+      - name: Production dependency license audit (KZQ-P2-012-d)
+        # Verifies every production dependency carries a known,
+        # non-copyleft license (allowlist policy in the script header);
+        # fails the build on strong copyleft / missing / unknown licenses.
+        run: npm run check:license-audit
       - name: Check for whitespace / conflict markers
         run: git diff --check
 

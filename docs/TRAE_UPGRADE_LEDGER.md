@@ -80,7 +80,7 @@ column records the file and line where the decision was made.
 | KZQ-P2-003 | P2 | Epic F 性能结构 | Unified media domain config | completed | `trae/p2-003-media-domain-config` | (this commit) | `npm run typecheck && npm run lint && npx vitest run tests/unit/media-domain-config.test.ts tests/unit/next-config-image-patterns.test.ts tests/unit/csp-policy.test.ts tests/unit/csp-headers.test.ts tests/unit/site-url.test.ts` → PASS (10+15+42+10+17=94); `npm run build:demo` → PASS; release-readiness 38/41 (3 pre-existing Windows baselines) | New dependency-free pure ESM module `lib/config/media-domains.mjs` + `lib/config/media-domains.d.mts` (type declarations) as the SINGLE source of truth for: `SUPABASE_PROJECT_HOST_PATTERN` (canonical <20-char>.supabase.co), `isLoopbackHost` (case/trailing-dot/IPv6-bracket bypass resistant), `validateCdnDomainEntry`, `parseCdnDomains` (comma list → hostname allowlist), `parseSupabaseUrl` ({protocol, hostname, port}). All 4 consumers now import it instead of re-defining rules: `next.config.mjs` (image remotePatterns; CI mock-backend 3-condition guard preserved: `BUILD_MOCK_BACKEND_FLAG && IS_CI && IS_LOOPBACK_SUPABASE_HOST`), `lib/validation/url.ts` (runtime media URL validator), `lib/security/csp-policy.ts` (img-src/connect-src hosts; production fail-closed to 'self' preserved), `scripts/check-release-readiness.mjs` (loopback deployment checks). New `tests/unit/media-domain-config.test.ts` (10 tests): config matrix (project-host pattern accept/reject, CDN entry normalization + rejection, parseCdnDomains filtering, parseSupabaseUrl protocol/host/port, isLoopbackHost bypass variants) + static consumer-contract tests (every consumer imports the shared module and defines NO duplicate regex/validator/isLoopbackHost; mock-backend guard string preserved). No migration, no behavior change — all 94 related tests green, build passes. NOTE: this branch also carries the KZQ-P0-010 merge (af7f880) + KZQ-P2-002 (62bd753) from the parent chain |
 | KZQ-P2-010 | P2 | Epic H 仓库治理 | Clean up superseded draft PRs #31, #32, #33 | pending | — | — | `gh pr view 31,32,33` | GitHub PRs #31, #32, #33 reportedly still OPEN+DRAFT; their work superseded by merged PRs #34/#35/#41/#42; needs `gh` verification then close with explanation |
 | KZQ-P2-011 | P2 | Epic H 仓库治理 | Remove deprecated Vercel integration & docs | completed | `trae/p2-011-remove-vercel-docs` | (this commit) | `npm run typecheck && npm run lint && npx vitest run tests/unit/vercel-removal.test.ts tests/unit/cookie-protocol-compat.test.ts` → PASS (5+10=15); release-readiness 38/41 (3 pre-existing Windows baselines) | AUDIT RESULT: `.github/workflows/*.yml` (6 files) contain ZERO Vercel references (no vercel-action, no Vercel env) — CI is fully EdgeOne; the GitHub-level Vercel App/Check cannot be removed from code (documented manual step kept). Cleaned 3 stale comments that still paired Vercel with EdgeOne or described Vercel as active: `.env.example:39` (indexing note now EdgeOne Demo/Preview), `lib/supabase/middleware-session.ts:9` (Edge Runtime warning now "EdgeOne build warning"), `tests/unit/cookie-protocol-compat.test.ts:468` (hosting platform now "EdgeOne"). KEPT (audit-valuable / security-relevant): `scripts/check-release-readiness.mjs` vercel.app domain BLOCK (must never deploy to the deprecated domain), `scripts/check-deployed-site.mjs` Vercel Runtime Error detector, `docs/LAUNCH_CHECKLIST.md` §9 manual GitHub-integration cleanup steps, `docs/ADR-001-CHINA-DEPLOYMENT.md` (historical ADR), README/DEPLOYMENT deprecation statements, `.gitignore` defensive `.vercel` ignore, EDGEONE_COMPATIBILITY_MATRIX historical note. New `tests/unit/vercel-removal.test.ts` (5 governance tests): no Vercel in any workflow; release-readiness vercel.app BLOCK preserved; §9 manual cleanup checklist preserved; ADR-001 preserved; README/DEPLOYMENT/.env.example never present Vercel as active platform; middleware-session.ts no longer pairs Vercel/EdgeOne. No migration |
-| KZQ-P2-012 | P2 | Epic H 仓库治理 | Supply chain security (workstream — split into atomic sub-tasks: CodeQL, secret scanning, Dependabot, SBOM, license audit, GH Actions permissions) | in_progress | — | — | per sub-task | `.github/dependabot.yml` PRESENT (npm + github-actions weekly); `.github/workflows/ci.yml:8-9` top-level `permissions: contents: read`; actions SHA-pinned (:46,51). a (CodeQL) completed; b (secret scanning config docs + acceptance) completed; c (SBOM) completed; d (license audit) pending |
+| KZQ-P2-012 | P2 | Epic H 仓库治理 | Supply chain security (workstream — split into atomic sub-tasks: CodeQL, secret scanning, Dependabot, SBOM, license audit, GH Actions permissions) | completed | — | — | per sub-task | `.github/dependabot.yml` PRESENT (npm + github-actions weekly); `.github/workflows/ci.yml:8-9` top-level `permissions: contents: read`; actions SHA-pinned (:46,51). ALL sub-tasks complete: a (CodeQL) completed; b (secret scanning config docs + acceptance, manual platform enablement pending) completed; c (SBOM) completed; d (license audit) completed; Dependabot and GH Actions least-privilege permissions were pre-existing and verified during the workstream |
 | KZQ-UPG-001 | UPG | Epic G 框架升级 | Node 20 → 22 | pending | — | — | `npm run typecheck && npm run lint && npm run test:unit && npm run build:demo` | `package.json:5-6` engines `node:20.x`; `.github/workflows/ci.yml` uses `node-version:20` in all jobs; `@types/node:^20.16.11`; must confirm EdgeOne Node support first |
 | KZQ-UPG-002 | UPG | Epic G 框架升级 | Migrate ESLint to Flat Config (`eslint.config.mjs`) | pending | — | — | `npm run lint` | `.eslintrc.json` exists (legacy); no `eslint.config.mjs`; `package.json:14` runs `next lint` (removed in Next 16); tracked in `docs/NEXT16_UPGRADE_PLAN.md` Phase 3 |
 | KZQ-UPG-003 | UPG | Epic G 框架升级 | PDF.js & Turbopack compatibility | completed | — | — | `npm run sync:pdfjs-worker && npm run build:demo` | `next.config.mjs:226` `transpilePackages:["pdfjs-dist"]`; :227-243 webpack config only sets `resolve.fallback` for Node builtins (no pdfjs-specific alias); `scripts/sync-pdfjs-worker.mjs` syncs worker to `public/lib/pdfjs/pdf.worker.min.mjs`. Code is Turbopack-compatible. Note: runtime PDF preview verification recommended before Next 16 upgrade |
@@ -114,13 +114,13 @@ suffix such as `-a`, `-b`) and is executed one per round.
 Per the priority order `P0 → P1 → P2 → Framework Upgrade`, and within each
 priority by Task ID order, the next atomic task to execute is:
 
-**KZQ-P2-012-c** — Supply chain: SBOM generation (Epic H). Add a
-GitHub Actions workflow (or extend CI) that generates a software bill of
-materials via `npm sbom` / `npx @cyclonedx/ebom`-style tooling on every
-main push, uploads it as a workflow artifact and (when a
-`GITHUB_TOKEN`-free path exists) attaches it to the release; document the
-generation command, artifact name and verification step (rebuild the SBOM
-and diff), and add a governance test.
+**KZQ-UPG-001** — Framework Upgrade: Node 20 → 22 (Epic G). Bump
+`engines.node` to `22.x`, switch every CI job (`ci.yml`, `codeql.yml`,
+`sbom.yml`) to `node-version: 22`, update `@types/node` to `^22`.
+PREREQUISITE: confirm EdgeOne Cloud Functions supports Node 22 (check
+`EDGEONE_COMPATIBILITY_MATRIX` / vendor docs) before bumping. Then run
+the full Release Gate (`npm ci && typecheck && lint && test:unit &&
+test:database && build:demo`).
 
 All P0 tasks are complete (Epic A and Epic B fully done). Within P1, the
 only remaining rows are BLOCKED on human/platform prerequisites and cannot
@@ -129,8 +129,11 @@ requires a human CSP violation audit in the EdgeOne environment) and
 KZQ-P1-011-c (EdgeOne WAF evidence gate — requires human console
 configuration + evidence). Epic E, Epic F and KZQ-P2-011 are complete.
 Epic H: KZQ-P2-010 (superseded draft PRs cleanup) remains pending as a
-GitHub workflow item; KZQ-P2-012 a (CodeQL), b (secret scanning
-config) and c (SBOM) completed. Next: KZQ-P2-012-d (license audit).
+GitHub workflow item; KZQ-P2-012 workstream COMPLETE (a CodeQL, b secret
+scanning config, c SBOM, d license audit; Dependabot + GH Actions
+least-privilege permissions pre-existing and verified). Next priority:
+Framework Upgrade — KZQ-UPG-001 (Node 20 → 22), then UPG-002 (ESLint
+Flat Config), then UPG-004 (Next.js 16).
 KZQ-P1-011-c stays pending and does not block P2 work.
 
 Status summary:
@@ -258,6 +261,16 @@ Status summary:
   (90-day retention) with `contents: read` only; release attachment
   honestly NOT wired (needs GITHUB_TOKEN + contents: write);
   `supply-chain-sbom.test.ts` locks the governance contract)
+- KZQ-P2-012-d completed (supply chain: license audit — dependency-free
+  `scripts/check-license-audit.mjs` + `npm run check:license-audit` + CI
+  step; production tree verified free of strong copyleft (only AGPL
+  package mupdf is dev-only); documented verified allowlist; sharp
+  platform binaries are the single justified KNOWN_EXCEPTION;
+  `supply-chain-license-audit.test.ts` locks the governance contract
+  incl. a real execution test)
+- KZQ-P2-012 workstream COMPLETE (CodeQL / secret scanning / SBOM /
+  license audit done; Dependabot + GH Actions least-privilege permissions
+  pre-existing and verified)
 
 ## Acceptance Commands Reference
 

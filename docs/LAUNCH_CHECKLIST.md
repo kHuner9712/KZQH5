@@ -228,3 +228,4 @@
 - [ ] **平台侧（人工验收）**: `Security → Secret scanning` 页面有扫描记录；历史泄露密钥（如 `Import .env`）已定位并轮换——KZQ-P2-012-b
 - [ ] 详细步骤见 `docs/SECRET_SCANNING_CONFIG.md`；**不得在仓库中伪造不存在的 secret-scanning 配置文件假装已启用**——KZQ-P2-012-b
 - [ ] **SBOM 已配置**：`.github/workflows/sbom.yml` 存在（main push 时用内置 `npm sbom` 生成 CycloneDX + SPDX，上传 `sbom` artifact，含重建 diff 重现性验证）——KZQ-P2-012-c
+- [ ] **生产依赖许可证审计已配置**：`npm run check:license-audit` 在 CI 中执行（`scripts/check-license-audit.mjs`，禁止 GPL/AGPL/SSPL 强 copyleft 与缺失/未知许可证；sharp 平台二进制为唯一已审查例外）——KZQ-P2-012-d
