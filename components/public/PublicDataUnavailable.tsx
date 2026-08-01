@@ -45,7 +45,6 @@ export async function renderPublicPage(
   } catch (error) {
     if (PublicDataUnavailableError.is(error)) {
       // Fixed coarse code only — never log raw Supabase error / PII.
-      // eslint-disable-next-line no-console
       console.warn(error.code);
       return <PublicDataUnavailable locale={locale} retryPath={retryPath} />;
     }

@@ -13,7 +13,7 @@ blindly — re-verify against real code before starting any task.
 - Node version (engines): `20.x` (local runtime v24.15.0 used for tooling only)
 - Next.js version: `15.5.21`
 - Supabase client version: `@supabase/supabase-js 2.109.0`, `@supabase/ssr 0.12.0`
-- Last updated: 2026-08-01 (KZQ-P2-012-c completed)
+- Last updated: 2026-08-01 (KZQ-UPG-002 completed)
 
 ## Status Values
 
@@ -86,7 +86,7 @@ column records the file and line where the decision was made.
 | KZQ-P2-012-c | P2 | Epic H 仓库治理 | Supply chain: SBOM generation workflow | completed | `trae/p2-012c-sbom` | (this commit) | `npm run typecheck && npm run lint && npx vitest run tests/unit/supply-chain-sbom.test.ts` → PASS (12/12); full `npm run test:unit` → 1705/1708 PASS (3 pre-existing Windows baseline failures in `release-readiness.test.ts` Phase 7 schema RPC mock-server tests, unchanged from `main`) | New `.github/workflows/sbom.yml`: generates a software bill of materials with the BUILT-IN `npm sbom` command (available since npm 10.7.0, no third-party tooling) on every main push + `workflow_dispatch`; emits both CycloneDX (`sbom.cdx.json`) and SPDX (`sbom.spdx.json`); structural validation of both documents; rebuild-and-diff reproducibility verification (regenerate CycloneDX, normalize the per-run `serialNumber` UUID, JSON-diff against the committed graph — proves the SBOM matches the lockfile); uploads the documents as workflow artifact `sbom` (90-day retention) via `actions/upload-artifact@v7.0.1` (SHA-pinned, same SHA as ci.yml). Least-privilege `permissions: contents: read` ONLY — release attachment is INTENTIONALLY NOT wired because it requires a GITHUB_TOKEN with `contents: write` and there is no GITHUB_TOKEN-free release upload path (honest boundary documented in the workflow header). New `tests/unit/supply-chain-sbom.test.ts` (12 governance tests): workflow exists; main-push + workflow_dispatch triggers; CycloneDX + SPDX generation via npm sbom with NO npx @cyclonedx dependency; artifact name `sbom` + both documents; Node 20; header documents the generation command / artifact name; rebuild-and-diff verification step present; least-privilege permissions block (contents: read only, no write scopes); honest boundary checks target actual token/release-action USE (not explanatory comments); checkout/setup-node/upload-artifact all 40-char SHA-pinned with no moving @vX references. `docs/LAUNCH_CHECKLIST.md` §10 adds the SBOM item. No migration |
 | KZQ-P2-012-d | P2 | Epic H 仓库治理 | Supply chain: dependency license audit | completed | `trae/p2-012d-license-audit` | (this commit) | `npm run typecheck && npm run lint && npx vitest run tests/unit/supply-chain-license-audit.test.ts tests/unit/supply-chain-sbom.test.ts` → PASS (11+12=23) | AUDIT RESULT: production tree (npm ls --omit=dev) contains NO strong copyleft (GPL/AGPL/SSPL) — the only AGPL package in the repo is `mupdf@1.28.0` which is a devDependency (PDF test tooling) and excluded from the --omit=dev tree; weak-copyleft LGPL/MPL packages (`lightningcss`, `axe-core`, `@vercel/og`) are all dev-tree only. New dependency-free pure-Node `scripts/check-license-audit.mjs` + `npm run check:license-audit` + CI step (ci.yml check job): scans node_modules package.json license fields, intersects with `npm ls --json --all --omit=dev` (only disk-installed production packages are audited; optional cross-platform binaries like @next/swc-*/@img/sharp-linux-* are skipped), and enforces a documented verified allowlist (MIT, ISC, Apache-2.0, BSD-2/3-Clause, 0BSD, CC0-1.0, Unlicense, BlueOak-1.0.0, Python-2.0); DATA license CC-BY-4.0 allowed with WARN (caniuse-lite data package, attribution retained); STRONG_COPYLEFT (GPL/AGPL/SSPL) and missing/unknown licenses always FAIL; WEAK_COPYLEFT (LGPL/MPL) FAILs unless in KNOWN_EXCEPTIONS — currently only `@img/sharp-*` platform binaries ("Apache-2.0 AND LGPL-3.0-or-later": sharp core Apache-2.0 + libvips LGPL-3.0 dynamically-linked binary, official sharp distribution, standard Next.js image pipeline usage, justification documented in the script header). Current tree audit: 46 production packages, 31 MIT / 7 Apache-2.0 / 3 ISC / 1 BSD-3-Clause / 1 0BSD / 1 CC-BY-4.0 (WARN) / 2 sharp LGPL composites (KNOWN_EXCEPTIONS) → PASS. New `tests/unit/supply-chain-license-audit.test.ts` (11 governance tests): script exists; audit command + verified allowlist documented in header; --omit=dev production-tree audit; strong-copyleft block (GPL/AGPL/SSPL); missing-license fail; weak-copyleft + KNOWN_EXCEPTIONS mechanism; sharp exception justified (not silent); CI + npm-script wiring; REAL execution test (audit exits 0 with PASSED on the current tree). `docs/LAUNCH_CHECKLIST.md` §10 adds the license audit item. No migration |
 | KZQ-UPG-001 | UPG | Epic G 框架升级 | Node 20 → 22 | pending | — | — | `npm run typecheck && npm run lint && npm run test:unit && npm run build:demo` | `package.json:5-6` engines `node:20.x`; `.github/workflows/ci.yml` uses `node-version:20` in all jobs; `@types/node:^20.16.11`; must confirm EdgeOne Node support first |
-| KZQ-UPG-002 | UPG | Epic G 框架升级 | Migrate ESLint to Flat Config (`eslint.config.mjs`) | pending | — | — | `npm run lint` | `.eslintrc.json` exists (legacy); no `eslint.config.mjs`; `package.json:14` runs `next lint` (removed in Next 16); tracked in `docs/NEXT16_UPGRADE_PLAN.md` Phase 3 |
+| KZQ-UPG-002 | UPG | Epic G 框架升级 | Migrate ESLint to Flat Config (`eslint.config.mjs`) | completed | `trae/upg-002-eslint-flat-config` | (this commit) | `npm run typecheck && npm run lint && npx vitest run tests/unit/eslint-flat-config.test.ts` → PASS (8/8); full `npm run test:unit` → 1708/1711 PASS (3 pre-existing Windows baselines) | New `eslint.config.mjs` (Flat Config, ESLint 9) replacing `.eslintrc.json` (DELETED): `next/core-web-vitals` preset bridged via `FlatCompat` from `@eslint/eslintrc` (eslint-config-next@15 still ships legacy presets); custom rules preserved verbatim (`@next/next/no-img-element: off`, `react/no-unescaped-entities: off`); ignores for `.next/`, `node_modules/`, `playwright-report/`, `test-results/`, `public/lib/` (vendored PDF.js worker) and `**/*.d.ts`; default export via named const (no anonymous default). `package.json:14` lint script `next lint` → `eslint .` (pre-migration for Next.js 16 which removes `next lint`). Cleaned 12 stale "Unused eslint-disable directive" comments across 11 files (rules were already off, so the directives were dead code — ESLint CLI reports them, `next lint` did not): app/admin/(protected)/{certificates,products,projects}/page.tsx, components/admin/{ImageUpload,ProductForm}.tsx, components/public/{PublicDataUnavailable.tsx,PdfViewer.tsx,usePdfDocument.ts}, lib/repositories/public-types.ts, next.config.mjs, scripts/mock-supabase-for-build.mjs. `CertificateGallery.tsx:73` exhaustive-deps disable KEPT (still active). New `tests/unit/eslint-flat-config.test.ts` (8 governance tests): flat config exists; legacy `.eslintrc.json` removed; FlatCompat import + next/core-web-vitals bridge; custom rules preserved; ignores for build/vendor/d.ts; lint script is `eslint .` (not next lint); REAL execution test (eslint . exits 0 with zero errors AND zero warnings). Note: `next lint` deprecation warning is gone from CI output. `docs/LAUNCH_CHECKLIST.md` unaffected (no entry existed). No migration |
 | KZQ-UPG-003 | UPG | Epic G 框架升级 | PDF.js & Turbopack compatibility | completed | — | — | `npm run sync:pdfjs-worker && npm run build:demo` | `next.config.mjs:226` `transpilePackages:["pdfjs-dist"]`; :227-243 webpack config only sets `resolve.fallback` for Node builtins (no pdfjs-specific alias); `scripts/sync-pdfjs-worker.mjs` syncs worker to `public/lib/pdfjs/pdf.worker.min.mjs`. Code is Turbopack-compatible. Note: runtime PDF preview verification recommended before Next 16 upgrade |
 | KZQ-UPG-004 | UPG | Epic G 框架升级 | Next.js 16 upgrade | pending | — | — | Release Gate (full) | `package.json:44` next `15.5.21`; `docs/NEXT16_UPGRADE_PLAN.md:3` "Status: DRAFT — DO NOT EXECUTE YET"; pre-flight checklist unchecked. Blocked by UPG-001, UPG-002, UPG-003 (UPG-003 done) |
 
@@ -118,13 +118,14 @@ suffix such as `-a`, `-b`) and is executed one per round.
 Per the priority order `P0 → P1 → P2 → Framework Upgrade`, and within each
 priority by Task ID order, the next atomic task to execute is:
 
-**KZQ-UPG-001** — Framework Upgrade: Node 20 → 22 (Epic G). Bump
-`engines.node` to `22.x`, switch every CI job (`ci.yml`, `codeql.yml`,
-`sbom.yml`) to `node-version: 22`, update `@types/node` to `^22`.
-PREREQUISITE: confirm EdgeOne Cloud Functions supports Node 22 (check
-`EDGEONE_COMPATIBILITY_MATRIX` / vendor docs) before bumping. Then run
-the full Release Gate (`npm ci && typecheck && lint && test:unit &&
-test:database && build:demo`).
+**KZQ-UPG-004** — Framework Upgrade: Next.js 16 (Epic G). See
+`docs/NEXT16_UPGRADE_PLAN.md` (DRAFT — DO NOT EXECUTE YET; pre-flight
+checklist must be completed and approved before Phase 1). UPG-002
+(ESLint Flat Config, its Phase 2+3 prep) is DONE on this branch. Still
+gated on: KZQ-UPG-001 (Node 20 → 22 — BLOCKED: EdgeOne Cloud Functions
+official docs state Node.js v20.x as the default runtime, no Node 22
+support documented, verified 2026-08-01) and NEXT16_UPGRADE_PLAN
+approval.
 
 All P0 tasks are complete (Epic A and Epic B fully done). Within P1, the
 only remaining rows are BLOCKED on human/platform prerequisites and cannot
@@ -275,6 +276,12 @@ Status summary:
 - KZQ-P2-012 workstream COMPLETE (CodeQL / secret scanning / SBOM /
   license audit done; Dependabot + GH Actions least-privilege permissions
   pre-existing and verified)
+- KZQ-UPG-002 completed (ESLint Flat Config — `eslint.config.mjs`
+  replaces `.eslintrc.json`; `next/core-web-vitals` bridged via
+  FlatCompat; custom rules preserved; `npm run lint` → `eslint .`
+  (removes the `next lint` deprecation warning); 12 stale unused
+  eslint-disable directives cleaned; `eslint-flat-config.test.ts` locks
+  the governance contract incl. a real zero-error/zero-warning run)
 
 ## Acceptance Commands Reference
 

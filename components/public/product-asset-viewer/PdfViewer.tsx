@@ -215,7 +215,6 @@ export function PdfViewer({
           const ctx = canvas.getContext("2d");
           ctx?.clearRect(0, 0, canvas.width, canvas.height);
         }
-        // eslint-disable-next-line no-console
         console.error("[PdfViewer] page render failed:", err);
         setPageRender("error");
       }

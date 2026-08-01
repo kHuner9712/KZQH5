@@ -168,7 +168,6 @@ export function usePdfDocument(url: string | null, _locale: Locale) {
       activeDoc.current = null;
       if (doc) void doc.destroy().catch(() => {});
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [url, load, cleanupActive]);
 
   return { state, retry: load };
