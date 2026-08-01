@@ -6,6 +6,7 @@ import type { AdminProfile, Database } from "@/types/database";
 export type AdminVerificationFailureReason =
   | "session-missing"
   | "session-verification-failed"
+  | "aal-insufficient"
   | "admin-client-unavailable"
   | "profile-query-failed"
   | "profile-missing";
@@ -22,14 +23,14 @@ export type AdminVerificationResult =
       reason: AdminVerificationFailureReason;
     };
 
-export type GuardStage = "session" | "profile" | "data";
+export type GuardStage = "session" | "profile" | "data" | "mfa";
 
 /**
  * Map a verification failure (or a downstream data-read failure) to the
  * coarse external stage that may appear in the redirect URL and logs.
  *
  * The internal `reason` is never exposed to the URL, UI, or logs — only
- * one of the three fixed stage values is returned.
+ * one of the four fixed stage values is returned.
  */
 export function failureStage(
   result: AdminVerificationResult,
@@ -41,6 +42,8 @@ export function failureStage(
     case "session-missing":
     case "session-verification-failed":
       return "session";
+    case "aal-insufficient":
+      return "mfa";
     case "admin-client-unavailable":
     case "profile-query-failed":
     case "profile-missing":
@@ -78,6 +81,36 @@ export async function getVerifiedAdmin(): Promise<AdminVerificationResult> {
   }
   if (!user) {
     return { ok: false, reason: "session-missing" };
+  }
+
+  // Stage 1.5 (KZQ-P1-022-d): AAL2 server guard.
+  //
+  // An admin whose account has a VERIFIED MFA factor must reach the
+  // dashboard with an aal2 session (password + verified factor). The
+  // signed-in session is aal1 right after password login; the MFA
+  // challenge (app/admin/mfa/challenge) upgrades it to aal2 via
+  // mfa.verify(). Any direct visit to /admin with an aal1 session and a
+  // verified factor must be denied and routed to the challenge page.
+  //
+  // Accounts WITHOUT a verified factor (nextLevel === "aal1") are NOT
+  // blocked — there is nothing to challenge for them, and forcing aal2
+  // would lock out every admin who never enrolled MFA (and also block
+  // /admin/security where they would enroll).
+  //
+  // Fail-closed: an AAL probe error/exception is treated as
+  // aal-insufficient (we cannot confirm the assurance level, so we must
+  // not admit). The challenge page re-evaluates and shows a fixed error.
+  try {
+    const { data: aal, error: aalError } =
+      await sessionClient.auth.mfa.getAuthenticatorAssuranceLevel();
+    if (aalError || !aal) {
+      return { ok: false, reason: "aal-insufficient" };
+    }
+    if (aal.nextLevel === "aal2" && aal.currentLevel !== "aal2") {
+      return { ok: false, reason: "aal-insufficient" };
+    }
+  } catch {
+    return { ok: false, reason: "aal-insufficient" };
   }
 
   // Stage 2: create the privileged admin client (service_role).

@@ -93,10 +93,11 @@ describe("KZQ-P1-022-c: MFA challenge gate integration exists", () => {
     expect(loginForm).toMatch(/needsMfaChallenge = true/);
   });
 
-  it("getVerifiedAdmin still has no AAL check (server guard is sub-task d)", () => {
+  it("getVerifiedAdmin now enforces AAL2 for accounts with a verified factor (sub-task d)", () => {
     const adminAuth = read("lib/services/admin-auth.ts");
-    expect(adminAuth).not.toContain("getAuthenticatorAssuranceLevel");
-    expect(adminAuth).not.toMatch(/\baal\b/i);
+    expect(adminAuth).toContain("getAuthenticatorAssuranceLevel");
+    expect(adminAuth).toMatch(/aal-insufficient/);
+    expect(adminAuth).toMatch(/nextLevel === "aal2"/);
   });
 });
 
@@ -107,18 +108,39 @@ describe("KZQ-P1-022-a: no AAL gate in the SSR session middleware", () => {
   });
 });
 
-describe("KZQ-P1-022-a: getVerifiedAdmin has no AAL check (the gap)", () => {
+describe("KZQ-P1-022-d: getVerifiedAdmin AAL server guard (the gap closed)", () => {
   const adminAuth = read("lib/services/admin-auth.ts");
+  const layout = read("app/admin/(protected)/layout.tsx");
 
-  it("does not call getAuthenticatorAssuranceLevel", () => {
-    expect(adminAuth).not.toContain("getAuthenticatorAssuranceLevel");
+  it("calls getAuthenticatorAssuranceLevel during verification", () => {
+    expect(adminAuth).toContain("getAuthenticatorAssuranceLevel");
   });
 
-  it("does not parse the access_token aal claim", () => {
-    expect(adminAuth).not.toMatch(/\baal\b/i);
+  it("denies (aal-insufficient) only when a verified factor exists but the session is not aal2", () => {
+    expect(adminAuth).toMatch(/nextLevel === "aal2" && aal\.currentLevel !== "aal2"/);
   });
 
-  it("verifies the session via auth.getUser() only (aal1 passes today)", () => {
+  it("does NOT lock out accounts without a verified factor (nextLevel aal1 passes)", () => {
+    // The guard combines BOTH conditions (AND): a verified factor
+    // (nextLevel "aal2") AND a session that is not yet aal2. A bare
+    // single-condition check would lock out every admin.
+    expect(adminAuth).toMatch(/nextLevel === "aal2" && aal\.currentLevel !== "aal2"/);
+  });
+
+  it("is fail-closed: AAL probe error/exception maps to aal-insufficient", () => {
+    expect(adminAuth).toMatch(/aalError \|\| !aal/);
+  });
+
+  it("maps the internal reason to the fixed external stage mfa", () => {
+    expect(adminAuth).toMatch(/case "aal-insufficient":\s+return "mfa"/);
+  });
+
+  it("the protected layout redirects aal-insufficient sessions to the MFA challenge page", () => {
+    expect(layout).toMatch(/admin\.reason === "aal-insufficient"/);
+    expect(layout).toMatch(/redirect\("\/admin\/mfa\/challenge"\)/);
+  });
+
+  it("keeps verifying the session via auth.getUser()", () => {
     expect(adminAuth).toContain("auth.getUser()");
   });
 });
