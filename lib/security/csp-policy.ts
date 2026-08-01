@@ -22,7 +22,15 @@
 // page execution.
 // ============================================================
 
-const SUPABASE_PROJECT_HOST_PATTERN = /^[a-z0-9]{20}\.supabase\.co$/;
+// KZQ-P2-003: Supabase host shape, CDN entry validation and URL parsing
+// now live in ONE place — lib/config/media-domains.mjs — shared with
+// next.config.mjs, lib/validation/url.ts, scripts/check-release-readiness.mjs
+// and tests. This module must stay pure (no Next.js runtime dependency).
+import {
+  SUPABASE_PROJECT_HOST_PATTERN,
+  parseCdnDomains,
+  parseSupabaseUrl,
+} from "@/lib/config/media-domains.mjs";
 
 /**
  * Resolve the precise Supabase project host from env at module load.
@@ -30,16 +38,10 @@ const SUPABASE_PROJECT_HOST_PATTERN = /^[a-z0-9]{20}\.supabase\.co$/;
  * In production, falls back to 'self' (fail-closed).
  */
 function resolveSupabaseCspHost(): string {
-  const supabaseUrl = (process.env.NEXT_PUBLIC_SUPABASE_URL || "").trim();
-  if (supabaseUrl) {
-    try {
-      const host = new URL(supabaseUrl).hostname.toLowerCase();
-      if (SUPABASE_PROJECT_HOST_PATTERN.test(host)) {
-        return `https://${host}`;
-      }
-    } catch {
-      // fall through
-    }
+  const parsed = parseSupabaseUrl(process.env.NEXT_PUBLIC_SUPABASE_URL || "");
+  const host = parsed?.hostname ?? null;
+  if (host && SUPABASE_PROJECT_HOST_PATTERN.test(host)) {
+    return `https://${host}`;
   }
   if (process.env.NODE_ENV === "production") {
     return "'self'";
@@ -49,28 +51,12 @@ function resolveSupabaseCspHost(): string {
 
 /**
  * Resolve the MEDIA_CDN_DOMAINS allowlist for img-src / connect-src.
+ * Entry validation lives in lib/config/media-domains.mjs (parseCdnDomains).
  */
 function resolveCdnCspHosts(): string {
-  const cdnRaw = (process.env.MEDIA_CDN_DOMAINS || "").trim();
-  if (!cdnRaw) return "";
-  const hosts: string[] = [];
-  for (const raw of cdnRaw.split(",")) {
-    const trimmed = raw.trim().toLowerCase();
-    if (
-      trimmed &&
-      !/[:/?#@]/.test(trimmed) &&
-      !/^\d{1,3}(\.\d{1,3}){3}$/.test(trimmed) &&
-      !trimmed.startsWith("[") &&
-      !trimmed.endsWith("]") &&
-      /^[a-z0-9.-]+\.[a-z]{2,}$/.test(trimmed) &&
-      !trimmed.startsWith(".") &&
-      !trimmed.endsWith(".") &&
-      !trimmed.includes("..")
-    ) {
-      hosts.push(`https://${trimmed}`);
-    }
-  }
-  return hosts.join(" ");
+  return parseCdnDomains(process.env.MEDIA_CDN_DOMAINS || "")
+    .map((host) => `https://${host}`)
+    .join(" ");
 }
 
 const supabaseCspHost = resolveSupabaseCspHost();
