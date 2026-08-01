@@ -1,10 +1,18 @@
 // ============================================================
-// Rate limiting — global interface + in-memory fallback
+// Rate limiting — global interface + backend drivers
 // ------------------------------------------------------------
 // The RateLimiter interface is the single replacement point for any
 // production-grade implementation (PostgreSQL atomic RPC, KV, Redis).
-// The in-memory implementation here is intended ONLY as a low-cost
-// first layer and as a development/test fallback.
+//
+// Two drivers:
+//   1. PostgresRateLimiter (KZQ-P1-011-b) — multi-instance SHARED
+//      counter via the `rate_limit_check` RPC. Select with
+//      `RATE_LIMIT_DRIVER=postgres`. This is the production-grade
+//      distributed backend.
+//   2. MemoryRateLimiter — consistent only within a single Node
+//      process. Intended as a low-cost first layer and as a
+//      development/test fallback; on EdgeOne multi-instance
+//      deployments the effective limit may be N × configured.
 //
 // ⚠️ Multi-instance boundary:
 // - MemoryRateLimiter is consistent only within a single Node process.
@@ -12,10 +20,9 @@
 //   N × configured (N = running instances).
 // - Production deployments MUST additionally enable EdgeOne WAF /
 //   Rate Limiting rules. This is documented in
-//   docs/LAUNCH_CHECKLIST.md and docs/CODE_FINALIZATION_REPORT.md.
-// - For strong global consistency, replace the factory functions
-//   below with a PostgreSQL / KV / Redis-backed implementation. The
-//   call sites do not need to change.
+//   docs/LAUNCH_CHECKLIST.md and docs/EDGEONE_WAF_RULES.md.
+// - For strong global consistency, set RATE_LIMIT_DRIVER=postgres
+//   (the PostgresRateLimiter below). Call sites do not need to change.
 // ============================================================
 
 export interface RateLimitResult {
@@ -26,6 +33,182 @@ export interface RateLimitResult {
 
 export interface RateLimiter {
   check(key: string): Promise<RateLimitResult>;
+}
+
+// ============================================================
+// PostgreSQL-backed distributed rate limiter (KZQ-P1-011-b)
+// ------------------------------------------------------------
+// Multi-instance SHARED counter via the `rate_limit_check` RPC
+// (migration 20260801000000_distributed_rate_limit_rpc.sql).
+//
+// Semantics:
+//   - FIXED WINDOW — window boundary computed by the RPC as
+//     floor(epoch / window_seconds) * window_seconds.
+//   - ATOMIC — INSERT ... ON CONFLICT DO UPDATE under row lock; no
+//     lost updates across concurrent instances.
+//   - Keys are opaque caller-supplied strings (already namespaced by
+//     the application: `ip:<addr>`, `admin:<userId>`, etc.). No PII.
+//
+// Failure policy (P1-011-a decision matrix):
+//   - RPC transport error / null / malformed / ok !== true →
+//     FAIL-OPEN (allowed). A transient DB hiccup must not block all
+//     traffic; EdgeOne WAF provides the cross-instance floor in
+//     production (WAF_RATE_LIMIT_VERIFIED release gate).
+//   - NEVER throws to callers. Logs a fixed code only.
+//
+// The client factory is injected so tests can supply a stub; the
+// default uses the server-side service_role client.
+// ============================================================
+
+/** Shape of the `rate_limit_check` RPC JSONB response. */
+interface RateLimitCheckRpcResult {
+  ok?: unknown;
+  allowed?: unknown;
+  remaining?: unknown;
+  retry_after_seconds?: unknown;
+}
+
+/**
+ * Strictly parse the RPC response. Any transport error, null, invalid
+ * structure, or ok !== true is a failure → fail-open.
+ * Returns null on failure (caller applies fail-open).
+ */
+function parseRateLimitCheckRpc(
+  data: RateLimitCheckRpcResult | null | undefined,
+): RateLimitResult | null {
+  if (!data || typeof data !== "object") return null;
+  if (data.ok !== true) return null;
+  if (typeof data.allowed !== "boolean") return null;
+  const remaining = typeof data.remaining === "number" ? data.remaining : 0;
+  const retryAfterSeconds =
+    typeof data.retry_after_seconds === "number"
+      ? data.retry_after_seconds
+      : 0;
+  return {
+    allowed: data.allowed,
+    remaining,
+    retryAfterSeconds,
+  };
+}
+
+/** Injected RPC transport: returns raw response or throws. */
+export type RateLimitRpcTransport = (
+  bucket: string,
+  key: string,
+  maxCount: number,
+  windowSeconds: number,
+) => Promise<{ data: RateLimitCheckRpcResult | null; error: unknown }>;
+
+/**
+ * Default transport using the server-side service_role client. The
+ * RPC is service_role-only (migration grant), so this must never be
+ * imported from a client component.
+ *
+ * The admin client is loaded via a lazy dynamic import inside the
+ * closure so that importing this module in a pure-Node context
+ * (scripts/tests) does not force the Supabase admin client to load;
+ * the import is deferred until the first actual RPC call.
+ */
+export function createPostgresRateLimitTransport(): RateLimitRpcTransport {
+  return async (bucket, key, maxCount, windowSeconds) => {
+    const { createAdminClient } = (await import("@/lib/supabase/admin")) as unknown as {
+      createAdminClient: () => {
+        rpc: (
+          fn: string,
+          args: Record<string, unknown>,
+        ) => PromiseLike<{
+          data: RateLimitCheckRpcResult | null;
+          error: unknown;
+        }>;
+      };
+    };
+    const client = createAdminClient();
+    return await client.rpc("rate_limit_check", {
+      p_bucket: bucket,
+      p_key: key,
+      p_max_count: maxCount,
+      p_window_seconds: windowSeconds,
+    });
+  };
+}
+
+/**
+ * Fixed-window distributed rate limiter backed by PostgreSQL.
+ *
+ * Use via `createRateLimiter()` (or the named factory functions) —
+ * call sites consume the same `RateLimiter` interface and do not
+ * change.
+ */
+export class PostgresRateLimiter implements RateLimiter {
+  constructor(
+    private readonly bucket: string,
+    private readonly maximum: number,
+    private readonly windowMs: number,
+    private readonly transport: RateLimitRpcTransport = createPostgresRateLimitTransport(),
+  ) {}
+
+  async check(key: string): Promise<RateLimitResult> {
+    const windowSeconds = Math.max(1, Math.ceil(this.windowMs / 1000));
+    try {
+      const { data, error } = await this.transport(
+        this.bucket,
+        key,
+        this.maximum,
+        windowSeconds,
+      );
+      if (error) {
+        // Fail-open per P1-011-a decision matrix.
+        console.warn("RATE_LIMIT_POSTGRES_TRANSPORT_FAILED");
+        return { allowed: true, remaining: Infinity, retryAfterSeconds: 0 };
+      }
+      const parsed = parseRateLimitCheckRpc(data);
+      if (!parsed) {
+        console.warn("RATE_LIMIT_POSTGRES_MALFORMED_RESPONSE");
+        return { allowed: true, remaining: Infinity, retryAfterSeconds: 0 };
+      }
+      return parsed;
+    } catch {
+      // Transport threw (e.g. env missing, network). Fail-open.
+      console.warn("RATE_LIMIT_POSTGRES_EXCEPTION");
+      return { allowed: true, remaining: Infinity, retryAfterSeconds: 0 };
+    }
+  }
+}
+
+/**
+ * Select the rate-limit backend driver.
+ *
+ *   RATE_LIMIT_DRIVER=postgres → PostgresRateLimiter (distributed,
+ *     multi-instance shared; requires the rate_limit_check RPC).
+ *   unset or "memory"         → MemoryRateLimiter (in-process only;
+ *     the pre-existing default).
+ *
+ * Production deployments that need strong global consistency should
+ * set `RATE_LIMIT_DRIVER=postgres` (plus EdgeOne WAF as the floor).
+ */
+export function getRateLimitDriver(): "postgres" | "memory" {
+  return process.env.RATE_LIMIT_DRIVER === "postgres" ? "postgres" : "memory";
+}
+
+/**
+ * Create a rate limiter for the configured driver.
+ *
+ *   - RATE_LIMIT_DRIVER=postgres → PostgresRateLimiter (distributed,
+ *     multi-instance shared).
+ *   - unset / "memory" → MemoryRateLimiter (in-process).
+ *
+ * New call sites SHOULD use this factory so the backend can be
+ * switched via environment configuration without code changes.
+ */
+export function createRateLimiter(
+  bucket: string,
+  maximum: number,
+  windowMs: number,
+): RateLimiter {
+  if (getRateLimitDriver() === "postgres") {
+    return new PostgresRateLimiter(bucket, maximum, windowMs);
+  }
+  return new MemoryRateLimiter(maximum, windowMs);
 }
 
 interface MemoryEntry {
