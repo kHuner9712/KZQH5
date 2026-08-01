@@ -13,7 +13,7 @@ blindly — re-verify against real code before starting any task.
 - Node version (engines): `20.x` (local runtime v24.15.0 used for tooling only)
 - Next.js version: `15.5.21`
 - Supabase client version: `@supabase/supabase-js 2.109.0`, `@supabase/ssr 0.12.0`
-- Last updated: 2026-08-01 (KZQ-UPG-002 completed)
+- Last updated: 2026-08-01 (KZQ-P2-010 completed)
 
 ## Status Values
 
@@ -133,13 +133,15 @@ be completed by code alone: KZQ-P1-002 + KZQ-P1-004-b (admin CSP enforcing —
 requires a human CSP violation audit in the EdgeOne environment) and
 KZQ-P1-011-c (EdgeOne WAF evidence gate — requires human console
 configuration + evidence). Epic E, Epic F and KZQ-P2-011 are complete.
-Epic H: KZQ-P2-010 (superseded draft PRs cleanup) remains pending as a
-GitHub workflow item; KZQ-P2-012 workstream COMPLETE (a CodeQL, b secret
-scanning config, c SBOM, d license audit; Dependabot + GH Actions
-least-privilege permissions pre-existing and verified). Next priority:
-Framework Upgrade — KZQ-UPG-001 (Node 20 → 22), then UPG-002 (ESLint
-Flat Config), then UPG-004 (Next.js 16).
-KZQ-P1-011-c stays pending and does not block P2 work.
+Epic H COMPLETE: KZQ-P2-010 (superseded draft PRs #31/#32/#33 closed with
+explanations) and KZQ-P2-012 workstream (a CodeQL, b secret scanning
+config, c SBOM, d license audit; Dependabot + GH Actions least-privilege
+permissions pre-existing and verified) both done. Framework Upgrade:
+UPG-002 (ESLint Flat Config) DONE; UPG-001 (Node 20 → 22) BLOCKED
+(EdgeOne Cloud Functions official docs state Node.js v20.x default
+runtime, no Node 22 support documented — verified 2026-08-01); UPG-004
+(Next.js 16) gated on NEXT16_UPGRADE_PLAN approval (DRAFT, pre-flight
+unchecked). KZQ-P1-011-c stays pending and does not block P2 work.
 
 Status summary:
 - All P0 tasks complete (Epic A and Epic B fully done)
