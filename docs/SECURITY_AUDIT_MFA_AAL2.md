@@ -148,9 +148,27 @@ RBAC + CSRF），但当前**均不要求 AAL2**。step-up 应优先覆盖：
    KZQ-P1-022-e describe（4 静态契约测试：错误码定义、write/read 映射、固定
    日志码、不泄露内部 reason）。
    middleware 解析 `aal` claim 提前分流仍为可选（未实现，非必需）。
-5. **f（E2E 与文档）**：Playwright 覆盖登录 → MFA challenge → 后台访问 →
-   敏感操作 step-up；更新 `docs/LAUNCH_CHECKLIST.md` 与
-   `docs/EDGEONE_WAF_RULES.md`（如适用）。
+5. **f（E2E 与文档）** ✅ 已完成（`trae/p1-022f-mfa-e2e`）：
+   - `tests/e2e/staging-mfa.spec.ts`（staging 真实环境，凭据门控 + serial，
+     加入 `npm run test:e2e:staging`）覆盖：① **Enrollment**——密码登录
+     （aal1，无因子）→ `/admin/security` 绑定 TOTP 因子（enroll → 读取
+     一次性 secret → challenge + verify → 状态"已启用"）；②
+     **Challenge + step-up**——MFA 账号密码登录后必须落在
+     `/admin/mfa/challenge`；会话仍为 aal1 时调用敏感读（询盘导出）被
+     拒绝（401 + 固定码 `ADMIN_WRITE_MFA_REQUIRED`）；输入 TOTP 验证码
+     （`mfa.verify()` 保存 aal2 会话）后同一接口放行（200 text/csv）；
+     退出后后台再次关闭。账号已预绑定因子时用
+     `STAGING_MFA_SECRET`（secret 仅在 enrollment 时展示一次）；
+     无 secret 时对应测试跳过并明确提示（不猜测、不伪造成功）。
+   - `tests/e2e/helpers/totp.ts`：纯 Node `crypto` 的 RFC 6238 TOTP 生成器
+     （base32 + HMAC-SHA1 + 30s 窗口 + 6 位，支持 ±1 步窗口重试），
+     不新增任何依赖。
+   - 文档：`docs/LAUNCH_CHECKLIST.md` 新增 MFA 应用层 + 平台人工验收项；
+     `docs/EDGEONE_WAF_RULES.md` §2.12 补充 challenge 路径限流建议；
+     `docs/TRAE_UPGRADE_LEDGER.md` 标记 P1-022-f completed。
+   - **验收边界**：本地/无凭据运行全部 skip（`--list` 验证 spec 可加载）；
+     真实验收需平台人工前提（§7）+ 预绑定因子测试账号 +
+     `STAGING_MFA_SECRET`，运行 `npm run test:e2e:staging`。
 
 ## 7. 平台配置前提（人工，先于子任务 2）
 
