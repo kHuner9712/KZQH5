@@ -6,7 +6,12 @@ import {
   ephemeralRateKeySet,
   getClientIp,
 } from "@/lib/services/http-security";
-import { MemoryRateLimiter } from "@/lib/services/rate-limit";
+import {
+  MemoryRateLimiter,
+  PostgresRateLimiter,
+  createRateLimiter,
+  getRateLimitDriver,
+} from "@/lib/services/rate-limit";
 
 describe("memory rate limiter", () => {
   it("allows requests in the window and rejects over-limit requests", async () => {
@@ -682,5 +687,173 @@ describe("checkRateLimitKeys — header rotation bypass prevention", () => {
     const headers = new Headers();
     const result = await checkRateLimitKeys({ headers }, limiter);
     expect(result.allowed).toBe(true);
+  });
+});
+
+// ============================================================
+// KZQ-P1-011-b: PostgreSQL distributed rate limiter
+// ------------------------------------------------------------
+// PostgresRateLimiter delegates to the `rate_limit_check` RPC
+// (migration 20260801000000_distributed_rate_limit_rpc.sql).
+//
+// Failure policy (P1-011-a decision matrix): transport error / null /
+// malformed / ok !== true → FAIL-OPEN (allowed). EdgeOne WAF provides
+// the cross-instance floor in production. The limiter NEVER throws.
+// ============================================================
+describe("postgres rate limiter (KZQ-P1-011-b)", () => {
+  it("forwards bucket, key, maxCount, and window seconds to the RPC", async () => {
+    const transport = vi.fn().mockResolvedValue({
+      data: { ok: true, allowed: true, remaining: 4, retry_after_seconds: 0 },
+      error: null,
+    });
+    const limiter = new PostgresRateLimiter("inquiry", 5, 60_000, transport);
+    await limiter.check("ip:203.0.113.10");
+    expect(transport).toHaveBeenCalledTimes(1);
+    const args = transport.mock.calls[0];
+    expect(args?.[0]).toBe("inquiry");
+    expect(args?.[1]).toBe("ip:203.0.113.10");
+    expect(args?.[2]).toBe(5);
+    // windowMs 60000 → 60s
+    expect(args?.[3]).toBe(60);
+  });
+
+  it("rounds sub-second windows up to at least 1 second", async () => {
+    const transport = vi.fn().mockResolvedValue({
+      data: { ok: true, allowed: true, remaining: 1, retry_after_seconds: 0 },
+      error: null,
+    });
+    const limiter = new PostgresRateLimiter("b", 1, 500, transport);
+    await limiter.check("k");
+    expect(transport.mock.calls[0]?.[3]).toBe(1);
+    await new PostgresRateLimiter("b", 1, 1_500, transport).check("k");
+    expect(transport.mock.calls[1]?.[3]).toBe(2);
+  });
+
+  it("returns the RPC decision when ok=true and allowed=false", async () => {
+    const transport = vi.fn().mockResolvedValue({
+      data: {
+        ok: true,
+        allowed: false,
+        remaining: 0,
+        retry_after_seconds: 42,
+      },
+      error: null,
+    });
+    const limiter = new PostgresRateLimiter("b", 3, 60_000, transport);
+    const result = await limiter.check("k");
+    expect(result.allowed).toBe(false);
+    expect(result.remaining).toBe(0);
+    expect(result.retryAfterSeconds).toBe(42);
+  });
+
+  it("returns remaining from a successful RPC decision", async () => {
+    const transport = vi.fn().mockResolvedValue({
+      data: { ok: true, allowed: true, remaining: 2, retry_after_seconds: 0 },
+      error: null,
+    });
+    const limiter = new PostgresRateLimiter("b", 3, 60_000, transport);
+    const result = await limiter.check("k");
+    expect(result.allowed).toBe(true);
+    expect(result.remaining).toBe(2);
+    expect(result.retryAfterSeconds).toBe(0);
+  });
+
+  it("fail-opens on RPC transport error", async () => {
+    const transport = vi.fn().mockResolvedValue({
+      data: null,
+      error: { message: "connection refused" },
+    });
+    const limiter = new PostgresRateLimiter("b", 3, 60_000, transport);
+    const result = await limiter.check("k");
+    expect(result.allowed).toBe(true);
+    expect(result.remaining).toBe(Infinity);
+    expect(result.retryAfterSeconds).toBe(0);
+  });
+
+  it("fail-opens on null RPC response (no transport error)", async () => {
+    const transport = vi.fn().mockResolvedValue({ data: null, error: null });
+    const limiter = new PostgresRateLimiter("b", 3, 60_000, transport);
+    const result = await limiter.check("k");
+    expect(result.allowed).toBe(true);
+    expect(result.remaining).toBe(Infinity);
+  });
+
+  it("fail-opens when the RPC returns ok !== true (business failure)", async () => {
+    const transport = vi.fn().mockResolvedValue({
+      data: { ok: false, error: "invalid_bucket" },
+      error: null,
+    });
+    const limiter = new PostgresRateLimiter("b", 3, 60_000, transport);
+    const result = await limiter.check("k");
+    expect(result.allowed).toBe(true);
+    expect(result.remaining).toBe(Infinity);
+  });
+
+  it("fail-opens on malformed structure (missing ok)", async () => {
+    const transport = vi.fn().mockResolvedValue({
+      data: { allowed: true },
+      error: null,
+    });
+    const limiter = new PostgresRateLimiter("b", 3, 60_000, transport);
+    const result = await limiter.check("k");
+    expect(result.allowed).toBe(true);
+    expect(result.remaining).toBe(Infinity);
+  });
+
+  it("fail-opens on non-object RPC data", async () => {
+    const transport = vi.fn().mockResolvedValue({ data: "garbage", error: null });
+    const limiter = new PostgresRateLimiter("b", 3, 60_000, transport);
+    const result = await limiter.check("k");
+    expect(result.allowed).toBe(true);
+    expect(result.remaining).toBe(Infinity);
+  });
+
+  it("fail-opens when the transport throws (never throws to callers)", async () => {
+    const transport = vi.fn().mockRejectedValue(new Error("network down"));
+    const limiter = new PostgresRateLimiter("b", 3, 60_000, transport);
+    // If check() ever propagated the rejection, this await would throw
+    // and the test would fail — proving it never throws to callers.
+    const result = await limiter.check("k");
+    expect(result.allowed).toBe(true);
+    expect(result.remaining).toBe(Infinity);
+    expect(result.retryAfterSeconds).toBe(0);
+  });
+});
+
+describe("rate-limit driver selection (KZQ-P1-011-b)", () => {
+  beforeEach(() => {
+    vi.unstubAllEnvs();
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("getRateLimitDriver returns postgres when RATE_LIMIT_DRIVER=postgres", () => {
+    vi.stubEnv("RATE_LIMIT_DRIVER", "postgres");
+    expect(getRateLimitDriver()).toBe("postgres");
+  });
+
+  it("getRateLimitDriver returns memory when unset", () => {
+    vi.stubEnv("RATE_LIMIT_DRIVER", "");
+    expect(getRateLimitDriver()).toBe("memory");
+  });
+
+  it("getRateLimitDriver rejects unknown values without silently switching", () => {
+    // Only the exact string "postgres" enables the distributed driver;
+    // any other value falls back to memory (no silent behavior change).
+    for (const value of ["POSTGRES", "Postgres", "redis", "1", "true"]) {
+      vi.stubEnv("RATE_LIMIT_DRIVER", value);
+      expect(getRateLimitDriver()).toBe("memory");
+    }
+  });
+
+  it("createRateLimiter returns a PostgresRateLimiter under the postgres driver", () => {
+    vi.stubEnv("RATE_LIMIT_DRIVER", "postgres");
+    expect(createRateLimiter("b", 5, 60_000)).toBeInstanceOf(PostgresRateLimiter);
+  });
+
+  it("createRateLimiter returns a MemoryRateLimiter by default", () => {
+    vi.stubEnv("RATE_LIMIT_DRIVER", "");
+    expect(createRateLimiter("b", 5, 60_000)).toBeInstanceOf(MemoryRateLimiter);
   });
 });
