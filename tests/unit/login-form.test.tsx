@@ -21,10 +21,14 @@ vi.mock("next/navigation", () => ({
 }));
 
 const signInMock = vi.fn();
+const getAalMock = vi.fn();
 vi.mock("@/lib/supabase/client", () => ({
   createBrowserSupabaseClient: () => ({
     auth: {
       signInWithPassword: signInMock,
+      mfa: {
+        getAuthenticatorAssuranceLevel: getAalMock,
+      },
     },
   }),
 }));
@@ -34,6 +38,18 @@ async function submitCredentials(email = "admin@kzq.com", password = "secret") {
   await user.type(screen.getByPlaceholderText("admin@kzq.com"), email);
   await user.type(screen.getByPlaceholderText("••••••••"), password);
   await user.click(screen.getByRole("button", { name: "登录" }));
+}
+
+/** aal1 session with no verified factor — no MFA challenge needed. */
+function stubAal1() {
+  getAalMock.mockResolvedValue({
+    data: {
+      currentLevel: "aal1",
+      nextLevel: "aal1",
+      currentAuthenticationMethods: ["password"],
+    },
+    error: null,
+  });
 }
 
 describe("LoginForm — error standardization", () => {
@@ -46,6 +62,9 @@ describe("LoginForm — error standardization", () => {
     pushMock.mockClear();
     refreshMock.mockClear();
     signInMock.mockReset();
+    getAalMock.mockReset();
+    // Default: aal1 session without MFA — sign-in proceeds to /admin.
+    stubAal1();
     // Default guard response: allowed (200). Individual tests override.
     vi.stubGlobal(
       "fetch",
@@ -158,6 +177,73 @@ describe("LoginForm — error standardization", () => {
     await submitCredentials();
     // Fail-open: the guard outage must NOT block the login flow.
     expect(signInMock).toHaveBeenCalledTimes(1);
+    expect(pushMock).toHaveBeenCalledWith("/admin");
+  });
+});
+
+describe("LoginForm — MFA challenge routing (KZQ-P1-022-c)", () => {
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  beforeEach(() => {
+    pushMock.mockClear();
+    refreshMock.mockClear();
+    signInMock.mockReset();
+    getAalMock.mockReset();
+    stubAal1();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ ok: true }), { status: 200 }),
+      ),
+    );
+  });
+
+  it("routes to the MFA challenge page when the account has a verified factor (nextLevel aal2)", async () => {
+    signInMock.mockResolvedValue({ data: { user: {}, session: {} }, error: null });
+    getAalMock.mockResolvedValue({
+      data: {
+        currentLevel: "aal1",
+        nextLevel: "aal2",
+        currentAuthenticationMethods: ["password"],
+      },
+      error: null,
+    });
+    render(<LoginForm />);
+    await submitCredentials();
+    expect(pushMock).toHaveBeenCalledWith("/admin/mfa/challenge");
+    expect(refreshMock).toHaveBeenCalled();
+  });
+
+  it("routes to the MFA challenge page when the AAL probe throws (fail-closed)", async () => {
+    signInMock.mockResolvedValue({ data: { user: {}, session: {} }, error: null });
+    getAalMock.mockRejectedValue(new Error("network down"));
+    render(<LoginForm />);
+    await submitCredentials();
+    // Fail-closed: an unexpected AAL probe failure must NOT let an
+    // MFA-protected account silently into the dashboard — route to the
+    // challenge page, which re-evaluates the AAL itself.
+    expect(pushMock).toHaveBeenCalledWith("/admin/mfa/challenge");
+  });
+
+  it("routes to the MFA challenge page when the AAL probe returns an error (fail-closed)", async () => {
+    signInMock.mockResolvedValue({ data: { user: {}, session: {} }, error: null });
+    getAalMock.mockResolvedValue({
+      data: null,
+      error: { message: "Session expired", code: "session_expired", status: 401 },
+    });
+    render(<LoginForm />);
+    await submitCredentials();
+    expect(pushMock).toHaveBeenCalledWith("/admin/mfa/challenge");
+  });
+
+  it("still routes straight to /admin when the account has no verified factor (nextLevel aal1)", async () => {
+    signInMock.mockResolvedValue({ data: { user: {}, session: {} }, error: null });
+    // Default stubAal1() returns nextLevel aal1.
+    render(<LoginForm />);
+    await submitCredentials();
     expect(pushMock).toHaveBeenCalledWith("/admin");
   });
 });
