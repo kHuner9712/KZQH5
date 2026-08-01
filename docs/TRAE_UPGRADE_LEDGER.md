@@ -13,7 +13,7 @@ blindly — re-verify against real code before starting any task.
 - Node version (engines): `20.x` (local runtime v24.15.0 used for tooling only)
 - Next.js version: `15.5.21`
 - Supabase client version: `@supabase/supabase-js 2.109.0`, `@supabase/ssr 0.12.0`
-- Last updated: 2026-08-01 (KZQ-P2-001 completed)
+- Last updated: 2026-08-01 (KZQ-P2-002 completed)
 
 ## Status Values
 
@@ -76,7 +76,7 @@ column records the file and line where the decision was made.
 | KZQ-P1-022-e | P1 | Epic E 管理员身份 | MFA sensitive-operation step-up (`ADMIN_WRITE_MFA_REQUIRED` distinguishable API error code) | completed | `trae/p1-022e-step-up` | (this commit) | `npm run typecheck && npm run lint && npx vitest run tests/unit/admin-write-boundary-mfa.test.ts tests/unit/mfa-aal2-audit.test.ts tests/unit/admin-guard.test.ts tests/unit/admin-storage-upload-route.test.ts` → PASS (4+37+14+27=82 tests) | `lib/services/admin-write-boundary.ts`: new fixed error code `ADMIN_WRITE_MFA_REQUIRED` in `AdminWriteErrorCode`. Both `requireAdminWrite` and `requireAdminRead` now special-case `getVerifiedAdmin()` returning `aal-insufficient` (account has a verified MFA factor but the session has not completed the challenge — see KZQ-P1-022-d): they return 401 + `ADMIN_WRITE_MFA_REQUIRED` (fixed log code `ADMIN_WRITE_MFA_REQUIRED`, never the raw reason) instead of the plain `ADMIN_WRITE_UNAUTHORIZED`. This lets the client DISTINGUISH "must complete MFA step-up" (route to `/admin/mfa/challenge`, reusing the c challenge flow) from "not logged in / session expired"; after `mfa.verify()` the saved aal2 token acts as the short-lived pass (no repeated challenge within token lifetime). Other failure reasons (session-missing etc.) keep `ADMIN_WRITE_UNAUTHORIZED`. No aal-insufficient bypass was opened for non-sensitive endpoints — the denial semantics are unchanged, only the error code is distinguishable. TESTS: `tests/unit/admin-write-boundary-mfa.test.ts` (4 behavioral tests: requireAdminWrite/requireAdminRead → 401 + ADMIN_WRITE_MFA_REQUIRED for aal-insufficient; → ADMIN_WRITE_UNAUTHORIZED for session-missing) + `tests/unit/mfa-aal2-audit.test.ts` new KZQ-P1-022-e describe (4 static-contract tests: error code defined, write/read mapping, fixed log code, raw reason never logged). No migration (auth schema owns MFA state). NOT validated against a real Supabase project (manual prerequisite: Auth Dashboard must enable TOTP MFA — see audit §7); E2E deferred to f |
 | KZQ-P1-022-f | P1 | Epic E 管理员身份 | MFA/AAL2 E2E & docs (Playwright: login → MFA challenge → dashboard → sensitive-operation step-up; update launch checklist + WAF rules) | completed | `trae/p1-022f-mfa-e2e` | (this commit) | `npm run typecheck && npm run lint && npx playwright test tests/e2e/staging-mfa.spec.ts --list` → PASS (2 tests listed); 真实验收需平台人工前提 + `STAGING_MFA_SECRET` 后运行 `npm run test:e2e:staging` | New `tests/e2e/staging-mfa.spec.ts` (staging 真实环境, credential-gated + `describe.serial`, added to `npm run test:e2e:staging`): Test 1 **Enrollment** — password login (aal1, no factor) → `/admin/security` binds a TOTP factor via the real UI (`mfa-enroll-button` → read one-time `mfa-secret` → fill `mfa-code-input` with a generated code → `mfa-confirm-button` → status 已启用); account with a pre-bound factor uses `STAGING_MFA_SECRET` (secret shown exactly once) and skips with a clear message when absent — never guesses. Test 2 **Challenge + step-up** — password login of the MFA account must land on `/admin/mfa/challenge`; while the session is still aal1 a sensitive read (`GET /api/admin/inquiries/export`) is rejected with 401 + fixed body `{ error: "ADMIN_WRITE_MFA_REQUIRED" }`; after entering the TOTP code (`mfa.verify()` saves the aal2 session) the same endpoint returns 200 text/csv; logout re-closes the dashboard. New `tests/e2e/helpers/totp.ts` — pure Node `crypto` RFC 6238 TOTP generator (base32 + HMAC-SHA1 + 30s window + 6 digits, ±1-step retry), NO new dependency. Docs: `docs/SECURITY_AUDIT_MFA_AAL2.md` §6 step f marked complete; `docs/LAUNCH_CHECKLIST.md` 后台检查 adds 6 MFA acceptance items (4 app-level + 2 platform-side manual: Auth Dashboard TOTP enabled, staging-mfa E2E passes); `docs/EDGEONE_WAF_RULES.md` §2.12 adds `/admin/mfa/challenge` rate-limit guidance + acceptance. No production code change, no migration, no platform configuration performed. Platform prerequisite (manual, unchanged): Supabase Auth Dashboard must enable TOTP MFA before the E2E can be truly validated — see `docs/SECURITY_AUDIT_MFA_AAL2.md` §7 |
 | KZQ-P2-001 | P2 | Epic F 性能结构 | Admin verify request-level dedup | completed | `trae/p2-001-admin-verify-dedup` | (this commit) | `npm run typecheck && npm run lint && npx vitest run tests/unit/admin-auth-dedup.test.ts tests/unit/admin-guard.test.ts tests/unit/mfa-aal2-audit.test.ts tests/unit/admin-write-boundary-mfa.test.ts` → PASS (59/59); full `npm run test:unit` → 1692/1695 PASS (3 pre-existing Windows baseline failures in `release-readiness.test.ts` Phase 7 schema RPC mock-server tests, `STATUS_STACK_BUFFER_OVERRUN` exit 3221226505, unchanged from `main`) | `lib/services/admin-auth.ts`: `getVerifiedAdmin` is now wrapped with React `cache()` (same pattern as `lib/queries/cms.ts` `fetchSiteSettings`) — a single request that calls it from multiple places (protected layout `:32` + dashboard `:28` + analytics `:34` + product-edit + API boundary) executes the expensive verification ONCE per request: `auth.getUser()`, the AAL probe and the `admin_profiles` query are no longer repeated. Security: React `cache()` keys the memo on the request dispatcher (AsyncLocalStorage) — request-scoped only, NEVER across users/requests; with NO request context (plain Node / vitest) it PASSES THROUGH (verified in `react/cjs/react.react-server.development.js:575-618`) — every call executes for real (safe lower bound, never caches identity across calls); service-role results never reach a public CDN (all callers keep `force-dynamic` + `unstable_noStore()`). Existing `tests/unit/admin-guard.test.ts` (14 tests) unchanged and green — the vitest pass-through behavior means the cache wrapper does not pollute tests. New `tests/unit/admin-auth-dedup.test.ts` (4 tests) verifies real behavior with a scope-simulator mock of `cache`: (1) static source contract (cache() import + wrapper present, same pattern as cms.ts); (2) same request scope → getUser/AAL probe/admin_profiles each run ONCE and both callers share the same result reference; (3) new request scope → full verification runs again, different profile returned (no cross-request identity leak); (4) no request scope → pass-through, getUser runs on every call (never caches across calls). No production behavior change outside memoization, no migration |
-| KZQ-P2-002 | P2 | Epic F 性能结构 | Dashboard query convergence | in_progress | — | — | `npx vitest run tests/unit/admin-dashboard.test.ts` | Primary path uses single `get_admin_dashboard_snapshot` RPC (`admin-dashboard.ts:141`); 5-query fallback at `:193-237` still retained for schema/permission error — fallback removal pending KZQ-P0-010 |
+| KZQ-P2-002 | P2 | Epic F 性能结构 | Dashboard query convergence | completed | `trae/p2-002-dashboard-convergence` | (this commit) | `npm run typecheck && npm run lint && npx vitest run tests/unit/admin-dashboard-query-convergence.test.ts tests/unit/admin-dashboard.test.ts tests/unit/schema-compat-fallback.test.ts` → PASS (4+46+21=71) | `lib/repositories/admin-dashboard.ts`: REMOVED the 5-query table-count fallback (`getSnapshotViaDirectQueries`, 5× `{ count: "exact", head: true }` direct queries) and the KZQ-P0-010 gated fallback branch in `getSnapshot()`. `getSnapshot()` now converges on the SINGLE `get_admin_dashboard_snapshot` RPC only — an RPC error field or transport throw surfaces as a fixed `DashboardSnapshotError(causeCode)` (explicit failure state; the page shows "数据读取失败", never a synthetic 0). This prevents silently masking databases where migrations were not applied. Removed the now-unused `SCHEMA_COMPAT_DISABLED_LOG_CODE` / `shouldUseSchemaCompatFallback` imports from admin-dashboard (the gate still governs `inquiries.ts` countUnreadInquiries). PREREQUISITE MERGED: this branch first merged `trae/p0-010-schema-fallback-explicit` (merge commit af7f880) — the KZQ-P0-010 schema-compat gate module (`lib/config/schema-compat.ts`) was previously only on an unmerged branch, so it was brought into the working chain before the fallback removal. New `tests/unit/admin-dashboard-query-convergence.test.ts` (4 tests): getSnapshot issues ONLY the single RPC (from() never called — the removed fallback must never run); RPC error field → throws DashboardSnapshotError with no from() call; RPC transport throw → throws with no from() call; loadAdminDashboard performs exactly 2 queries (1 snapshot RPC + 1 recent-inquiries). All 46 existing admin-dashboard tests + 21 schema-compat tests unchanged and green. No migration |
 | KZQ-P2-003 | P2 | Epic F 性能结构 | Unified media domain config | pending | — | — | `npx vitest run tests/unit/media-domain-config.test.ts` (to be added) | No shared config module; `next.config.mjs:134-135`, `lib/security/csp-policy.ts:33,54`, `scripts/check-release-readiness.mjs:706` each independently read `NEXT_PUBLIC_SUPABASE_URL`/`MEDIA_CDN_DOMAINS`; no `lib/config/media-domains.ts` |
 | KZQ-P2-010 | P2 | Epic H 仓库治理 | Clean up superseded draft PRs #31, #32, #33 | pending | — | — | `gh pr view 31,32,33` | GitHub PRs #31, #32, #33 reportedly still OPEN+DRAFT; their work superseded by merged PRs #34/#35/#41/#42; needs `gh` verification then close with explanation |
 | KZQ-P2-011 | P2 | Epic H 仓库治理 | Remove deprecated Vercel integration & docs | pending | — | — | `npx vitest run tests/unit/release-readiness.test.ts` | 17 files still reference Vercel: `README.md`, `.env.example`, `docs/LAUNCH_CHECKLIST.md`, `docs/EDGEONE_COMPATIBILITY_MATRIX.md`, `DEPLOYMENT.md`, `scripts/check-release-readiness.mjs:261`, `lib/supabase/middleware-session.ts:9` |
@@ -114,13 +114,12 @@ suffix such as `-a`, `-b`) and is executed one per round.
 Per the priority order `P0 → P1 → P2 → Framework Upgrade`, and within each
 priority by Task ID order, the next atomic task to execute is:
 
-**KZQ-P2-002** — Dashboard query convergence (Epic F): normal production
-databases should use the single `get_admin_dashboard_snapshot` RPC with
-`recent inquiries` fetched separately; the 5-query fallback
-(`lib/repositories/admin-dashboard.ts:193-237`) must not be retained
-long-term — it is now eligible for removal because the schema/permission
-fallback gate (KZQ-P0-010, `ALLOW_SCHEMA_COMPATIBILITY_FALLBACK`) already
-emits fixed errors instead of silently falling back in production.
+**KZQ-P2-003** — Unified media domain config (Epic F): extract a pure
+`lib/config/media-domains.ts` module (no Next.js runtime dependency) as the
+single source of truth for Supabase host / CDN host / protocol / port rules,
+shared by `next.config.mjs`, the runtime URL validator,
+`scripts/check-release-readiness.mjs` and tests, without breaking the CI
+mock-backend constraints.
 
 All P0 tasks are complete (Epic A and Epic B fully done). Within P1, the
 only remaining rows are BLOCKED on human/platform prerequisites and cannot
@@ -128,12 +127,12 @@ be completed by code alone: KZQ-P1-002 + KZQ-P1-004-b (admin CSP enforcing —
 requires a human CSP violation audit in the EdgeOne environment) and
 KZQ-P1-011-c (EdgeOne WAF evidence gate — requires human console
 configuration + evidence). Epic E (管理员身份安全) is fully complete
-(P1-020 / P1-021 / P1-022 a–f). Epic F is now in progress: KZQ-P2-001
-(admin verify request-level dedup) completed this round; KZQ-P2-002
-(Dashboard query convergence) is the next executable task by Task ID order
-(it was previously gated on KZQ-P0-010, which is now complete); KZQ-P2-003
-(media domain config) follows. KZQ-P1-011-c stays pending and does not
-block P2 work.
+(P1-020 / P1-021 / P1-022 a–f). Epic F is in progress: KZQ-P2-001 (admin
+verify request-level dedup) and KZQ-P2-002 (Dashboard query convergence —
+5-query count fallback removed, single snapshot RPC; prerequisite
+KZQ-P0-010 schema-compat gate merged into the working chain) completed;
+KZQ-P2-003 (media domain config) is the next executable task by Task ID
+order. KZQ-P1-011-c stays pending and does not block P2 work.
 
 Status summary:
 - All P0 tasks complete (Epic A and Epic B fully done)
@@ -223,6 +222,13 @@ Status summary:
   `admin-auth-dedup.test.ts` (same-scope dedup, cross-request isolation,
   no-context pass-through); no cross-user/request caching, force-dynamic +
   noStore preserved; 1692/1695 unit tests, 3 pre-existing Windows baselines)
+- KZQ-P2-002 completed (Dashboard query convergence — removed the 5-query
+  table-count fallback `getSnapshotViaDirectQueries`; `getSnapshot()` now
+  uses the single `get_admin_dashboard_snapshot` RPC only and any failure
+  surfaces as `DashboardSnapshotError` (explicit state, never a synthetic
+  0); prerequisite KZQ-P0-010 schema-compat gate merged into the working
+  chain; `admin-dashboard-query-convergence.test.ts` locks query counts and
+  failure semantics; 71 related tests green)
 
 ## Acceptance Commands Reference
 
