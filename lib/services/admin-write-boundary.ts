@@ -19,6 +19,7 @@ import { getAdminApiRateLimiter, getGlobalRateLimiter, getAdminPreAuthRateLimite
  */
 export type AdminWriteErrorCode =
   | "ADMIN_WRITE_UNAUTHORIZED"
+  | "ADMIN_WRITE_MFA_REQUIRED"
   | "ADMIN_WRITE_FORBIDDEN_ORIGIN"
   | "ADMIN_WRITE_BAD_REQUEST"
   | "ADMIN_WRITE_PAYLOAD_TOO_LARGE"
@@ -189,6 +190,19 @@ export async function requireAdminWrite<T = unknown>(
 
   const admin = await getVerifiedAdmin();
   if (!admin.ok) {
+    // KZQ-P1-022-e: an aal1 session with a verified MFA factor must
+    // complete the MFA challenge before performing sensitive writes.
+    // Return a DISTINGUISHABLE fixed code so the client can route to
+    // the step-up challenge (aal2 token then acts as the short-lived
+    // pass) instead of treating it as a plain "not logged in" error.
+    if (admin.reason === "aal-insufficient") {
+      return {
+        ok: false,
+        response: adminWriteError("ADMIN_WRITE_MFA_REQUIRED", 401, {
+          logCode: "ADMIN_WRITE_MFA_REQUIRED",
+        }),
+      };
+    }
     return {
       ok: false,
       response: adminWriteError("ADMIN_WRITE_UNAUTHORIZED", 401),
@@ -503,6 +517,16 @@ export async function requireAdminRead(
 
   const admin = await getVerifiedAdmin();
   if (!admin.ok) {
+    // KZQ-P1-022-e: same distinguishable step-up code for sensitive
+    // reads (e.g. inquiry PII export) as for writes.
+    if (admin.reason === "aal-insufficient") {
+      return {
+        ok: false,
+        response: adminWriteError("ADMIN_WRITE_MFA_REQUIRED", 401, {
+          logCode: "ADMIN_WRITE_MFA_REQUIRED",
+        }),
+      };
+    }
     return {
       ok: false,
       response: adminWriteError("ADMIN_WRITE_UNAUTHORIZED", 401),

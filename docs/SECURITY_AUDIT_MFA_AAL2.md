@@ -130,8 +130,24 @@ RBAC + CSRF），但当前**均不要求 AAL2**。step-up 应优先覆盖：
    - API 层 `requireAdminWrite`/`requireAdminRead` 无需改动——`!admin.ok`
      已返回固定 401 `ADMIN_WRITE_UNAUTHORIZED`（不泄露 AAL 细节）。
    middleware 解析 `aal` claim 提前分流仍为可选（本子任务未实现，非必需）。
-4. **e（step-up）**：第 5 节敏感端点要求 AAL2；`aal1` 会话访问时进入
-   step-up challenge（复用 c 的挑战流程），通过后短期放行。
+4. **e（step-up）** ✅ 已完成（`trae/p1-022e-step-up`）：
+   `lib/services/admin-write-boundary.ts` 对 **API 层**敏感操作实施 step-up
+   错误码区分——`requireAdminWrite` 与 `requireAdminRead` 在
+   `getVerifiedAdmin()` 返回 `aal-insufficient`（账号有已验证 MFA 因子但
+   会话未完成 challenge，见子任务 d）时，返回**可区分的固定错误码**
+   `ADMIN_WRITE_MFA_REQUIRED`（401 + 固定日志码 `ADMIN_WRITE_MFA_REQUIRED`），
+   而非笼统的 `ADMIN_WRITE_UNAUTHORIZED`。客户端可据此识别"需要完成 MFA
+   step-up"并路由到 `/admin/mfa/challenge`（复用 c 的挑战流程）；挑战通过后
+   `mfa.verify()` 保存 aal2 会话——该 aal2 token 即"短期放行"凭证（token
+   生命周期内免重复挑战）。其他失败原因（session-missing 等）仍返回
+   `ADMIN_WRITE_UNAUTHORIZED`，语义不混淆。未给非敏感端点开设
+   aal-insufficient 放行分支（拒绝语义不变，仅错误码可区分）。
+   TESTS: `tests/unit/admin-write-boundary-mfa.test.ts`（4 行为测试：write/read
+   对 aal-insufficient 返回 401 + ADMIN_WRITE_MFA_REQUIRED；对 session-missing
+   保持 ADMIN_WRITE_UNAUTHORIZED）+ `tests/unit/mfa-aal2-audit.test.ts` 新增
+   KZQ-P1-022-e describe（4 静态契约测试：错误码定义、write/read 映射、固定
+   日志码、不泄露内部 reason）。
+   middleware 解析 `aal` claim 提前分流仍为可选（未实现，非必需）。
 5. **f（E2E 与文档）**：Playwright 覆盖登录 → MFA challenge → 后台访问 →
    敏感操作 step-up；更新 `docs/LAUNCH_CHECKLIST.md` 与
    `docs/EDGEONE_WAF_RULES.md`（如适用）。

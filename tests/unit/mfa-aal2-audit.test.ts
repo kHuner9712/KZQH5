@@ -108,6 +108,34 @@ describe("KZQ-P1-022-a: no AAL gate in the SSR session middleware", () => {
   });
 });
 
+describe("KZQ-P1-022-e: sensitive-operation step-up error code", () => {
+  const boundary = read("lib/services/admin-write-boundary.ts");
+
+  it("defines the ADMIN_WRITE_MFA_REQUIRED fixed error code", () => {
+    expect(boundary).toMatch(/ADMIN_WRITE_MFA_REQUIRED/);
+  });
+
+  it("requireAdminWrite surfaces the step-up code for aal-insufficient", () => {
+    // The guard maps the aal-insufficient reason to the distinguishable
+    // fixed code with a 401 status (not a plain unauthorized error).
+    expect(boundary).toMatch(/reason === "aal-insufficient"/);
+    expect(boundary).toMatch(
+      /adminWriteError\("ADMIN_WRITE_MFA_REQUIRED", 401/,
+    );
+  });
+
+  it("requireAdminRead surfaces the step-up code for aal-insufficient", () => {
+    // The read boundary (inquiry PII export etc.) must use the same
+    // distinguishable code, not a plain unauthorized error.
+    const occurrences = boundary.match(/ADMIN_WRITE_MFA_REQUIRED/g) ?? [];
+    expect(occurrences.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("never logs the raw AAL reason (only the fixed code)", () => {
+    expect(boundary).not.toMatch(/console\.(log|error).*aal-insufficient/);
+  });
+});
+
 describe("KZQ-P1-022-d: getVerifiedAdmin AAL server guard (the gap closed)", () => {
   const adminAuth = read("lib/services/admin-auth.ts");
   const layout = read("app/admin/(protected)/layout.tsx");
