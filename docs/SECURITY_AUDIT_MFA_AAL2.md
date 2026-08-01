@@ -90,9 +90,15 @@ RBAC + CSRF），但当前**均不要求 AAL2**。step-up 应优先覆盖：
 
 ## 6. AAL2 实施技术路线（子任务 2-6）
 
-1. **b（Enrollment）**：管理员在个人页绑定 TOTP——`auth.mfa.enroll()` 生成
-   `totp_uri` / `qr_code`，`auth.mfa.challenge()` + `verify()` 确认后完成 enrollment。
-   必须记录"已启用 MFA"状态供 UI 展示（经 `listFactors()`，不落库）。
+1. **b（Enrollment）** ✅ 已完成（`trae/p1-022b-mfa-enrollment`）：
+   `app/admin/(protected)/security/page.tsx` + `components/admin/MfaEnrollment.tsx`
+   实现完整 TOTP 绑定流程——`auth.mfa.enroll()` 生成 `totp_uri` / `qr_code`
+   （SDK 已带 `data:image/svg+xml;utf-8,` 前缀），展示二维码/密钥/URI，
+   `auth.mfa.challenge()` + `verify()` 确认后完成 enrollment；
+   "已启用 MFA"状态经 `listFactors()` 展示（不落库）。
+   错误全部经 `lib/security/mfa-errors.ts` `mapMfaError()` 映射为固定中文文案，
+   qr_code/secret/uri 仅在绑定步骤展示、绝不写日志。
+   AdminShell 导航新增「账号安全」入口。
 2. **c（Challenge）**：`auth.mfa.challenge()` 后进入 challenge 输入页，验证
    TOTP 码；未通过不进入后台。
 3. **d（Server guard）**：在 `getVerifiedAdmin()` 增加 AAL 检查：
