@@ -12,7 +12,13 @@
 //   2. finalizeTempUpload — claims the temp_uploads row (RPC),
 //      verifies the uploaded object via Storage HEAD + range-
 //      download of Magic Bytes, moves the object to its final
-//      path, registers a storage_object_ref, completes the RPC.
+//      path, completes the RPC. Storage object references are
+//      registered by business table RPCs (e.g. catalog/certificate
+//      save flows) in the database layer, NOT by this application
+//      layer. The application layer does NOT register storage_object_refs
+//      directly. See migration
+//      20260725250000_wire_storage_object_refs_into_asset_lifecycle.sql
+//      and 20260729020000_temp_uploads_two_phase_upload.sql.
 //
 // The single-phase route (POST /api/admin/storage/upload) remains
 // as a fallback for non-Supabase-Storage backends and for clients
@@ -23,7 +29,11 @@
 //   - The signed URL points to a temp/ path under private-assets,
 //     NOT the final path. The object is moved to its final path
 //     only after finalize verification.
-//   - The signed URL has a short TTL (5 min).
+//   - The temp_uploads row has a 5-minute BUSINESS authorization
+//     window (TEMP_UPLOAD_AUTHORIZATION_WINDOW_SECONDS). The Supabase
+//     signed-upload-URL capability lifetime is server-controlled
+//     (default 1h) and NOT configurable via the SDK — see the
+//     constant docblock for the three-distinct-lifetimes breakdown.
 //   - The temp_uploads row tracks the lifecycle so stale uploads
 //     can be cleaned up.
 //   - Magic Bytes verification on finalize prevents MIME spoofing.
@@ -39,21 +49,49 @@ import {
   PUBLIC_ASSETS_BUCKET,
   generatePrivateStoragePath,
   generatePublicStoragePath,
+  recordStorageAuditStarted,
+  completeStorageAudit,
+  compensateDeleteUploadedObject,
   type PrivateAssetCategory,
 } from "@/lib/services/storage-upload";
 import {
   resolvePurposeConfig,
   type StoragePurpose,
 } from "@/lib/services/storage-purpose";
-import { validateMimeType, verifyMagicBytes } from "@/lib/validation/storage";
+import { getExtensionForMimeType, validateFileSize, validateMimeType, verifyMagicBytes } from "@/lib/validation/storage";
 import { enqueueStorageCleanup } from "@/lib/services/storage-upload";
 
 // ============================================================
 // Constants
 // ============================================================
 
-/** Signed upload URL TTL (5 minutes). Must match the temp_uploads.expires_at default. */
-export const SIGNED_UPLOAD_URL_TTL_SECONDS = 300;
+/**
+ * Business authorization window for a two-phase upload (5 minutes).
+ *
+ * This is the lifetime of the `temp_uploads` row's `authorized` status:
+ * after this window elapses without a finalize, the row is reaped by
+ * `reap_expired_temp_uploads` and the temp object is enqueued for
+ * cleanup. It MUST be shorter than the Supabase signed-upload-URL
+ * capability lifetime so that cleanup never races with a still-valid
+ * upload URL (which would let a stale URL write a permanent orphan).
+ *
+ * IMPORTANT — three distinct lifetimes are involved, do not conflate:
+ *   1. Business authorization window (this constant, 5 min) — controls
+ *      the temp_uploads row status and the cleanup dispatcher reap schedule.
+ *   2. Supabase signed-upload-URL capability TTL — controlled by the
+ *      Supabase Storage service, NOT by this code. `createSignedUploadUrl`
+ *      accepts only `{ upsert }` and does NOT accept a TTL argument
+ *      (verified against @supabase/storage-js 2.109.0). The service-side
+ *      default is 1 hour; it cannot be lowered or raised from the client.
+ *   3. Temp object cleanup protection period — the cleanup dispatcher
+ *      must wait until BOTH the business window has expired AND the
+ *      signed-URL capability window has elapsed before deleting a temp
+ *      object, otherwise a still-valid URL could re-create an orphan.
+ *
+ * The `expiresAt` field returned to the caller is the business
+ * authorization window deadline (item 1), NOT the signed URL expiry.
+ */
+export const TEMP_UPLOAD_AUTHORIZATION_WINDOW_SECONDS = 300;
 
 /**
  * Per-MIME max file size for two-phase upload. The two-phase
@@ -158,9 +196,15 @@ export async function authorizeTempUpload(
     return { ok: false, code: "MIME_NOT_ALLOWED_FOR_PURPOSE" };
   }
 
-  // 3. Validate size against per-MIME two-phase cap
+  // 3. Validate size against per-MIME two-phase cap.
+  // KZQ-P0-005-a: Uses the shared validateFileSize from lib/validation/storage.ts
+  // so single-stage and two-stage size checks share the same implementation.
   const maxSize = TWO_PHASE_MAX_SIZE[input.mimeType];
-  if (!maxSize || input.size <= 0 || input.size > maxSize) {
+  if (!maxSize) {
+    return { ok: false, code: "SIZE_EXCEEDS_LIMIT" };
+  }
+  const sizeValidation = validateFileSize(input.size, maxSize);
+  if (!sizeValidation.ok) {
     return { ok: false, code: "SIZE_EXCEEDS_LIMIT" };
   }
 
@@ -202,7 +246,15 @@ export async function authorizeTempUpload(
   const uploadToken = row.id;
   const objectPath = row.object_path;
 
-  // 7. Generate signed upload URL via Supabase Storage
+  // 7. Generate signed upload URL via Supabase Storage.
+  //
+  // NOTE: `createSignedUploadUrl` does NOT accept a TTL argument —
+  // its options bag is `{ upsert }` only (verified against
+  // @supabase/storage-js 2.109.0). The signed-URL capability lifetime
+  // is controlled by the Supabase Storage service (default 1 hour)
+  // and cannot be lowered or raised from the client. The DB
+  // `expires_at` (5 min) is the BUSINESS authorization window for the
+  // temp_uploads row, NOT the signed-URL TTL — do not conflate them.
   const { data: signedData, error: signedError } = await client.storage
     .from(PRIVATE_ASSETS_BUCKET)
     .createSignedUploadUrl(objectPath);
@@ -219,7 +271,13 @@ export async function authorizeTempUpload(
     return { ok: false, code: "SIGNED_URL_FAILED" };
   }
 
-  // 8. Return the authorization response
+  // 8. Return the authorization response.
+  //
+  // `expiresAt` is the business authorization window deadline (the
+  // temp_uploads row `expires_at`), NOT the Supabase signed-URL expiry.
+  // The signed URL's actual capability lifetime is server-controlled
+  // and not exposed to this code; callers must not treat `expiresAt`
+  // as the signed-URL TTL.
   return {
     ok: true,
     uploadToken,
@@ -248,9 +306,15 @@ export async function finalizeTempUpload(
   }
 
   // 1. Claim the temp_uploads row (atomic: authorized → finalizing)
+  //
+  // KZQ-P0-003: p_actor_id is now required by the claim RPC. The
+  // function verifies that the caller's actor_id matches the row's
+  // actor_id, so only the admin who authorized the upload can
+  // finalize it. A null or mismatched actor_id is rejected with a
+  // fixed error code ('invalid_actor' or 'actor_mismatch').
   const { data: claimResult, error: claimError } = await client.rpc(
     "claim_temp_upload_for_finalize",
-    { p_token: input.uploadToken },
+    { p_token: input.uploadToken, p_actor_id: input.actorId ?? null },
   );
 
   const claimData = claimResult as { ok?: boolean; error?: string; row?: TempUploadRow } | null;
@@ -358,8 +422,14 @@ export async function finalizeTempUpload(
     return { ok: false, code: "MAGIC_BYTES_MISMATCH" };
   }
 
-  // 5. Generate the final object path
-  const ext = getExtensionFromFilename(row.declared_filename);
+  // 5. Generate the final object path.
+  // KZQ-P0-004: The final extension is derived from the server-verified
+  // MIME type (magic bytes verified at step 4), NOT from the user-supplied
+  // filename. The original filename is stored on the temp_uploads row for
+  // display/audit only. This prevents an attacker from controlling the final
+  // object extension via a crafted filename (e.g. "evil.html" with an
+  // image/jpeg MIME would still produce a ".jpg" object).
+  const ext = getExtensionForMimeType(declaredMimeType);
   let finalObjectPath: string;
   if (finalBucket === PRIVATE_ASSETS_BUCKET) {
     finalObjectPath = generatePrivateStoragePath(
@@ -380,12 +450,42 @@ export async function finalizeTempUpload(
     finalObjectPath = publicPath;
   }
 
+  // 5b. KZQ-P0-005-c: Record audit-start (fail-closed saga, shared with
+  //     the single-stage path). The two-stage path now creates a pending
+  //     `admin_storage_operations` row BEFORE the object is moved to its
+  //     final path, exactly like the single-stage path does before upload.
+  //     This row is completed at step 8b. Both paths share the SAME
+  //     audit functions imported from storage-upload.ts.
+  const auditStart = await recordStorageAuditStarted({
+    client,
+    actorId: row.actor_id ?? null,
+    actorRole: row.actor_role ?? null,
+    action: "storage.upload",
+    bucket: finalBucket,
+    objectPath: finalObjectPath,
+    mimeType: declaredMimeType,
+    sizeBytes: declaredSize,
+    sha256: null, // Two-stage doesn't hold full bytes; sha256 not available
+  });
+  if (!auditStart.ok) {
+    await failFinalize(client, input.uploadToken, "audit_start_failed");
+    await enqueueStorageCleanup({
+      bucket: PRIVATE_ASSETS_BUCKET,
+      objectPath: tempObjectPath,
+      reason: "orphan_detected",
+    });
+    return { ok: false, code: auditStart.code };
+  }
+  const auditOperationId = auditStart.operationId;
+
   // 6. Copy the object from temp/ to its final path WITHIN private-assets
   const { error: copyError } = await client.storage
     .from(PRIVATE_ASSETS_BUCKET)
     .copy(tempObjectPath, finalObjectPath);
 
   if (copyError) {
+    // KZQ-P0-005-c: Mark audit as failed before existing compensation.
+    await completeStorageAudit(client, auditOperationId, false, "COPY_FAILED");
     await failFinalize(client, input.uploadToken, `copy_failed:${copyError.message}`);
     await enqueueStorageCleanup({
       bucket: PRIVATE_ASSETS_BUCKET,
@@ -404,6 +504,13 @@ export async function finalizeTempUpload(
       .download(finalObjectPath);
 
     if (downloadError || !downloadData) {
+      // KZQ-P0-005-c: Mark audit as failed before existing compensation.
+      await completeStorageAudit(
+        client,
+        auditOperationId,
+        false,
+        "CROSS_BUCKET_MOVE_FAILED",
+      );
       await client.storage.from(PRIVATE_ASSETS_BUCKET).remove([finalObjectPath]);
       await failFinalize(client, input.uploadToken, "cross_bucket_download_failed");
       await enqueueStorageCleanup({
@@ -423,6 +530,13 @@ export async function finalizeTempUpload(
       });
 
     if (publicUploadError) {
+      // KZQ-P0-005-c: Mark audit as failed before existing compensation.
+      await completeStorageAudit(
+        client,
+        auditOperationId,
+        false,
+        "CROSS_BUCKET_MOVE_FAILED",
+      );
       await client.storage.from(PRIVATE_ASSETS_BUCKET).remove([finalObjectPath]);
       await failFinalize(client, input.uploadToken, "cross_bucket_upload_failed");
       await enqueueStorageCleanup({
@@ -443,6 +557,47 @@ export async function finalizeTempUpload(
     finalPublicUrl = publicUrlData?.publicUrl ?? null;
   }
 
+  // 8b. KZQ-P0-005-c/d: Complete audit as success (fail-closed saga).
+  //     The final object now exists in finalBucket. If audit-complete
+  //     fails, we must compensate by deleting the final object (same as
+  //     the single-stage path). The temp delete (step 9) and complete
+  //     RPC (step 10) are post-audit cleanup that only runs when the
+  //     audit saga succeeds.
+  //
+  // KZQ-P0-005-e: Use the shared `compensateDeleteUploadedObject`
+  //     (imported from storage-upload.ts) instead of inline
+  //     `client.storage.from(...).remove(...)`. This unifies the
+  //     compensation semantics with the single-stage path: exceptions
+  //     are caught, fixed log codes are emitted, and a discriminated
+  //     union is returned (no inline `.error` drift).
+  const auditEnd = await completeStorageAudit(client, auditOperationId, true);
+  if (!auditEnd.ok) {
+    // Compensate: delete the final object from finalBucket.
+    // For cross-bucket: object is in PUBLIC_ASSETS_BUCKET (private copy
+    // already deleted at step 7). For same-bucket: object is in
+    // PRIVATE_ASSETS_BUCKET.
+    const compensate = await compensateDeleteUploadedObject(
+      client,
+      finalBucket,
+      finalObjectPath,
+    );
+    if (!compensate.ok) {
+      // Compensation failed — enqueue cleanup for the final object.
+      await enqueueStorageCleanup({
+        bucket: finalBucket,
+        objectPath: finalObjectPath,
+        reason: "orphan_detected",
+      });
+    }
+    await failFinalize(client, input.uploadToken, "audit_complete_failed");
+    await enqueueStorageCleanup({
+      bucket: PRIVATE_ASSETS_BUCKET,
+      objectPath: tempObjectPath,
+      reason: "orphan_detected",
+    });
+    return { ok: false, code: "ADMIN_WRITE_FAILED" };
+  }
+
   // 8. Delete the original temp object
   const { error: tempDeleteError } = await client.storage
     .from(PRIVATE_ASSETS_BUCKET)
@@ -458,8 +613,25 @@ export async function finalizeTempUpload(
     });
   }
 
-  // 9. Complete the temp_uploads RPC
-  const { error: completeError } = await client.rpc(
+  // 9. Complete the temp_uploads RPC — strict parsing.
+  //
+  // The RPC returns a JSONB object: { ok: boolean, error?: string,
+  // already_finalized?: boolean, row?: ... }. We must treat ALL of
+  // these as failures:
+  //   - transport error (network/timeout)
+  //   - null data
+  //   - invalid structure (no ok field / non-boolean ok)
+  //   - ok !== true
+  //
+  // When the object has already been moved to its final path but the
+  // completion RPC fails, we MUST NOT return success to the client.
+  // Doing so would leave the database (temp_uploads.status still
+  // 'finalizing') inconsistent with Storage (final object exists),
+  // producing a silent permanent orphan that no cleanup task knows
+  // about. Instead, perform reliable compensation: delete the moved
+  // final object so Storage and DB stay consistent, mark the row as
+  // failed, and return a fixed error code.
+  const { data: completeResult, error: completeError } = await client.rpc(
     "complete_temp_upload_finalize",
     {
       p_token: input.uploadToken,
@@ -468,14 +640,21 @@ export async function finalizeTempUpload(
     },
   );
 
-  if (completeError) {
-    // The object was moved successfully but the RPC failed. The
-    // stale recovery RPC (recover_stale_temp_uploads) will eventually
-    // mark the row as failed, but the object is already in place.
-    // Return success with the final path so the caller can proceed.
-    // Log a fixed code — never the Supabase error payload — so
-    // operators can detect stuck rows via server logs.
+  const completeData =
+    completeResult as { ok?: boolean; error?: string; already_finalized?: boolean } | null;
+
+  if (completeError || !completeData || completeData.ok !== true) {
+    // Compensation: the object was moved to its final path in steps
+    // 6-7 but the DB completion failed. Delete the final object so we
+    // do not leave a permanent orphan that the DB does not reference.
+    // If compensation fails, enqueue cleanup as a safety net.
+    await compensateFinalObject(client, finalBucket, finalObjectPath);
+    await failFinalize(client, input.uploadToken, "complete_rpc_failed", "failed");
+
+    // Fixed log code — never log the Supabase error payload.
     console.warn("TEMP_UPLOAD_COMPLETE_RPC_FAILED");
+
+    return { ok: false, code: "COMPLETE_RPC_FAILED" };
   }
 
   // 10. Return the final result
@@ -503,12 +682,6 @@ function isValidFilename(filename: string): boolean {
   return true;
 }
 
-function getExtensionFromFilename(filename: string): string {
-  const lastDot = filename.lastIndexOf(".");
-  if (lastDot === -1 || lastDot === filename.length - 1) return "";
-  return filename.substring(lastDot + 1).toLowerCase();
-}
-
 async function failFinalize(
   client: SupabaseClient<Database>,
   token: string,
@@ -523,5 +696,48 @@ async function failFinalize(
     });
   } catch {
     // Swallow — the original error is more important.
+  }
+}
+
+/**
+ * Compensation: delete the final object that was moved to its final
+ * path before the completion RPC failed. This keeps Storage consistent
+ * with the database (temp_uploads row stays in 'failed' state, no
+ * orphaned final object exists).
+ *
+ * If the compensation delete itself fails, enqueue the object for
+ * async cleanup as a safety net.
+ *
+ * This function NEVER throws — compensation failure is reported via
+ * the cleanup enqueue, not via exceptions.
+ */
+async function compensateFinalObject(
+  client: SupabaseClient<Database>,
+  finalBucket: string,
+  finalObjectPath: string,
+): Promise<void> {
+  const bucket =
+    finalBucket === PUBLIC_ASSETS_BUCKET ? PUBLIC_ASSETS_BUCKET : PRIVATE_ASSETS_BUCKET;
+
+  try {
+    const { error: removeError } = await client.storage
+      .from(bucket)
+      .remove([finalObjectPath]);
+
+    if (removeError) {
+      // Compensation delete failed — enqueue async cleanup.
+      await enqueueStorageCleanup({
+        bucket: finalBucket,
+        objectPath: finalObjectPath,
+        reason: "orphan_detected",
+      });
+    }
+  } catch {
+    // Compensation delete threw — enqueue async cleanup.
+    await enqueueStorageCleanup({
+      bucket: finalBucket,
+      objectPath: finalObjectPath,
+      reason: "orphan_detected",
+    });
   }
 }

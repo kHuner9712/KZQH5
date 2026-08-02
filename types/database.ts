@@ -1248,7 +1248,11 @@ export type Database = {
         Returns: unknown;
       };
       claim_temp_upload_for_finalize: {
-        Args: { p_token: string };
+        // KZQ-P0-003: now accepts p_actor_id and verifies it matches the
+        // row's actor_id. See migration 20260731020000_bind_temp_upload_actor.sql.
+        // p_actor_id is nullable because the service forwards input.actorId ?? null;
+        // the database function rejects null with 'invalid_actor'.
+        Args: { p_token: string; p_actor_id: string | null };
         Returns: unknown;
       };
       complete_temp_upload_finalize: {

@@ -63,6 +63,45 @@ const MIME_EXTENSION_MAP: Readonly<Record<string, readonly string[]>> = {
 };
 
 /**
+ * KZQ-P0-004: Canonical extension for each verified MIME type.
+ *
+ * This is the SINGLE source of truth for the final object extension.
+ * The extension is derived from the server-verified MIME type (after
+ * magic-bytes verification), NEVER from the user-supplied filename.
+ *
+ * The original filename is only used for display/audit; the final
+ * Storage object path always uses the extension below.
+ *
+ * For JPEG we canonicalize to ".jpg" (shorter, conventional).
+ */
+const MIME_CANONICAL_EXT: Readonly<Record<string, string>> = {
+  "application/pdf": ".pdf",
+  "image/jpeg": ".jpg",
+  "image/png": ".png",
+  "image/webp": ".webp",
+};
+
+/**
+ * KZQ-P0-004: Returns the canonical file extension for a given MIME type.
+ *
+ * The caller MUST have already verified the MIME type via:
+ *   1. `validateMimeType` (allowlist check)
+ *   2. `verifyMagicBytes` (content matches declared MIME)
+ *
+ * Returns the extension WITH a leading dot (e.g. ".pdf"), lowercased.
+ * Returns "" if the MIME type is not in the canonical map (should not
+ * happen when the allowlist + magic-bytes checks have run first, but
+ * the empty string is safe — `generatePrivateStoragePath` handles it).
+ *
+ * Shared by both the single-stage path (`storage-upload.ts`) and the
+ * two-stage path (`two-phase-upload.ts`) so they cannot drift.
+ */
+export function getExtensionForMimeType(mimeType: string): string {
+  if (!mimeType) return "";
+  return MIME_CANONICAL_EXT[mimeType.toLowerCase().trim()] ?? "";
+}
+
+/**
  * Magic bytes (file signatures) for each allowed MIME type.
  * The key is the MIME type; the value is an array of byte sequences
  * where ANY match is sufficient (e.g., JPEG has FFD8FF variants).
@@ -340,6 +379,97 @@ export function validateFileUpload(params: {
   }
 
   return { ok: true };
+}
+
+// ============================================================
+// KZQ-P0-005-a: Unified upload file validation.
+//
+// Both the single-stage path (storage-upload.ts) and the two-stage
+// path (two-phase-upload.ts) must use the SAME validation pipeline
+// so that validation rules cannot drift. This function is the single
+// entry point for validating an upload file before it is stored.
+//
+// The function performs 4 steps:
+//   1. MIME allowlist check
+//   2. Per-MIME size check (caller supplies the size map — single-stage
+//      and two-stage have intentionally different limits)
+//   3. Magic bytes verification (content matches declared MIME)
+//   4. Filename extension ↔ MIME consistency (defense in depth)
+//
+// The final extension is ALWAYS derived from the verified MIME type
+// via getExtensionForMimeType (KZQ-P0-004), NOT from the filename.
+// The filename extension is only cross-checked for consistency.
+// ============================================================
+
+/** Result of unified upload file validation. */
+export type UploadFileValidationResult =
+  | { ok: true; mimeType: string; ext: string }
+  | { ok: false; error: UploadFileValidationError };
+
+/** Fixed error codes for unified upload validation. */
+export type UploadFileValidationError =
+  | "MIME_NOT_ALLOWED"
+  | "SIZE_EXCEEDS_LIMIT"
+  | "MAGIC_BYTES_MISMATCH"
+  | "EXTENSION_MIME_INCONSISTENT";
+
+/**
+ * KZQ-P0-005-a: Unified upload file validation shared by both the
+ * single-stage and two-stage upload paths.
+ *
+ * @param input.mimeType - Declared MIME type
+ * @param input.size - File size in bytes
+ * @param input.filename - Original filename (for extension cross-check only)
+ * @param input.bytes - First N bytes of file content (for magic bytes)
+ * @param input.allowedMime - Per-bucket MIME allowlist
+ * @param input.maxSizeByMime - Per-MIME size limits (bytes). The caller
+ *   supplies this so single-stage and two-stage can have intentionally
+ *   different limits (single-stage is constrained by EdgeOne body limit,
+ *   two-stage uploads directly to Supabase Storage).
+ * @returns Success with normalized mimeType and MIME-derived ext, or
+ *   failure with a fixed error code.
+ */
+export function validateUploadFile(input: {
+  mimeType: string;
+  size: number;
+  filename: string;
+  bytes: Uint8Array;
+  allowedMime: readonly string[];
+  maxSizeByMime: Readonly<Record<string, number>>;
+}): UploadFileValidationResult {
+  // 1. MIME allowlist
+  const mimeResult = validateMimeType(input.mimeType, input.allowedMime);
+  if (!mimeResult.ok) {
+    return { ok: false, error: "MIME_NOT_ALLOWED" };
+  }
+
+  const mimeType = input.mimeType.toLowerCase().trim();
+
+  // 2. Per-MIME size check
+  const maxSize = input.maxSizeByMime[mimeType];
+  if (!maxSize || input.size <= 0 || input.size > maxSize) {
+    return { ok: false, error: "SIZE_EXCEEDS_LIMIT" };
+  }
+
+  // 3. Magic bytes verification
+  const magicResult = verifyMagicBytes(input.bytes, mimeType);
+  if (!magicResult.ok) {
+    return { ok: false, error: "MAGIC_BYTES_MISMATCH" };
+  }
+
+  // 4. Filename extension ↔ MIME consistency (defense in depth)
+  const fileExt = extractFileExtension(input.filename);
+  if (fileExt) {
+    const consistency = validateMimeExtensionConsistency(mimeType, fileExt);
+    if (!consistency.ok) {
+      return { ok: false, error: "EXTENSION_MIME_INCONSISTENT" };
+    }
+  }
+
+  // Final extension from MIME (KZQ-P0-004), never from filename
+  const ext = getExtensionForMimeType(mimeType);
+
+  return { ok: true, mimeType, ext };
 }
 
 /**

@@ -171,7 +171,6 @@ export default function CertificatesPage() {
               >
                 <div className="relative aspect-[3/4] bg-gray-100">
                   {c.image_url ? (
-                    // eslint-disable-next-line @next/next/no-img-element
                     <img
                       src={c.image_url}
                       alt={c.name_cn}

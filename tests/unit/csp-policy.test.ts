@@ -16,8 +16,10 @@ import { NextRequest } from "next/server";
 //   3. Public routes receive STATIC Report-Only CSP:
 //      - Content-Security-Policy-Report-Only header
 //      - 'unsafe-inline' in script-src and style-src (ISR compat)
+//      - No 'unsafe-eval' (KZQ-P1-003 — removed 2026-07-31 after
+//        audit confirmed no real dependency)
 //      - WeChat JS-SDK allowed
-//      - Google Fonts CDN allowed
+//      - No Google Fonts CDN
 //   4. ISR contract: both admin and public CSP are identical across
 //      requests (no per-request variation).
 //   5. CSP_ENFORCING=true switches public CSP to enforcing mode
@@ -229,6 +231,24 @@ describe("Public CSP — static Report-Only", () => {
     const res = await middleware(req);
     const csp = res.headers.get("Content-Security-Policy-Report-Only")!;
     expect(csp).toMatch(/style-src[^;]*'unsafe-inline'/);
+  });
+
+  it("does NOT include 'unsafe-eval' in public CSP (KZQ-P1-003)", async () => {
+    // Audit (2026-07-31) confirmed no real dependency on 'unsafe-eval':
+    //   - Project source has zero eval/new Function calls
+    //   - pdfjs-dist worker has new Function for PostScript calculator
+    //     JIT but isEvalSupported() probe is try/catch-wrapped and
+    //     PostScriptEvaluator interpreter fallback exists
+    //   - WeChat JS-SDK loaded via external <script src>, whitelisted
+    //     by host, does NOT need unsafe-eval
+    //   - Next.js 15 production runtime does not need unsafe-eval
+    // This test locks the regression: if 'unsafe-eval' is ever added
+    // back to public CSP, this test will fail.
+    const { middleware } = await import("@/middleware");
+    const req = new NextRequest("https://kzq.test/products");
+    const res = await middleware(req);
+    const csp = res.headers.get("Content-Security-Policy-Report-Only")!;
+    expect(csp).not.toContain("'unsafe-eval'");
   });
 
   it("includes WeChat JS-SDK (https://res.wx.qq.com)", async () => {

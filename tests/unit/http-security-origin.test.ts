@@ -1,7 +1,15 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { NextRequest } from "next/server";
 
 import { isSameOrigin, isAllowedFetchSite } from "@/lib/services/http-security";
+
+// KZQ-P1-012: canonical-origin env vars must not leak between cases.
+// The dev-fallback tests below rely on these being unset; the canonical
+// tests set them explicitly and clean up here.
+afterEach(() => {
+  delete process.env.CANONICAL_APP_ORIGIN;
+  delete process.env.CANONICAL_APP_ORIGIN_ALTERNATES;
+});
 
 // ============================================================
 // isSameOrigin — CDN / TLS-termination aware Origin validation
@@ -294,5 +302,224 @@ describe("isAllowedFetchSite — Sec-Fetch-Site header", () => {
       },
     );
     expect(isAllowedFetchSite(request)).toBe(false);
+  });
+});
+
+// ============================================================
+// KZQ-P1-012 — isSameOrigin canonical-origin path
+// ------------------------------------------------------------
+// When CANONICAL_APP_ORIGIN is configured, isSameOrigin compares the
+// browser Origin directly against the server-configured canonical
+// origin(s) with strict protocol + hostname + normalized port. The
+// client-injectable x-forwarded-host / host headers are NOT consulted
+// in this branch, so a malicious forwarded host cannot bypass the
+// CSRF check. This is the strongest defense and is the production
+// path; the dev-fallback tests above cover the unset case.
+// ============================================================
+describe("isSameOrigin — KZQ-P1-012 canonical-origin path", () => {
+  beforeEach(() => {
+    process.env.CANONICAL_APP_ORIGIN = "https://kzq.example.com";
+  });
+
+  describe("TLS-termination / forwarded-header independence", () => {
+    it("accepts an https Origin matching the canonical origin even when the internal request is http", () => {
+      // EdgeOne terminates TLS: browser Origin is https, internal proto is http.
+      const request = buildRequest({
+        url: "http://kzq.example.com/api/admin/products",
+        origin: "https://kzq.example.com",
+        host: "kzq.example.com",
+        xForwardedProto: "http",
+      });
+      expect(isSameOrigin(request)).toBe(true);
+    });
+
+    it("does NOT consult x-forwarded-host when canonical is configured", () => {
+      // The forwarded host is attacker-controlled but irrelevant: only the
+      // browser Origin vs canonical origin matters.
+      const request = buildRequest({
+        url: "http://10.0.0.5/api/admin/products",
+        origin: "https://kzq.example.com",
+        host: "10.0.0.5",
+        xForwardedHost: "evil.attacker.com",
+        xForwardedProto: "http",
+      });
+      expect(isSameOrigin(request)).toBe(true);
+    });
+
+    it("rejects a malicious x-forwarded-host even if it matches a spoofed Origin", () => {
+      // Attacker sets Origin to attacker.com AND x-forwarded-host to
+      // attacker.com to try to pass the old forwarded-host check. The
+      // canonical path ignores the forwarded host and rejects because the
+      // Origin does not match the canonical origin.
+      process.env.CANONICAL_APP_ORIGIN = "https://kzq.example.com";
+      const request = buildRequest({
+        url: "http://kzq.example.com/api/admin/products",
+        origin: "https://evil.attacker.com",
+        host: "kzq.example.com",
+        xForwardedHost: "evil.attacker.com",
+        xForwardedProto: "http",
+      });
+      expect(isSameOrigin(request)).toBe(false);
+    });
+
+    it("accepts a matching Origin even when host header is missing", () => {
+      // The canonical path never reads host/x-forwarded-host, so a missing
+      // host does not cause rejection when the Origin matches.
+      const request = buildRequest({
+        url: "https://kzq.example.com/api/admin/products",
+        origin: "https://kzq.example.com",
+      });
+      expect(isSameOrigin(request)).toBe(true);
+    });
+  });
+
+  describe("port normalization", () => {
+    it("accepts an explicit default port 443 against an implicit-default canonical", () => {
+      const request = buildRequest({
+        url: "https://kzq.example.com/api/admin/products",
+        origin: "https://kzq.example.com:443",
+      });
+      expect(isSameOrigin(request)).toBe(true);
+    });
+
+    it("accepts an implicit-default Origin against an explicit-443 canonical", () => {
+      process.env.CANONICAL_APP_ORIGIN = "https://kzq.example.com:443";
+      const request = buildRequest({
+        url: "https://kzq.example.com/api/admin/products",
+        origin: "https://kzq.example.com",
+      });
+      expect(isSameOrigin(request)).toBe(true);
+    });
+
+    it("rejects a non-default explicit port against the default", () => {
+      const request = buildRequest({
+        url: "https://kzq.example.com/api/admin/products",
+        origin: "https://kzq.example.com:8080",
+      });
+      expect(isSameOrigin(request)).toBe(false);
+    });
+
+    it("accepts matching non-default ports", () => {
+      process.env.CANONICAL_APP_ORIGIN = "https://kzq.example.com:8443";
+      const request = buildRequest({
+        url: "https://kzq.example.com:8443/api/admin/products",
+        origin: "https://kzq.example.com:8443",
+      });
+      expect(isSameOrigin(request)).toBe(true);
+    });
+
+    it("rejects when canonical and Origin differ only by non-default port", () => {
+      process.env.CANONICAL_APP_ORIGIN = "https://kzq.example.com:8443";
+      const request = buildRequest({
+        url: "https://kzq.example.com/api/admin/products",
+        origin: "https://kzq.example.com",
+      });
+      expect(isSameOrigin(request)).toBe(false);
+    });
+  });
+
+  describe("alternates allowlist", () => {
+    it("accepts an Origin matching an alternate", () => {
+      process.env.CANONICAL_APP_ORIGIN_ALTERNATES =
+        "https://staging.kzq.example.com";
+      const request = buildRequest({
+        url: "https://staging.kzq.example.com/api/admin/products",
+        origin: "https://staging.kzq.example.com",
+      });
+      expect(isSameOrigin(request)).toBe(true);
+    });
+
+    it("accepts a www alternate", () => {
+      process.env.CANONICAL_APP_ORIGIN_ALTERNATES =
+        "https://www.kzq.example.com";
+      const request = buildRequest({
+        url: "https://www.kzq.example.com/api/admin/products",
+        origin: "https://www.kzq.example.com",
+      });
+      expect(isSameOrigin(request)).toBe(true);
+    });
+
+    it("rejects an Origin that matches neither primary nor alternates", () => {
+      process.env.CANONICAL_APP_ORIGIN_ALTERNATES =
+        "https://staging.kzq.example.com";
+      const request = buildRequest({
+        url: "https://evil.example.com/api/admin/products",
+        origin: "https://evil.example.com",
+      });
+      expect(isSameOrigin(request)).toBe(false);
+    });
+  });
+
+  describe("strict protocol and hostname", () => {
+    it("rejects a protocol mismatch (http Origin vs https canonical)", () => {
+      const request = buildRequest({
+        url: "http://kzq.example.com/api/admin/products",
+        origin: "http://kzq.example.com",
+      });
+      expect(isSameOrigin(request)).toBe(false);
+    });
+
+    it("rejects a hostname mismatch", () => {
+      const request = buildRequest({
+        url: "https://kzq.example.com/api/admin/products",
+        origin: "https://evil.example.com",
+      });
+      expect(isSameOrigin(request)).toBe(false);
+    });
+
+    it("rejects a subdomain mismatch", () => {
+      const request = buildRequest({
+        url: "https://kzq.example.com/api/admin/products",
+        origin: "https://admin.kzq.example.com",
+      });
+      expect(isSameOrigin(request)).toBe(false);
+    });
+
+    it("is case-insensitive on hostname", () => {
+      const request = buildRequest({
+        url: "https://KZQ.EXAMPLE.COM/api/admin/products",
+        origin: "https://kzq.example.com",
+      });
+      expect(isSameOrigin(request)).toBe(true);
+    });
+  });
+
+  describe("fail-closed with canonical configured", () => {
+    it("still rejects a missing Origin", () => {
+      const request = buildRequest({
+        url: "https://kzq.example.com/api/admin/products",
+        host: "kzq.example.com",
+      });
+      expect(isSameOrigin(request)).toBe(false);
+    });
+
+    it("still rejects a malformed Origin", () => {
+      const request = buildRequest({
+        url: "https://kzq.example.com/api/admin/products",
+        origin: "not-a-valid-url",
+        host: "kzq.example.com",
+      });
+      expect(isSameOrigin(request)).toBe(false);
+    });
+  });
+
+  describe("http dev localhost canonical", () => {
+    it("accepts a localhost dev canonical with an explicit port", () => {
+      process.env.CANONICAL_APP_ORIGIN = "http://localhost:3000";
+      const request = buildRequest({
+        url: "http://localhost:3000/api/admin/products",
+        origin: "http://localhost:3000",
+      });
+      expect(isSameOrigin(request)).toBe(true);
+    });
+
+    it("rejects a port mismatch on localhost dev canonical", () => {
+      process.env.CANONICAL_APP_ORIGIN = "http://localhost:3000";
+      const request = buildRequest({
+        url: "http://localhost:3001/api/admin/products",
+        origin: "http://localhost:3001",
+      });
+      expect(isSameOrigin(request)).toBe(false);
+    });
   });
 });

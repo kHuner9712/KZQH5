@@ -43,6 +43,17 @@
  * optimizer share one source of truth.
  */
 
+// KZQ-P2-003: Supabase host shape, CDN entry validation and loopback
+// detection now live in ONE place — lib/config/media-domains.mjs — shared
+// with next.config.mjs, lib/security/csp-policy.ts,
+// scripts/check-release-readiness.mjs and tests. Nothing here re-defines
+// those rules (a duplicate would let the config and the runtime drift).
+import {
+  SUPABASE_PROJECT_HOST_PATTERN,
+  isLoopbackHost,
+  validateCdnDomainEntry,
+} from "@/lib/config/media-domains.mjs";
+
 export interface MediaUrlAllowlist {
   /** Supabase project URL, e.g. https://abcdefgh.supabase.co */
   supabaseUrl: string | null;
@@ -64,32 +75,11 @@ const BLOCKED_SCHEMES = new Set([
   "wss:",
 ]);
 
-const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "::1"]);
-
 // ============================================================
 // Phase 1 Task 2: loopback host detection that resists bypass.
-//
-// Normalizes the hostname before comparing against LOOPBACK_HOSTS:
-//   - lowercases (defensive; callers already lowercase)
-//   - strips a single trailing dot (DNS root label: "localhost." ≡ "localhost")
-//   - strips IPv6 brackets ("[::1]" → "::1")
-//
-// This covers the bypass vectors enumerated in the test suite:
-//   - Case variations: LOCALHOST, Localhost
-//   - Trailing dots: localhost., 127.0.0.1.
-//   - IPv6 bracket forms: [::1]
+// The implementation is in lib/config/media-domains.mjs
+// (isLoopbackHost) — see KZQ-P2-003.
 // ============================================================
-function isLoopbackHost(host: string): boolean {
-  let normalized = host.toLowerCase();
-  if (normalized.endsWith(".")) {
-    normalized = normalized.slice(0, -1);
-  }
-  if (normalized.startsWith("[") && normalized.endsWith("]")) {
-    normalized = normalized.slice(1, -1);
-  }
-  return LOOPBACK_HOSTS.has(normalized);
-}
-
 function isProductionEnv(nodeEnv: string): boolean {
   return nodeEnv === "production";
 }
@@ -134,39 +124,11 @@ const DENIED_INTERNAL_ROOTS: ReadonlySet<string> = new Set([
 // to give `new URL(rel, base)` a stable origin for pathname extraction.
 const SAME_ORIGIN_BASE = "https://kzq.local";
 
-// Supabase project host shape: <project-ref>.supabase.co where
-// project-ref is 20 lowercase alphanumeric characters. Anything else
-// must be explicitly approved via MEDIA_CDN_DOMAINS.
-const SUPABASE_PROJECT_HOST_PATTERN =
-  /^[a-z0-9]{20}\.supabase\.co$/;
-
-/**
- * Validate a single MEDIA_CDN_DOMAINS entry. Returns the normalized
- * hostname when valid, null when invalid.
- *
- * Validation rules:
- *   - hostname only (no protocol, port, path, query, credentials)
- *   - must be a valid DNS name (letters, digits, hyphens, dots)
- *   - must NOT be an IP literal
- *   - must NOT be a bare TLD (".com", "supabase.co")
- */
-function validateCdnDomainEntry(raw: string): string | null {
-  const trimmed = raw.trim().toLowerCase();
-  if (!trimmed) return null;
-  // Reject anything that looks like a URL (protocol, port, path, query).
-  if (/[:/?#@]/.test(trimmed)) return null;
-  // Reject bare IPs.
-  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(trimmed)) return null;
-  // Reject IPv6 / bracketed hosts.
-  if (trimmed.startsWith("[") || trimmed.endsWith("]")) return null;
-  // Must contain at least one dot and be a valid DNS name.
-  if (!/^[a-z0-9.-]+\.[a-z]{2,}$/.test(trimmed)) return null;
-  // Reject all-segments-empty or leading/trailing dot.
-  if (trimmed.startsWith(".") || trimmed.endsWith(".")) return null;
-  // Reject ".." sequences.
-  if (trimmed.includes("..")) return null;
-  return trimmed;
-}
+// Supabase project-host shape and CDN entry validation live in
+// lib/config/media-domains.mjs (KZQ-P2-003) — imported above. The
+// canonical shape is <project-ref>.supabase.co where project-ref is
+// 20 lowercase alphanumeric characters; anything else must be
+// explicitly approved via MEDIA_CDN_DOMAINS.
 
 export function mediaAllowlistFromEnv(env: NodeJS.ProcessEnv): MediaUrlAllowlist {
   const supabaseUrl = (env.NEXT_PUBLIC_SUPABASE_URL || "").trim() || null;

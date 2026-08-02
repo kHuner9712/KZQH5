@@ -30,8 +30,12 @@
 //     objects are NEVER printed. Only fixed error codes + coarse cause.
 // ============================================================
 
-import { execSync } from "node:child_process";
+import { execSync, spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+// KZQ-P2-003: loopback host detection lives in ONE place
+// (lib/config/media-domains.mjs), shared with next.config.mjs,
+// lib/validation/url.ts and lib/security/csp-policy.ts.
+import { isLoopbackHost } from "../lib/config/media-domains.mjs";
 
 // ---------- Argument parsing ----------
 
@@ -318,15 +322,22 @@ function checkUrlAndSeo() {
 //   - RATE_LIMIT_FALLBACK_SECRET missing or < 32 chars
 //   - OUTBOX_DISPATCH_SECRET missing or < 16 chars
 //   - Production using loopback Supabase or Site URL
-//   - CSP_ENFORCING=true without nonce-based CSP (Phase 1 hasn't
-//     implemented nonces yet, so enforcing with 'unsafe-inline' is unsafe)
 //
 // In deployment mode, the following conditions WARN:
 //   - READINESS_TOKEN not configured
 //   - All notification providers unconfigured
-//   - CSP still Report-Only (not enforcing)
+//   - CSP public mode still Report-Only (CSP_ENFORCING unset)
 //   - Production indexing still false
 //   - Cannot verify external WAF configuration
+//
+// CSP_ENFORCING=true is ALLOWED (PASS, not BLOCK):
+//   - Admin routes are ALWAYS Report-Only with 'unsafe-inline'
+//     (Next.js 15 App Router internal inline scripts do not accept a
+//     nonce, so nonce-based CSP causes black screen).
+//   - Public routes with CSP_ENFORCING=true enforce img-src,
+//     connect-src, frame-ancestors, object-src directives while
+//     retaining 'unsafe-inline' for script-src (ISR compatibility).
+//   - The operator explicitly opts into this tradeoff.
 //
 // In local development mode, these checks are permissive (PASS or WARN)
 // so they don't block normal development.
@@ -342,13 +353,6 @@ const EDGEONE_PROXY_HEADERS = [
   "eo-connecting-ip",
   "x-edgeone-client-ip",
 ];
-
-function isLoopbackHost(hostname) {
-  let h = hostname.toLowerCase();
-  if (h.endsWith(".")) h = h.slice(0, -1);
-  if (h.startsWith("[") && h.endsWith("]")) h = h.slice(1, -1);
-  return h === "localhost" || h === "127.0.0.1" || h === "::1";
-}
 
 function checkSecurityAndOperations() {
   // --- TRUSTED_PROXY_HEADER ---
@@ -505,6 +509,44 @@ function checkSecurityAndOperations() {
     );
   }
 
+  // --- ALLOW_SCHEMA_COMPATIBILITY_FALLBACK (KZQ-P0-010) ---
+  // Schema-compat fallback lets repositories fall back to direct table
+  // queries when a required RPC is undeployed. That masks missing
+  // migrations in production, so it MUST default OFF in deployment mode.
+  //   - Production: unset / "false" / anything other than "true" -> PASS
+  //   - Production: "true" -> BLOCK (operator must fix the migration
+  //     contract instead of relying on the fallback)
+  //   - Staging: "true" -> WARN (allowed for break-glass compatibility,
+  //     but operator should resolve the schema drift)
+  //   - Local/dev: not checked
+  const schemaCompatRaw = process.env.ALLOW_SCHEMA_COMPATIBILITY_FALLBACK;
+  const schemaCompatExplicitTrue = schemaCompatRaw === "true";
+  if (productionMode) {
+    if (schemaCompatExplicitTrue) {
+      block(
+        "env: ALLOW_SCHEMA_COMPATIBILITY_FALLBACK",
+        'true in production — schema/permission mismatches would be silently masked by direct-table fallback; fix the migration contract instead',
+      );
+    } else {
+      pass(
+        "env: ALLOW_SCHEMA_COMPATIBILITY_FALLBACK",
+        "false / unset (production fail-closed — RPC contract enforced)",
+      );
+    }
+  } else if (stagingMode) {
+    if (schemaCompatExplicitTrue) {
+      warn(
+        "env: ALLOW_SCHEMA_COMPATIBILITY_FALLBACK",
+        "true in staging — schema drift is being masked; resolve before production",
+      );
+    } else {
+      pass(
+        "env: ALLOW_SCHEMA_COMPATIBILITY_FALLBACK",
+        "false / unset (staging fail-closed)",
+      );
+    }
+  }
+
   // --- WARN conditions (deployment mode only) ---
 
   if (deploymentMode) {
@@ -553,11 +595,51 @@ function checkSecurityAndOperations() {
       );
     }
 
-    // Cannot verify external WAF configuration
-    warn(
-      "env: WAF",
-      "cannot verify external WAF configuration from code — manual check required (see docs/EDGEONE_WAF_RULES.md)",
-    );
+    // KZQ-P1-011-a: Distributed rate-limit boundary gate.
+    //
+    // The in-memory MemoryRateLimiter is per-process only. On EdgeOne
+    // multi-instance deployments the effective limit is N × configured,
+    // which is NOT a real production rate limit. EdgeOne WAF / Rate
+    // Limiting rules provide the cross-instance floor.
+    //
+    // We cannot verify the WAF configuration from code, so we require
+    // the operator to assert (under human verification) that the WAF
+    // rules documented in docs/EDGEONE_WAF_RULES.md are deployed by
+    // setting WAF_RATE_LIMIT_VERIFIED=true in the production env.
+    //
+    // Production: missing or not "true" → BLOCK (cannot ship without
+    //   the cross-instance floor — the in-memory limiter alone is not
+    //   a production-grade rate limit).
+    // Staging: missing → WARN (operator may not have WAF configured yet,
+    //   staging is for testing the application, not the edge config).
+    //   "true" → PASS (operator has confirmed WAF is configured).
+    const wafVerified = (process.env.WAF_RATE_LIMIT_VERIFIED || "").trim();
+    if (productionMode) {
+      if (wafVerified !== "true") {
+        block(
+          "env: WAF_RATE_LIMIT_VERIFIED",
+          'not "true" — production deployments MUST have EdgeOne WAF / Rate Limiting rules deployed per docs/EDGEONE_WAF_RULES.md and the operator MUST assert this by setting WAF_RATE_LIMIT_VERIFIED=true. The in-memory MemoryRateLimiter is per-process only and does NOT provide a cross-instance rate-limit floor on multi-instance EdgeOne deployments.',
+        );
+      } else {
+        pass(
+          "env: WAF_RATE_LIMIT_VERIFIED",
+          "true — operator has asserted EdgeOne WAF / Rate Limiting rules are deployed (manual verification per docs/EDGEONE_WAF_RULES.md)",
+        );
+      }
+    } else {
+      // staging
+      if (wafVerified !== "true") {
+        warn(
+          "env: WAF_RATE_LIMIT_VERIFIED",
+          'not "true" — EdgeOne WAF / Rate Limiting rules not yet verified for staging. Set WAF_RATE_LIMIT_VERIFIED=true after deploying WAF rules per docs/EDGEONE_WAF_RULES.md. Production release will be BLOCKED without this.',
+        );
+      } else {
+        pass(
+          "env: WAF_RATE_LIMIT_VERIFIED",
+          "true — EdgeOne WAF / Rate Limiting rules verified for staging",
+        );
+      }
+    }
   }
 }
 
@@ -585,7 +667,15 @@ function checkSecurityAndOperations() {
 
 // Expected check names returned by verify_schema_readiness(). We track these
 // explicitly so a future RPC change that drops a check is detected.
+//
+// KZQ-P0-011-c: Added 30 new checks (15 `rls_enabled_*` + 15
+// `revoke_dml_*_authenticated`) to verify table-level RLS enablement and
+// the DML revocations from migration 20260728000000 are still in effect.
+// The allowlist is the contract between this script and migration
+// 20260731120000_extend_schema_verification_rls_revoke.sql — any check
+// name outside this list is a contract violation (KZQ-P0-011-b).
 const EXPECTED_SCHEMA_CHECKS = [
+  // --- Original checks (migration 20260724160000) ---
   "catalog_field_catalog_topic_id",
   "catalog_field_cover_image_url",
   "catalog_field_published_at",
@@ -601,6 +691,45 @@ const EXPECTED_SCHEMA_CHECKS = [
   "grant_create_inquiry_with_items",
   "grant_save_product_with_images",
   "grant_save_project_with_relations",
+  // --- KZQ-P0-011-c: RLS enabled checks (15 tables) ---
+  "rls_enabled_inquiry_items",
+  "rls_enabled_product_assets",
+  "rls_enabled_projects",
+  "rls_enabled_project_images",
+  "rls_enabled_project_products",
+  "rls_enabled_analytics_events",
+  "rls_enabled_inquiry_outbox",
+  "rls_enabled_admin_audit_log",
+  "rls_enabled_inquiry_outbox_deliveries",
+  "rls_enabled_admin_storage_operations",
+  "rls_enabled_storage_cleanup_queue",
+  "rls_enabled_storage_object_refs",
+  "rls_enabled_temp_uploads",
+  "rls_enabled_homepage_content",
+  "rls_enabled_page_content",
+  // --- KZQ-P0-011-c: DML revoke checks (15 business tables, authenticated) ---
+  "revoke_dml_categories_authenticated",
+  "revoke_dml_subcategories_authenticated",
+  "revoke_dml_products_authenticated",
+  "revoke_dml_product_images_authenticated",
+  "revoke_dml_certificates_authenticated",
+  "revoke_dml_company_profile_authenticated",
+  "revoke_dml_site_settings_authenticated",
+  "revoke_dml_homepage_content_authenticated",
+  "revoke_dml_page_content_authenticated",
+  "revoke_dml_product_assets_authenticated",
+  "revoke_dml_projects_authenticated",
+  "revoke_dml_project_images_authenticated",
+  "revoke_dml_project_products_authenticated",
+  "revoke_dml_inquiries_authenticated",
+  "revoke_dml_inquiry_items_authenticated",
+  // --- KZQ-P0-011-d: service_role EXECUTE on critical service-role-only RPCs ---
+  "grant_service_role_count_unread_inquiries",
+  "grant_service_role_get_admin_dashboard_snapshot",
+  "grant_service_role_create_inquiry_with_items",
+  "grant_service_role_save_product_with_images",
+  "grant_service_role_save_project_with_relations",
+  "grant_service_role_verify_schema_readiness",
 ];
 
 /**
@@ -702,6 +831,98 @@ function validateRpcResponse(body) {
   return checks;
 }
 
+async function checkMigrationManifestConsistency() {
+  // --- Migration files present locally ---
+  // We cannot execute migrations; we only verify the files exist so the
+  // runbook can reference them. This is a repo-state check, not a schema
+  // check. It runs BEFORE the Supabase connection check so manifest drift
+  // is caught even when the database is unreachable.
+  try {
+    const migration1 = readFileSync(
+      "supabase/migrations/20260719090000_catalog_center_fields.sql",
+      { encoding: "utf-8" },
+    );
+    const migration2 = readFileSync(
+      "supabase/migrations/20260721000000_catalog_viewer_analytics_events.sql",
+      { encoding: "utf-8" },
+    );
+    const migration7 = readFileSync(
+      "supabase/migrations/20260724160000_schema_verification_rpc.sql",
+      { encoding: "utf-8" },
+    );
+    if (
+      migration1.includes("catalog_topic_id") &&
+      migration2.includes("catalog_open") &&
+      migration7.includes("verify_schema_readiness")
+    ) {
+      pass("migrations: files present", "catalog + schema-verification migration files found");
+    } else {
+      warn("migrations: files present", "files exist but content unexpected");
+    }
+  } catch {
+    block("migrations: files present", "required migration files missing from repo");
+  }
+
+  // --- Migration SHA-256 manifest consistency (KZQ-P0-011-a) ---
+  // Verifies that docs/MIGRATION_SHA256_MANIFEST.txt is consistent with
+  // the on-disk migration files: every registered hash matches, no
+  // unregistered migration files exist, timestamps are strictly
+  // monotonic. This catches tampering with frozen migrations and
+  // manifest/disk drift that the file-presence check above cannot detect.
+  //
+  // We invoke scripts/check-migration-immutability.mjs in default verify
+  // mode as a subprocess and interpret its exit code + stdout. We do NOT
+  // run --verify-against-ref because that requires a full clone
+  // (fetch-depth: 0) which is not available in all release-readiness
+  // invocation contexts (e.g. local pre-deploy checks). CI runs the
+  // ref-anchored check separately in its own workflow step.
+  //
+  // The subprocess output is captured and emitted verbatim (it contains
+  // only fixed error codes and file names — no secrets).
+  try {
+    const result = spawnSync(
+      process.execPath,
+      ["scripts/check-migration-immutability.mjs"],
+      {
+        encoding: "utf-8",
+        cwd: process.cwd(),
+        timeout: 30_000,
+      },
+    );
+    const stdout = (result.stdout || "").trim();
+    const stderr = (result.stderr || "").trim();
+    const combined = [stdout, stderr].filter(Boolean).join("\n");
+
+    if (result.status === 0) {
+      // Extract the count from the PASS line for a richer detail message.
+      // Expected formats:
+      //   "PASS: N frozen migration(s) verified. ..." (default verify mode)
+      //   "PASS: N migration(s) verified unchanged ..." (--verify-against-ref)
+      const match = /PASS:\s+(\d+)/i.exec(stdout);
+      const count = match ? match[1] : "?";
+      pass(
+        "migrations: manifest consistency",
+        `${count} migration(s) verified — every registered SHA-256 matches disk, no unregistered files, timestamps monotonic`,
+      );
+    } else {
+      // Exit code 1 = BLOCK (tampering, missing manifest, unregistered
+      // file, non-monotonic timestamp, duplicate, parse error).
+      block(
+        "migrations: manifest consistency",
+        combined || `immutability check exited with code ${result.status} (no output)`,
+      );
+    }
+  } catch (err) {
+    // spawnSync itself threw (e.g. ENOENT if node binary is missing, or
+    // the immutability script path is wrong). This is an infrastructure
+    // failure, not a schema failure, but we cannot claim readiness.
+    block(
+      "migrations: manifest consistency",
+      `MIGRATION_IMMUTABILITY_SPAWN_FAILED — could not invoke check-migration-immutability.mjs`,
+    );
+  }
+}
+
 async function checkSupabaseSchema() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -727,36 +948,6 @@ async function checkSupabaseSchema() {
     return;
   } else {
     pass("supabase: service role", "configured (server-side)");
-  }
-
-  // --- Migration files present locally ---
-  // We cannot execute migrations; we only verify the files exist so the
-  // runbook can reference them. This is a repo-state check, not a schema
-  // check.
-  try {
-    const migration1 = readFileSync(
-      "supabase/migrations/20260719090000_catalog_center_fields.sql",
-      { encoding: "utf-8" },
-    );
-    const migration2 = readFileSync(
-      "supabase/migrations/20260721000000_catalog_viewer_analytics_events.sql",
-      { encoding: "utf-8" },
-    );
-    const migration7 = readFileSync(
-      "supabase/migrations/20260724160000_schema_verification_rpc.sql",
-      { encoding: "utf-8" },
-    );
-    if (
-      migration1.includes("catalog_topic_id") &&
-      migration2.includes("catalog_open") &&
-      migration7.includes("verify_schema_readiness")
-    ) {
-      pass("migrations: files present", "catalog + schema-verification migration files found");
-    } else {
-      warn("migrations: files present", "files exist but content unexpected");
-    }
-  } catch {
-    block("migrations: files present", "required migration files missing from repo");
   }
 
   // --- Schema verification via RPC ---
@@ -829,6 +1020,26 @@ async function checkSupabaseSchema() {
         "check not returned by RPC — verify migration 20260724160000 is current",
       );
     }
+  }
+
+  // --- Detect unexpected extra checks (RPC returned more checks than expected) ---
+  // (KZQ-P0-011-b) This guards against a RPC change that silently adds a
+  // new check, or a buggy/tampered RPC that returns unexpected data. The
+  // EXPECTED_SCHEMA_CHECKS allowlist is the contract between the script and
+  // the RPC body; any check name outside this list is a contract violation
+  // because the release-readiness script would emit an unreviewed PASS/BLOCK
+  // line that no one signed off on. We emit a single BLOCK line listing the
+  // unexpected names (no secrets — these are check-name strings) so the
+  // operator can either update the allowlist intentionally or fix the RPC.
+  const expectedSet = new Set(EXPECTED_SCHEMA_CHECKS);
+  const unexpectedChecks = rpcChecks
+    .map((c) => c.name)
+    .filter((n) => !expectedSet.has(n));
+  if (unexpectedChecks.length > 0) {
+    block(
+      "schema: unexpected checks",
+      `RPC returned ${unexpectedChecks.length} check(s) not in the EXPECTED_SCHEMA_CHECKS allowlist: ${unexpectedChecks.join(", ")} — either update the allowlist intentionally or verify migration 20260724160000 was not modified`,
+    );
   }
 
   // --- Top-level ok flag ---
@@ -1047,6 +1258,7 @@ async function main() {
   checkGitAndBuild();
   checkUrlAndSeo();
   checkSecurityAndOperations();
+  await checkMigrationManifestConsistency();
   await checkSupabaseSchema();
   await checkBusinessContent();
 

@@ -3,6 +3,10 @@
 import { useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createBrowserSupabaseClient } from "@/lib/supabase/client";
+import {
+  LOGIN_ERROR_MESSAGES,
+  mapLoginError,
+} from "@/lib/security/login-errors";
 import { Button } from "@/components/ui/Button";
 import { AlertCircle, Lock, Mail } from "lucide-react";
 
@@ -32,6 +36,28 @@ export function LoginForm() {
 
     setLoading(true);
     try {
+      // KZQ-P1-021: server-side login brute-force guard. The server
+      // counts attempts and returns 429 when the rate limit is hit —
+      // the client never counts attempts itself. The request carries
+      // NO credentials. On a guard outage (network error / non-429)
+      // the sign-in continues (fail-open): the real floor for direct
+      // Supabase Auth calls is Supabase Auth's built-in login rate
+      // limiting + EdgeOne WAF (see docs/EDGEONE_WAF_RULES.md §2.12).
+      let guardBlocked = false;
+      try {
+        const guard = await fetch("/api/admin/login-guard", { method: "POST" });
+        if (guard.status === 429) {
+          const body = (await guard.json().catch(() => null)) as {
+            error?: string;
+          } | null;
+          setError(body?.error || LOGIN_ERROR_MESSAGES.RATE_LIMITED);
+          guardBlocked = true;
+        }
+      } catch {
+        // Guard unreachable — fail-open, do not block the login flow.
+      }
+      if (guardBlocked) return;
+
       // Create the Supabase client lazily on submit, not on render.
       // If this throws (e.g. bad env, CSP violation), the error is
       // caught here and shown inline — instead of crashing the entire
@@ -43,14 +69,36 @@ export function LoginForm() {
       });
 
       if (signInError) {
-        setError(signInError.message || "登录失败，请检查邮箱和密码");
+        // KZQ-P1-020: never surface the raw Supabase error message —
+        // map it to a fixed Chinese message.
+        setError(mapLoginError(signInError));
         return;
       }
 
-      router.push("/admin");
+      // KZQ-P1-022-c: after password sign-in (aal1), check whether the
+      // account has a verified MFA factor. If nextLevel is "aal2", the
+      // session must be upgraded via the MFA challenge before the admin
+      // can enter the dashboard. Fail-closed: an AAL probe error also
+      // routes to the challenge page — it re-evaluates the AAL itself
+      // and redirects accounts without MFA back to /admin, so no
+      // MFA-protected account is silently admitted.
+      let needsMfaChallenge = true;
+      try {
+        const { data: aal, error: aalError } =
+          await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+        needsMfaChallenge = aalError
+          ? true
+          : aal?.nextLevel === "aal2";
+      } catch {
+        needsMfaChallenge = true;
+      }
+
+      router.push(needsMfaChallenge ? "/admin/mfa/challenge" : "/admin");
       router.refresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "登录异常，请稍后重试");
+    } catch {
+      // KZQ-P1-020: never surface the raw exception message (it may
+      // contain provider/internal detail); show a fixed message.
+      setError(LOGIN_ERROR_MESSAGES.UNEXPECTED);
     } finally {
       setLoading(false);
     }

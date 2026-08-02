@@ -67,6 +67,16 @@
 
 - [ ] `/admin` 未登录跳转到 `/admin/login`
 - [ ] 登录 / 退出正常
+- [ ] 登录错误不显示 Supabase 原始英文报错（仅显示固定中文文案）——KZQ-P1-020
+- [ ] 同 IP 连续超过 5 次登录尝试后，页面显示固定限流文案且不再发起 Auth 调用——KZQ-P1-021
+- [ ] 启用 MFA 的管理员：密码登录后跳转 `/admin/mfa/challenge`，输入身份验证器验证码后进入后台——KZQ-P1-022
+- [ ] 未绑定 MFA 的管理员登录后直接进入后台（不锁死未启用账号）——KZQ-P1-022
+- [ ] `/admin/security` 可查看 MFA 状态、绑定 TOTP 因子；绑定后状态显示"已启用"——KZQ-P1-022
+- [ ] aal1 会话（登录后未完成 MFA challenge）调用敏感 API（如询盘导出）返回 401 + 固定码 `ADMIN_WRITE_MFA_REQUIRED`；完成 challenge 后同一接口返回 200——KZQ-P1-022
+- [ ] **平台侧（人工验收）**: Supabase Auth Dashboard → Authentication → Multi-factor Authentication 已启用 TOTP（Enrollment 策略明确为 Optional/Required）——KZQ-P1-022
+- [ ] **平台侧（人工验收）**: `npm run test:e2e:staging` 的 `staging-mfa.spec.ts` 全部通过（测试账号已绑定因子且提供 `STAGING_MFA_SECRET`）——KZQ-P1-022-f
+- [ ] **平台侧（人工验收）**: Supabase Auth Dashboard 已配置登录限流（Auth → Rate Limits，按 IP / 邮箱），直接调用 Auth API 超限返回 429——KZQ-P1-021
+- [ ] **平台侧（人工验收）**: EdgeOne WAF 已为 `/api/admin/login-guard` 与 `/admin/login` 配置限流规则（见 `docs/EDGEONE_WAF_RULES.md` §2.12）——KZQ-P1-021
 - [ ] `/admin/site-settings` 站点设置可保存
 - [ ] `/admin/homepage` 首页内容可编辑
 - [ ] `/admin/pages` 页面内容可编辑
@@ -132,10 +142,11 @@
 - [ ] **`TRUSTED_PROXY_HEADER` 已正确配置**（EdgeOne 设为 `eo-connecting-ip`；未配置或非法值时所有代理 Header 不可信）
 - [ ] **`OUTBOX_DISPATCH_SECRET` 已配置**（≥ 16 字符；缺失时 `/api/internal/outbox/dispatch` 返回 503，询盘提交仍写表但通知不投递）
 - [ ] **`x-forwarded-for` 永远不被信任**（不再有 `TRUST_X_FORWARDED_FOR` 开关）
+- [ ] **KZQ-P1-011-a: 分布式限流边界已验证**：应用层 `MemoryRateLimiter` 仅单进程一致，EdgeOne 多实例部署时实际阈值为 N×配置值。生产环境必须按 `docs/EDGEONE_WAF_RULES.md` 第 1 节配置 EdgeOne WAF / Rate Limiting 规则作为跨实例 floor，执行第 5 节全部验收测试并归档证据后，设置 `WAF_RATE_LIMIT_VERIFIED=true`（仅接受精确字符串 `"true"`）
 - [ ] **CSP Reporting 已接通**：浏览器 DevTools Network 可观察到 `/api/csp-report` 的 POST 请求；`Reporting-Endpoints` 响应头包含 `csp-endpoint`；CSP `report-to csp-endpoint` 与 `report-uri /api/csp-report` 同时存在（兼容现代 Reporting API 与 legacy `report-uri`）。当前公开站点保持 Report-Only，本阶段不要求 enforcing
 - [ ] **CSP 日志无敏感信息**：`/api/csp-report` 日志不包含 query string、`script-sample`、完整 `blocked-uri` 或完整请求体（仅记录固定错误码、route、计数）
-- [ ] **`npm run check:release-readiness:staging` 在 Staging 通过**（exit 0；任何 BLOCK 必须修复后方可发布）
-- [ ] **`npm run check:release-readiness -- --mode=production` 在正式发布前通过**（exit 0；新增的 TRUSTED_PROXY_HEADER / RATE_LIMIT_FALLBACK_SECRET / OUTBOX_DISPATCH_SECRET / BUILD_MOCK_BACKEND / loopback Site URL / loopback Supabase URL / DEMO_MODE / service role 暴露 / CSP enforcing-without-nonce 等 BLOCK 条件全部满足）
+- [ ] **`npm run check:release-readiness:staging` 在 Staging 通过**（exit 0；任何 BLOCK 必须修复后方可发布；staging 环境 `WAF_RATE_LIMIT_VERIFIED` 未设置时仅 WARN）
+- [ ] **`npm run check:release-readiness -- --mode=production` 在正式发布前通过**（exit 0；TRUSTED_PROXY_HEADER / RATE_LIMIT_FALLBACK_SECRET / OUTBOX_DISPATCH_SECRET / BUILD_MOCK_BACKEND / loopback Site URL / loopback Supabase URL / DEMO_MODE / service role 暴露 / WAF_RATE_LIMIT_VERIFIED 等 BLOCK 条件全部满足。注：CSP_ENFORCING=true 不是 BLOCK 条件——admin 路由始终 Report-Only，public 路由在 CSP_ENFORCING=true 时执行 img-src/connect-src/frame-ancestors 等指令，script-src 保留 'unsafe-inline' 以兼容 ISR）
 - [ ] **Readiness Canary Provision 已部署**：在 Supabase Storage `public-assets` bucket 上传 1×1 占位 PNG 到固定路径 `canary/canary-1x1.png`（路径硬编码在 `app/api/readiness/route.ts`，不可通过环境变量修改以防止误指向私有对象）。`/api/readiness` 的 storage 子检查会 GET 此对象；非 200 即视为 storage 不可用并返回 503。部署步骤：
   1. 在 Supabase Dashboard → Storage → `public-assets` 中新建目录 `canary`
   2. 上传任意 1×1 像素 PNG（建议 ≤ 100 字节）并命名为 `canary-1x1.png`
@@ -206,3 +217,15 @@
 - [ ] 若仓库 `Settings → Secrets and variables → Actions` 中残留 `VERCEL_TOKEN` / `VERCEL_ORG_ID` / `VERCEL_PROJECT_ID` 等 Secret，逐项删除
 - [ ] 验证 `git log --all --oneline -- 'vercel.json'` 仅出现在历史中，当前工作树无 `vercel.json`
 - [ ] 验证 `.github/workflows/*.yml` 中无 `vercel/vercel-action` 等 Vercel Action 引用
+
+---
+
+## 10. 供应链安全（人工操作 + 代码已就绪项）
+
+- [ ] **CodeQL 已配置**：`.github/workflows/codeql.yml` 存在（push/PR/每周调度，security-extended JS/TS 分析）——KZQ-P2-012-a
+- [ ] **平台侧（人工验收）**: GitHub 仓库 `Settings → Code security and analysis` 中 **Secret scanning** 为 Enabled——KZQ-P2-012-b
+- [ ] **平台侧（人工验收）**: 同一页面 **Push protection** 为 Enabled；推送含测试密钥的 commit 会被 GitHub 拒绝——KZQ-P2-012-b
+- [ ] **平台侧（人工验收）**: `Security → Secret scanning` 页面有扫描记录；历史泄露密钥（如 `Import .env`）已定位并轮换——KZQ-P2-012-b
+- [ ] 详细步骤见 `docs/SECRET_SCANNING_CONFIG.md`；**不得在仓库中伪造不存在的 secret-scanning 配置文件假装已启用**——KZQ-P2-012-b
+- [ ] **SBOM 已配置**：`.github/workflows/sbom.yml` 存在（main push 时用内置 `npm sbom` 生成 CycloneDX + SPDX，上传 `sbom` artifact，含重建 diff 重现性验证）——KZQ-P2-012-c
+- [ ] **生产依赖许可证审计已配置**：`npm run check:license-audit` 在 CI 中执行（`scripts/check-license-audit.mjs`，禁止 GPL/AGPL/SSPL 强 copyleft 与缺失/未知许可证；sharp 平台二进制为唯一已审查例外）——KZQ-P2-012-d

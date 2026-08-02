@@ -750,7 +750,6 @@ export function ProductForm({ initial, initialImages = [] }: ProductFormProps) {
                   key={img.id || idx}
                   className="flex items-center gap-3 rounded-lg border border-gray-200 bg-white p-2"
                 >
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
                     src={img.image_url || undefined}
                     alt={img.alt_cn || `图片 ${idx + 1}`}

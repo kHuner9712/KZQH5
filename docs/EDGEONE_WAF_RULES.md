@@ -4,6 +4,48 @@
 >
 > **重要声明**：EdgeOne WAF 规则在 EdgeOne 控制台配置，无法通过仓库代码直接修改。本文档是**控制台操作的规范文档**，不是代码可执行的配置。部署人员必须按照本文档在 EdgeOne 控制台手动配置 WAF 规则，并在验收记录中提供证据。
 
+## 0. 分布式限流架构与 Fail-Closed 决策 (KZQ-P1-011-a)
+
+### 0.1 两层限流模型
+
+KZQ 采用**两层限流模型**，各层职责明确，不可互相替代：
+
+| 层 | 执行点 | 一致性范围 | 角色 |
+|----|--------|------------|------|
+| 第一层：应用层 `MemoryRateLimiter` | EdgeOne Cloud Function (Node 进程内) | 单进程 | 本机快速拒绝 + 开发/测试 fallback |
+| 第二层：EdgeOne WAF / Rate Limiting | EdgeOne 边缘节点 | 跨实例全局 | 生产级跨实例 floor |
+
+**为什么需要两层**：EdgeOne Cloud Functions 是多实例部署，应用层 `MemoryRateLimiter` 的计数器仅在单个 Node 进程内一致。当 N 个实例并行运行时，实际限流阈值为 `N × 配置值`，这**不是真正的生产级限流**。EdgeOne WAF / Rate Limiting 规则在边缘节点执行，所有实例的请求先经过边缘限流，提供跨实例一致的全局 floor。
+
+### 0.2 Fail-Closed 决策
+
+| 场景 | 决策 | 理由 |
+|------|------|------|
+| 应用层 `MemoryRateLimiter` 容量满 | **Fail-closed**（拒绝新 key） | 不驱逐活跃条目，防止攻击者重置受害者桶 |
+| 应用层 `MemoryRateLimiter` 异常 | **Fail-open**（放行，依赖 WAF 层） | 单进程故障不应阻断所有请求；WAF 层仍提供 floor |
+| EdgeOne WAF 未配置（生产） | **BLOCK 发布** | `WAF_RATE_LIMIT_VERIFIED ≠ "true"` 时 `check-release-readiness --mode=production` 阻断 |
+| EdgeOne WAF 未配置（staging） | **WARN** | Staging 可在 WAF 配置前先部署验证应用层 |
+| EdgeOne WAF 规则触发 | **429**（限流）或 **403**（拦截） | 由 EdgeOne 边缘节点返回，不到达应用层 |
+
+### 0.3 发布门控
+
+生产环境发布前必须满足：
+
+1. EdgeOne 控制台已按本文档第 1 节配置所有路由的 WAF 限流规则
+2. 已执行第 5 节的全部验收测试并记录证据
+3. 在生产环境变量中设置 `WAF_RATE_LIMIT_VERIFIED=true`
+4. `npm run check:release-readiness -- --mode=production` 通过（exit 0）
+
+**仅接受精确字符串 `"true"`**（区分大小写）。`"TRUE"` / `"1"` / `"yes"` 均被拒绝，防止误配。
+
+### 0.4 应用层限流器的多实例边界声明
+
+`lib/services/rate-limit.ts` 文件头已明确声明：
+
+> MemoryRateLimiter is consistent only within a single Node process. On EdgeOne multi-instance deployments the effective limit may be N × configured (N = running instances). Production deployments MUST additionally enable EdgeOne WAF / Rate Limiting rules.
+
+应用层所有 `getXxxRateLimiter()` 工厂返回的 `MemoryRateLimiter` 实例**仅作为本机/第二层保护**，不是生产级限流的唯一执行点。
+
 ## 1. 受保护路由清单
 
 | 路由 | 方法 | 用途 | 限流阈值 | 请求体上限 | 并发限制 | 可信 IP Header |
@@ -205,6 +247,36 @@
 - 携带错误 token 访问，验证返回 403
 - 使用 OUTBOX_SECRET 访问 storage 路由，验证返回 403（跨用途令牌隔离）
 
+### 2.12 `/api/admin/login-guard` (KZQ-P1-021 新增)
+
+**管理员登录防爆破 — 应用层登录闸门**:
+
+登录表单在调用 `supabase.auth.signInWithPassword` 之前，先 POST 到本端点（无 body、不传输任何凭据）。服务端计数并判定是否超限——客户端从不自行计数。
+
+| 路由 | 方法 | 鉴权 | 应用层限流 |
+|------|------|------|------------|
+| `/api/admin/login-guard` | POST | 无（仅限流闸门） | 5 req/min / 可信 IP；无可信 IP 时共享 `fallback:global` floor |
+
+- 超限返回 `429` + 固定中文文案（`尝试次数过多，请稍后再试`）+ `Retry-After` + `Cache-Control: no-store`
+- 服务端仅记录固定错误码 `ADMIN_LOGIN_RATE_LIMITED`，不记录邮箱、IP 或供应商错误细节
+- 请求体被完全忽略——绝不在该端点接收/解析密码
+
+**边界（如实声明）**: 本闸门只保护**走应用页面**的登录流程（含脚本化浏览器自动化执行页面自身登录 JS 的场景）。客户端若绕过表单直接调用 Supabase Auth（`auth.<ref>.supabase.co`），该请求不经过本应用——此路径的真实防线为:
+
+1. **Supabase Auth 内建登录限流**（Auth Dashboard → Rate Limits，按 IP 与邮箱分别限流）——防爆破的根防线，必须人工配置并验收；
+2. **EdgeOne WAF 规则**（见下方）。
+
+**WAF 规则建议**:
+- 对 `/api/admin/login-guard` 与 `/admin/login` 页面请求限流（例如 30 req/min/IP），防止闸门端点与登录页本身被高频扫描
+- 将 `/api/admin/login-guard` 的 POST 请求纳入全局 fallback 限流（见第 4 节）
+- **MFA（KZQ-P1-022-f）**: 将 `/admin/mfa/challenge` 页面请求纳入与登录页相同的限流规则——TOTP 验证码为 6 位数字、每 30 秒窗口一个有效码，WAF 按 IP 限流可显著抬高对 challenge 的暴力尝试成本（应用层 challenge 页本身不新增限流端点，验证码只发往 Supabase Auth；Supabase Auth 的 MFA challenge 限流为平台侧根防线）
+
+**验收方法**:
+- 连续超过 5 次登录尝试（同 IP），第 6 次在页面显示固定限流文案且不再调用 Supabase Auth
+- 无可信 IP 场景（未配置 `TRUSTED_PROXY_HEADER`）下，轮换 User-Agent 等 header 仍被全局 floor 拦截
+- 直接调用 Supabase Auth 的请求在 Auth Dashboard 达到限流阈值后返回 `429`（平台侧验收）
+- MFA 账号登录后必须落在 `/admin/mfa/challenge`（不直接进入后台）；aal1 会话调用敏感 API 返回 `401 ADMIN_WRITE_MFA_REQUIRED`，完成验证码后放行——见 `docs/LAUNCH_CHECKLIST.md` 与 `tests/e2e/staging-mfa.spec.ts`
+
 ## 3. 可信 IP Header 配置
 
 EdgeOne 环境必须配置以下可信 IP Header：
@@ -274,4 +346,65 @@ EdgeOne WAF 必须配置全局 fallback 限流，防止未知客户端绕过路�
 - [ ] 为 `/api/internal/storage/audit-reconcile` 配置 IP 白名单 + SECRET 鉴权
 - [ ] 配置全局 fallback 限流
 - [ ] 配置可信 IP Header (`eo-connecting-ip`)
-- [ ] 执行验收测试并记录证据
+- [ ] 执行第 5 节全部验收测试并记录证据
+- [ ] **KZQ-P1-011-a**: 验收通过后，在生产环境变量中设置 `WAF_RATE_LIMIT_VERIFIED=true`
+- [ ] **KZQ-P1-011-a**: 运行 `npm run check:release-readiness -- --mode=production` 确认通过
+- [ ] **KZQ-P1-012**: 设置 `CANONICAL_APP_ORIGIN=https://<生产域名>`
+- [ ] **KZQ-P1-013**: 在 EdgeOne 边缘层配置 HSTS（详见 §9）
+
+### 8.1 证据要求
+
+设置 `WAF_RATE_LIMIT_VERIFIED=true` 前，必须收集并归档以下证据：
+
+1. **EdgeOne 控制台截图**：展示已配置的限流规则列表（含路由、阈值、处置动作）
+2. **验收测试输出**：第 5 节全部 7 项测试的 curl 或脚本输出
+3. **变更记录**：操作时间、操作人、规则 ID、变更工单号
+
+`WAF_RATE_LIMIT_VERIFIED=true` 是运维人员的**人工断言**，表示上述证据已收集归档。代码无法验证 WAF 配置的真实性，但可以通过此门控确保发布前有人工确认环节。
+
+## 9. HSTS 边缘配置（KZQ-P1-013）
+
+### 背景
+
+EdgeOne 终止 TLS 并以 HTTP 转发到源站。应用中间件 (`middleware.ts`)
+通过 `x-forwarded-proto` 头判断用户侧协议并设置 HSTS——这覆盖了
+请求到达源站的场景。但部分请求可能在 EdgeOne 边缘直接响应（缓存
+命中、WAF 拦截、边缘重定向），永远不到达源站，因此中间件的
+HSTS 头不会被设置。
+
+### 要求
+
+HSTS **必须**在 EdgeOne 边缘层也配置，确保所有 HTTPS 响应（无论
+是否到达源站）都携带 `Strict-Transport-Security` 头。
+
+| 配置项 | 值 |
+|--------|-----|
+| Header 名称 | `Strict-Transport-Security` |
+| Header 值 | `max-age=31536000; includeSubDomains` |
+| 适用条件 | 仅 HTTPS 响应（EdgeOne 边缘自动按协议设置） |
+| 适用范围 | 所有域名（主域 + 备用域名） |
+
+### 两层 HSTS 模型
+
+| 层级 | 位置 | 覆盖场景 |
+|------|------|----------|
+| EdgeOne 边缘层 | EdgeOne 控制台规则 | 所有 HTTPS 响应（含缓存命中、WAF 拦截、边缘重定向） |
+| 应用中间件层 | `middleware.ts` `getUserFacingProtocol()` | 到达源站的请求（通过 `x-forwarded-proto` 判断用户侧 HTTPS） |
+
+两层独立运作，互不冲突。EdgeOne 边缘层是主防线，应用中间件层是
+补充。
+
+### 验收方法
+
+1. 使用 `curl -I https://<生产域名>/products` 检查响应头是否包含
+   `Strict-Transport-Security: max-age=31536000; includeSubDomains`
+2. 使用 `curl -I http://<生产域名>/products` 检查 HTTP 响应是否
+   **不**包含 HSTS 头（HSTS 仅在 HTTPS 上有效）
+3. 访问一个会被 EdgeOne 缓存的页面，验证 HSTS 头仍存在（证明
+   边缘层配置生效，不依赖源站）
+
+### 证据记录
+
+- EdgeOne 控制台截图（HSTS 规则配置页面）
+- curl 验收测试输出
+- 变更时间、操作人

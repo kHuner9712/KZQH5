@@ -95,9 +95,17 @@ The two-phase protocol moves validation BEFORE the bytes are buffered:
   so per-purpose limits up to the Supabase bucket's 20 MB cap can be
   restored once two-phase is implemented.
 - A `temp_uploads` row is inserted with status='authorized' and
-  expires_at = NOW() + 5min
-- The signed URL points to `private-assets/temp/{token}/{filename}`
-- The signed URL has a short TTL (5 min)
+  expires_at = NOW() + 5min. This 5-minute window is the BUSINESS
+  authorization window for the row, NOT the Supabase signed-URL TTL.
+- The signed URL points to `private-assets/temp/{token}/{filename}`.
+  The signed-upload-URL capability lifetime is controlled by the
+  Supabase Storage service (default 1 hour) and CANNOT be configured
+  via the SDK — `createSignedUploadUrl(path, options)` accepts
+  `options = { upsert }` only, no TTL argument (verified against
+  @supabase/storage-js 2.109.0). The cleanup dispatcher MUST account
+  for this server-controlled window: it must not delete a temp object
+  while the signed URL may still be valid, otherwise a stale URL could
+  re-create a permanent orphan after cleanup.
 - Rate limited: 20 authorizations / 5 min / admin actor
 
 ### Phase 2: `POST /api/admin/storage/upload/finalize`
@@ -238,6 +246,18 @@ production-readiness blockers.
 - Add `app/api/admin/storage/upload/authorize/route.ts`
 - Add `app/api/admin/storage/upload/finalize/route.ts`
 - Add a `temp_uploads` cleanup dispatcher (similar to
-  `outbox-processor.ts` and `storage_cleanup_queue` dispatcher)
+  `outbox-processor.ts` and `storage_cleanup_queue` dispatcher).
+  IMPORTANT: The dispatcher MUST NOT delete a temp object while the
+  signed-upload-URL capability may still be valid. The Supabase
+  signed-upload-URL lifetime is server-controlled (default 1 hour) and
+  cannot be lowered via the SDK. The current `reap_expired_temp_uploads`
+  RPC reaps rows where `expires_at <= now()` (the 5-minute business
+  window). Before the cleanup dispatcher deletes any temp object, it
+  MUST wait until BOTH the business window has expired AND the
+  signed-URL capability window has elapsed (e.g., 65 minutes after
+  creation), otherwise a still-valid signed URL could re-create a
+  permanent orphan after cleanup. This requires either a new
+  forward-only migration adjusting the reap threshold, or a
+  dispatcher-side guard that checks `created_at + 65 min < now()`.
 - Once two-phase is live, remove the single-phase route OR keep it
   as a fallback for non-Supabase-Storage backends

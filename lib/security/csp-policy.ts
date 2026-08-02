@@ -13,16 +13,27 @@
 //      way to allow Next.js internal scripts. Other directives
 //      (img-src, connect-src, frame-ancestors, object-src) remain
 //      strict to provide meaningful protection.
-//   2. Public routes (everything else) — static CSP, Report-Only,
-//      retains 'unsafe-inline' for ISR compatibility, with
-//      report-to/report-uri wired.
+//   2. Public routes (everything else) — static CSP, Report-Only by
+//      default (CSP_ENFORCING unset). When CSP_ENFORCING=true, the
+//      middleware emits Content-Security-Policy (enforcing) instead of
+//      Content-Security-Policy-Report-Only. Retains 'unsafe-inline' for
+//      ISR compatibility, with report-to/report-uri wired.
 //
-// Both admin and public policies are served as Report-Only so that
-// violations are collected via /api/csp-report without blocking
-// page execution.
+// Admin policy is ALWAYS served as Report-Only (never enforcing).
+// Public policy is Report-Only by default and may be switched to
+// enforcing via CSP_ENFORCING=true. In both cases, violations are
+// collected via /api/csp-report.
 // ============================================================
 
-const SUPABASE_PROJECT_HOST_PATTERN = /^[a-z0-9]{20}\.supabase\.co$/;
+// KZQ-P2-003: Supabase host shape, CDN entry validation and URL parsing
+// now live in ONE place — lib/config/media-domains.mjs — shared with
+// next.config.mjs, lib/validation/url.ts, scripts/check-release-readiness.mjs
+// and tests. This module must stay pure (no Next.js runtime dependency).
+import {
+  SUPABASE_PROJECT_HOST_PATTERN,
+  parseCdnDomains,
+  parseSupabaseUrl,
+} from "@/lib/config/media-domains.mjs";
 
 /**
  * Resolve the precise Supabase project host from env at module load.
@@ -30,16 +41,10 @@ const SUPABASE_PROJECT_HOST_PATTERN = /^[a-z0-9]{20}\.supabase\.co$/;
  * In production, falls back to 'self' (fail-closed).
  */
 function resolveSupabaseCspHost(): string {
-  const supabaseUrl = (process.env.NEXT_PUBLIC_SUPABASE_URL || "").trim();
-  if (supabaseUrl) {
-    try {
-      const host = new URL(supabaseUrl).hostname.toLowerCase();
-      if (SUPABASE_PROJECT_HOST_PATTERN.test(host)) {
-        return `https://${host}`;
-      }
-    } catch {
-      // fall through
-    }
+  const parsed = parseSupabaseUrl(process.env.NEXT_PUBLIC_SUPABASE_URL || "");
+  const host = parsed?.hostname ?? null;
+  if (host && SUPABASE_PROJECT_HOST_PATTERN.test(host)) {
+    return `https://${host}`;
   }
   if (process.env.NODE_ENV === "production") {
     return "'self'";
@@ -49,28 +54,12 @@ function resolveSupabaseCspHost(): string {
 
 /**
  * Resolve the MEDIA_CDN_DOMAINS allowlist for img-src / connect-src.
+ * Entry validation lives in lib/config/media-domains.mjs (parseCdnDomains).
  */
 function resolveCdnCspHosts(): string {
-  const cdnRaw = (process.env.MEDIA_CDN_DOMAINS || "").trim();
-  if (!cdnRaw) return "";
-  const hosts: string[] = [];
-  for (const raw of cdnRaw.split(",")) {
-    const trimmed = raw.trim().toLowerCase();
-    if (
-      trimmed &&
-      !/[:/?#@]/.test(trimmed) &&
-      !/^\d{1,3}(\.\d{1,3}){3}$/.test(trimmed) &&
-      !trimmed.startsWith("[") &&
-      !trimmed.endsWith("]") &&
-      /^[a-z0-9.-]+\.[a-z]{2,}$/.test(trimmed) &&
-      !trimmed.startsWith(".") &&
-      !trimmed.endsWith(".") &&
-      !trimmed.includes("..")
-    ) {
-      hosts.push(`https://${trimmed}`);
-    }
-  }
-  return hosts.join(" ");
+  return parseCdnDomains(process.env.MEDIA_CDN_DOMAINS || "")
+    .map((host) => `https://${host}`)
+    .join(" ");
 }
 
 const supabaseCspHost = resolveSupabaseCspHost();
@@ -148,12 +137,35 @@ export function buildAdminCspPolicy(): string {
 /**
  * Build the CSP policy for PUBLIC routes (everything except /admin/**).
  *
- * This is a static, Report-Only CSP:
- *   - Retains 'unsafe-inline' for script-src and style-src (ISR compat)
- *   - Retains 'unsafe-eval' (PDF.js / Next.js runtime may need it)
+ * This is a static CSP (no per-request nonce). The actual header
+ * (Report-Only vs Enforcing) is chosen by `middleware.ts` based on
+ * `CSP_ENFORCING`:
+ *   - `CSP_ENFORCING=true`  → middleware sets `Content-Security-Policy`
+ *   - unset / "false"      → middleware sets `Content-Security-Policy-Report-Only`
+ *
+ * Directive choices:
+ *   - Retains 'unsafe-inline' for script-src and style-src (ISR compat —
+ *     Next.js 15 App Router generates internal inline scripts that do not
+ *     accept a nonce)
+ *   - Does NOT include 'unsafe-eval' (KZQ-P1-003, removed 2026-07-31).
+ *     Audit confirmed no real dependency: project source has zero
+ *     eval/new Function calls; pdfjs-dist worker has `new Function` for
+ *     PostScript calculator JIT but `isEvalSupported()` probe is
+ *     try/catch-wrapped and `PostScriptEvaluator` interpreter fallback
+ *     exists (pdf.worker.mjs:30173-30182) — CSP blocking eval auto-
+ *     falls-back with no function loss, only minor perf degrade for
+ *     PostScript calculator PDFs (rare in product catalogs); WeChat
+ *     JS-SDK loaded via external `<script src>`, whitelisted by host
+ *     `https://res.wx.qq.com`, does NOT need unsafe-eval; Next.js 15
+ *     production runtime does not need unsafe-eval (dev-only React
+ *     Refresh does).
  *   - Allows WeChat JS-SDK (https://res.wx.qq.com)
  *   - No Google Fonts CDN (project uses system fonts only)
  *   - Supabase host is allowed
+ *
+ * Other directives (img-src allowlist, connect-src allowlist,
+ * frame-ancestors 'none', object-src 'none', etc.) ARE enforced when
+ * middleware emits the enforcing header.
  *
  * This policy is intentionally permissive to avoid breaking ISR pages.
  * It will be tightened in a future phase after migrating to next/font
@@ -162,7 +174,7 @@ export function buildAdminCspPolicy(): string {
 export function buildPublicCspPolicy(): string {
   const directives = [
     "default-src 'self'",
-    "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://res.wx.qq.com",
+    "script-src 'self' 'unsafe-inline' https://res.wx.qq.com",
     "style-src 'self' 'unsafe-inline'",
     "font-src 'self' data:",
     `img-src ${imgSrcAllowlist}`,

@@ -252,20 +252,41 @@ mutation of refs during render) cause build errors.
 
 ### Why
 
-Next.js 16 requires Node 20+. The project's `engines.node` is already
-`20.x`, so this is a verification step, not a migration.
+Next.js 16 officially requires **Node 20.9 or newer** (it does NOT
+require Node 22). The project's `engines.node` is already `20.x`, so
+this is a verification step, not a migration.
+
+### Platform note (EdgeOne)
+
+EdgeOne Cloud Functions officially declares support for Next.js 16's
+`proxy.ts` entry point, and its default runtime is Node.js v20.x. The
+project must NOT assume a Node 22 requirement exists for the upgrade.
+
+### Node 20 EOL risk (platform risk, tracked separately)
+
+Node.js 20 reaches End-of-Life on 2026-04-30 (approximately 9 months
+after the 20.9.0 minimum). This is a **platform risk** to be tracked
+and mitigated on its own timeline — it is NOT a hard dependency of
+the Next.js 16 upgrade. A separate Node 20 → 22 migration (UPG-001)
+remains a platform/planning decision, not a prerequisite for UPG-004.
 
 ### Scope
 
-- Verify `package.json` `engines.node` is `20.x` or higher
-- Verify CI uses Node 20 (already set in `actions/setup-node@v4.4.0`)
-- Verify EdgeOne runtime supports the chosen Node version
+- Verify `package.json` `engines.node` is `20.x` or higher (Next.js 16
+  minimum: 20.9)
+- Verify CI uses Node 20.9+ (already set in `actions/setup-node@v4.4.0`)
+- Verify EdgeOne runtime supports the chosen Node version (EdgeOne
+  declares Node v20.x default + Next.js 16 `proxy.ts` support)
+- Do NOT block UPG-004 on a Node 22 upgrade — the Next.js 16 minimum
+  is Node 20.9
 
 ### Acceptance gate
 
-- `node --version` on CI is `v20.x` or higher
+- `node --version` on CI is `v20.9.x` or higher
 - `npm ci` succeeds
 - EdgeOne build does not warn about Node version
+- Next.js 16 upgrade is gated on: integration, Staging runtime version
+  verification, and pre-flight completion — not on a Node 22 bump
 
 ## 11. Rollback plan
 
