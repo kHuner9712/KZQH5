@@ -10,6 +10,8 @@ describe("homepage hero carousel contract", () => {
   it("uses a viewport-height hero with autoplay, reduced-motion and swipe support", () => {
     const component = source("components/public/HomeHeroCarousel.tsx");
     expect(component).toContain("100svh");
+    expect(component).toContain("-mt-12");
+    expect(component).toContain("lg:-mt-16");
     expect(component).toContain("AUTOPLAY_MS = 6000");
     expect(component).toContain("prefers-reduced-motion: reduce");
     expect(component).toContain("onTouchStart");
@@ -17,22 +19,45 @@ describe("homepage hero carousel contract", () => {
     expect(component).toContain("mobileImageUrl");
   });
 
-  it("optimizes the selected source and progressively mounts only needed slides", () => {
+  it("optimizes sources and eagerly loads only progressively mounted slides", () => {
     const component = source("components/public/HomeHeroCarousel.tsx");
     expect(component).toContain("getImageProps");
     expect(component).toContain("HERO_IMAGE_QUALITY = 76");
     expect(component).toContain("renderedIndexes");
     expect(component).toContain("NEXT_SLIDE_PRELOAD_DELAY_MS");
     expect(component).toContain("if (!renderedIndexes.has(index)) return null");
+    expect(component).toContain('loading="eager"');
+    expect(component).toContain('fetchPriority={index === 0 ? "high" : "low"}');
     expect(component).toContain('sizes: "100vw"');
+  });
+
+  it("keeps controls responsive while the selected optimized image loads", () => {
+    const component = source("components/public/HomeHeroCarousel.tsx");
+    expect(component).toContain("selectedIndex");
+    expect(component).toContain("selectedIndexRef");
+    expect(component).toContain("pendingIndexRef");
+    expect(component).toContain("onClick={() => requestSlide(index)}");
+    expect(component).toContain("onClick={showPrevious}");
+    expect(component).toContain("onClick={showNext}");
   });
 
   it("keeps explicit previous and next controls available on mobile", () => {
     const component = source("components/public/HomeHeroCarousel.tsx");
     expect(component).toContain("top-[43%]");
     expect(component).toContain("md:hidden");
-    expect(component).toContain("onClick={showPrevious}");
-    expect(component).toContain("onClick={showNext}");
+    expect(component).toContain("pointer-events-auto");
+  });
+
+  it("uses a transparent homepage header and restores the dark surface after scrolling", () => {
+    const desktop = source("components/public/DesktopHeader.tsx");
+    const mobile = source("components/public/MobileHeader.tsx");
+    for (const header of [desktop, mobile]) {
+      expect(header).toContain('pathname === "/"');
+      expect(header).toContain("transparentAtTop");
+      expect(header).toContain("bg-transparent");
+      expect(header).toContain("window.scrollY");
+      expect(header).toContain("backdrop-blur-xl");
+    }
   });
 
   it("renders CMS slides and retains the default artwork fallback", () => {

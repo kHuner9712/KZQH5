@@ -2,10 +2,17 @@
 
 import Link from "next/link";
 import { Ellipsis } from "lucide-react";
+import { useEffect, useState } from "react";
+import { usePathname } from "next/navigation";
 import { BrandLogo } from "./BrandLogo";
 import { LanguageSwitcher } from "./LanguageSwitcher";
-import { localePath, type Locale } from "@/lib/i18n/config";
+import {
+  localePath,
+  pathWithoutLocale,
+  type Locale,
+} from "@/lib/i18n/config";
 import { getDictionary } from "@/lib/i18n/dictionary";
+import { cn } from "@/lib/utils";
 import type { CompanyProfile, SiteSettings } from "@/types/database";
 
 interface MobileHeaderProps {
@@ -15,10 +22,32 @@ interface MobileHeaderProps {
 }
 
 export function MobileHeader({ company, locale }: MobileHeaderProps) {
+  const pathname = pathWithoutLocale(usePathname());
+  const [scrolled, setScrolled] = useState(false);
   const copy = getDictionary(locale);
+  const isHome = pathname === "/";
+  const transparentAtTop = isHome && !scrolled;
+
+  useEffect(() => {
+    if (!isHome) {
+      setScrolled(true);
+      return;
+    }
+    const sync = () => setScrolled(window.scrollY > 16);
+    sync();
+    window.addEventListener("scroll", sync, { passive: true });
+    return () => window.removeEventListener("scroll", sync);
+  }, [isHome]);
 
   return (
-    <header className="fixed inset-x-0 top-0 z-50 h-12 border-b border-white/10 bg-page/90 backdrop-blur-xl lg:hidden">
+    <header
+      className={cn(
+        "fixed inset-x-0 top-0 z-50 h-12 border-b transition-[background-color,border-color,backdrop-filter,box-shadow] duration-300 lg:hidden",
+        transparentAtTop
+          ? "border-transparent bg-transparent shadow-none backdrop-blur-none"
+          : "border-white/10 bg-page/90 shadow-[0_8px_24px_rgba(0,0,0,0.16)] backdrop-blur-xl",
+      )}
+    >
       <div className="flex h-full items-center justify-between px-3.5">
         <Link
           href={localePath(locale)}
@@ -32,7 +61,7 @@ export function MobileHeader({ company, locale }: MobileHeaderProps) {
             variant="wordmark"
             className="text-gold"
           />
-          <span className="hidden truncate text-[10px] text-white/60 min-[390px]:block">
+          <span className="hidden truncate text-[10px] text-white/70 min-[390px]:block">
             {copy.header.mobileTagline}
           </span>
         </Link>
