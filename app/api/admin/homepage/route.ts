@@ -1,10 +1,5 @@
 /**
  * Homepage content admin API.
- *   GET  /api/admin/homepage -> fetch the active homepage_content row
- *   POST /api/admin/homepage -> create or update homepage_content
- *
- * Writes go through requireAdminWrite and the transactional
- * save_homepage_content_with_audit RPC with optimistic locking.
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -20,8 +15,10 @@ import {
   getHomepageContent,
   saveHomepageContentV2,
 } from "@/lib/services/homepage-content-write";
+import { processRemovedHomepageHeroAssets } from "@/lib/services/homepage-hero-assets";
 import { validateHomeFeatureArray } from "@/lib/validation/jsonb-fields";
 import { validateHomeHeroSlideArray } from "@/lib/validation/home-hero-slides";
+import type { HomeHeroSlide } from "@/types/homepage";
 
 const MAX_BODY = 256 * 1024;
 
@@ -109,6 +106,17 @@ export async function POST(request: NextRequest) {
   const heroSlides = validateHomeHeroSlideArray(payload.hero_slides, 5);
   if (!featuresCn.ok || !featuresEn.ok || !heroSlides.ok) {
     return adminWriteError("ADMIN_WRITE_BAD_REQUEST", 400);
+  }
+
+  let previousSlides: HomeHeroSlide[] = [];
+  if (id) {
+    const previous = await getHomepageContent(guard.client);
+    if (!previous.ok) {
+      return adminWriteError(previous.code, statusForCode(previous.code));
+    }
+    if (previous.data?.id === id && Array.isArray(previous.data.hero_slides)) {
+      previousSlides = previous.data.hero_slides as HomeHeroSlide[];
+    }
   }
 
   const result = await saveHomepageContentV2(
@@ -211,6 +219,17 @@ export async function POST(request: NextRequest) {
     return adminWriteError(result.code, statusForCode(result.code));
   }
 
+  const cleanup = await processRemovedHomepageHeroAssets({
+    client: guard.client,
+    previousSlides,
+    nextSlides: heroSlides.value,
+    sourceId: result.data.id,
+    actor: { id: guard.user.id, role: guard.profile.role },
+  });
+  if (cleanup.deferred > 0) {
+    console.warn("HERO_CLEANUP_DEFERRED", cleanup);
+  }
+
   revalidatePath("/admin", "layout");
   revalidatePath("/", "page");
   revalidatePath("/en", "page");
@@ -218,5 +237,6 @@ export async function POST(request: NextRequest) {
     success: true,
     id: result.data.id,
     updatedAt: result.data.updatedAt,
+    cleanup,
   });
 }
