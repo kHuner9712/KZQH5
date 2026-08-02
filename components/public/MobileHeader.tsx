@@ -52,7 +52,7 @@ export function MobileHeader({ company, locale }: MobileHeaderProps) {
         <Link
           href={localePath(locale)}
           prefetch={false}
-          className="flex min-w-0 items-center gap-2"
+          className="flex min-w-0 items-center"
           aria-label={copy.header.homeAria}
         >
           <BrandLogo
@@ -61,9 +61,6 @@ export function MobileHeader({ company, locale }: MobileHeaderProps) {
             variant="wordmark"
             className="text-gold"
           />
-          <span className="hidden truncate text-[10px] text-white/70 min-[390px]:block">
-            {copy.header.mobileTagline}
-          </span>
         </Link>
         <div className="flex items-center gap-0.5">
           <Link
