@@ -21,8 +21,8 @@ describe("homepage hero carousel contract", () => {
 
   it("serves upload-time optimized artwork directly and defers background slides", () => {
     const component = source("components/public/HomeHeroCarousel.tsx");
+    expect(component).not.toContain('from "next/image"');
     expect(component).not.toContain("getImageProps");
-    expect(component).not.toContain("/_next/image");
     expect(component).toContain("src={slide.desktopImageUrl}");
     expect(component).toContain("srcSet={slide.mobileImageUrl}");
     expect(component).toContain("renderedIndexes");
