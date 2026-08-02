@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import { BrandLogo } from "./BrandLogo";
 import { LanguageSwitcher } from "./LanguageSwitcher";
@@ -32,19 +33,40 @@ export function DesktopHeader({
   locale,
 }: DesktopHeaderProps) {
   const pathname = pathWithoutLocale(usePathname());
+  const [scrolled, setScrolled] = useState(false);
   const copy = getDictionary(locale);
   const navItems = navigationWithProjects(
     siteSettings?.navigation_json?.length
       ? siteSettings.navigation_json
       : defaultNavItems,
   );
+  const isHome = pathname === "/";
+  const transparentAtTop = isHome && !scrolled;
   const isActive = (href: string) =>
     href === "/"
       ? pathname === "/"
       : pathname === href || pathname.startsWith(`${href}/`);
 
+  useEffect(() => {
+    if (!isHome) {
+      setScrolled(true);
+      return;
+    }
+    const sync = () => setScrolled(window.scrollY > 24);
+    sync();
+    window.addEventListener("scroll", sync, { passive: true });
+    return () => window.removeEventListener("scroll", sync);
+  }, [isHome]);
+
   return (
-    <header className="fixed inset-x-0 top-0 z-50 hidden h-16 border-b border-white/10 bg-page/[0.85] backdrop-blur-xl lg:block">
+    <header
+      className={cn(
+        "fixed inset-x-0 top-0 z-50 hidden h-16 border-b transition-[background-color,border-color,backdrop-filter,box-shadow] duration-300 lg:block",
+        transparentAtTop
+          ? "border-transparent bg-transparent shadow-none backdrop-blur-none"
+          : "border-white/10 bg-page/[0.88] shadow-[0_8px_30px_rgba(0,0,0,0.16)] backdrop-blur-xl",
+      )}
+    >
       <div className="flex h-full items-center justify-between gap-5 px-8 lg:px-10 xl:px-12">
         <Link
           href={localePath(locale)}
@@ -58,7 +80,7 @@ export function DesktopHeader({
             variant="wordmark"
             className="text-gold"
           />
-          <span className="hidden whitespace-nowrap text-[10px] text-white/50 xl:inline">
+          <span className="hidden whitespace-nowrap text-[10px] text-white/60 xl:inline">
             {copy.header.tagline}
           </span>
         </Link>
@@ -75,7 +97,7 @@ export function DesktopHeader({
                 prefetch={false}
                 className={cn(
                   "relative px-2 py-5 text-sm font-medium transition-colors lg:px-2.5 xl:px-4",
-                  active ? "text-gold" : "text-white/60 hover:text-gold",
+                  active ? "text-gold" : "text-white/72 hover:text-gold",
                 )}
                 aria-current={active ? "page" : undefined}
               >
@@ -87,7 +109,7 @@ export function DesktopHeader({
         <div className="flex shrink-0 items-center gap-4">
           <LanguageSwitcher
             locale={locale}
-            className="text-xs text-white/60 hover:text-gold"
+            className="text-xs text-white/72 hover:text-gold"
           />
           <Link
             href={localePath(locale, "/contact")}
