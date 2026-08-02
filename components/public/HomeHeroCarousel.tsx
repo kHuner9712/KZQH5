@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import { getImageProps } from "next/image";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ArrowLeft,
@@ -37,7 +36,7 @@ interface HomeHeroCarouselProps {
   slideLabel: string;
 }
 
-interface OptimizedHeroImageProps {
+interface HeroImageProps {
   slide: HomeHeroCarouselSlide;
   index: number;
   active: boolean;
@@ -47,44 +46,30 @@ interface OptimizedHeroImageProps {
 
 const AUTOPLAY_MS = 6000;
 const SWIPE_THRESHOLD = 48;
-const NEXT_SLIDE_PRELOAD_DELAY_MS = 700;
-const HERO_IMAGE_QUALITY = 76;
+const NEXT_SLIDE_PRELOAD_DELAY_MS = 4500;
 
-function OptimizedHeroImage({
+/**
+ * Hero artwork is optimized when it is uploaded and is served directly from
+ * the static/CDN URL. Avoiding /_next/image removes an Edge Function hop and
+ * remote-origin fetch from the LCP request path.
+ */
+function HeroImage({
   slide,
   index,
   active,
   reducedMotion,
   onReady,
-}: OptimizedHeroImageProps) {
-  const desktop = getImageProps({
-    src: slide.desktopImageUrl,
-    alt: slide.alt,
-    width: 1920,
-    height: 1080,
-    sizes: "100vw",
-    quality: HERO_IMAGE_QUALITY,
-    priority: index === 0,
-  });
-  const mobile = slide.mobileImageUrl
-    ? getImageProps({
-        src: slide.mobileImageUrl,
-        alt: slide.alt,
-        width: 900,
-        height: 1600,
-        sizes: "100vw",
-        quality: HERO_IMAGE_QUALITY,
-      })
-    : null;
-
+}: HeroImageProps) {
   return (
     <picture className="absolute inset-0 block h-full w-full">
-      {mobile?.props.srcSet && (
-        <source media="(max-width: 767px)" srcSet={mobile.props.srcSet} />
+      {slide.mobileImageUrl && (
+        <source media="(max-width: 767px)" srcSet={slide.mobileImageUrl} />
       )}
       <img
-        {...desktop.props}
+        src={slide.desktopImageUrl}
         alt={slide.alt}
+        width={1600}
+        height={900}
         loading="eager"
         fetchPriority={index === 0 ? "high" : "low"}
         decoding="async"
@@ -94,11 +79,7 @@ function OptimizedHeroImage({
           "absolute inset-0 h-full w-full object-cover",
           !reducedMotion && active && "animate-[hero-ken-burns_8s_ease-out_both]",
         )}
-        style={{
-          ...desktop.props.style,
-          objectFit: "cover",
-          objectPosition: `${slide.focalX}% ${slide.focalY}%`,
-        }}
+        style={{ objectPosition: `${slide.focalX}% ${slide.focalY}%` }}
       />
     </picture>
   );
@@ -114,6 +95,7 @@ export function HomeHeroCarousel({
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [paused, setPaused] = useState(false);
   const [reducedMotion, setReducedMotion] = useState(false);
+  const [firstSlideReady, setFirstSlideReady] = useState(false);
   const [renderedIndexes, setRenderedIndexes] = useState<Set<number>>(
     () => new Set([0]),
   );
@@ -165,6 +147,7 @@ export function HomeHeroCarousel({
   const handleImageReady = useCallback(
     (index: number) => {
       readyIndexesRef.current.add(index);
+      if (index === 0) setFirstSlideReady(true);
       if (pendingIndexRef.current === index) commitActiveIndex(index);
     },
     [commitActiveIndex],
@@ -179,20 +162,27 @@ export function HomeHeroCarousel({
   }, []);
 
   useEffect(() => {
-    if (slideCount < 2 || paused || reducedMotion) return;
+    if (
+      slideCount < 2 ||
+      paused ||
+      reducedMotion ||
+      !firstSlideReady ||
+      document.hidden
+    ) {
+      return;
+    }
     const timer = window.setInterval(showNext, AUTOPLAY_MS);
     return () => window.clearInterval(timer);
-  }, [paused, reducedMotion, showNext, slideCount]);
+  }, [firstSlideReady, paused, reducedMotion, showNext, slideCount]);
 
   useEffect(() => {
-    if (slideCount < 2) return;
+    if (slideCount < 2 || !firstSlideReady) return;
     const nextIndex = (activeIndex + 1) % slideCount;
-    const timer = window.setTimeout(
-      () => mountSlide(nextIndex),
-      NEXT_SLIDE_PRELOAD_DELAY_MS,
-    );
+    const timer = window.setTimeout(() => {
+      if (!document.hidden) mountSlide(nextIndex);
+    }, NEXT_SLIDE_PRELOAD_DELAY_MS);
     return () => window.clearTimeout(timer);
-  }, [activeIndex, mountSlide, slideCount]);
+  }, [activeIndex, firstSlideReady, mountSlide, slideCount]);
 
   useEffect(() => {
     if (activeIndex < slideCount && selectedIndex < slideCount) return;
@@ -242,7 +232,7 @@ export function HomeHeroCarousel({
             aria-label={`${index + 1} / ${slideCount}`}
             aria-hidden={!active}
           >
-            <OptimizedHeroImage
+            <HeroImage
               slide={slide}
               index={index}
               active={active}
