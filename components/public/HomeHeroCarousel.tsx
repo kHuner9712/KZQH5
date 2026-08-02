@@ -50,12 +50,6 @@ const SWIPE_THRESHOLD = 48;
 const NEXT_SLIDE_PRELOAD_DELAY_MS = 700;
 const HERO_IMAGE_QUALITY = 76;
 
-/**
- * Use Next.js' responsive image loader while retaining art direction through
- * a native <picture>. The browser downloads only the selected mobile/desktop
- * source and receives a width-aware WebP/AVIF response instead of the original
- * 1.5–2 MB PNG.
- */
 function OptimizedHeroImage({
   slide,
   index,
@@ -91,8 +85,8 @@ function OptimizedHeroImage({
       <img
         {...desktop.props}
         alt={slide.alt}
-        loading={index === 0 ? "eager" : "lazy"}
-        fetchPriority={index === 0 ? "high" : "auto"}
+        loading="eager"
+        fetchPriority={index === 0 ? "high" : "low"}
         decoding="async"
         onLoad={onReady}
         onError={onReady}
@@ -117,14 +111,13 @@ export function HomeHeroCarousel({
   slideLabel,
 }: HomeHeroCarouselProps) {
   const [activeIndex, setActiveIndex] = useState(0);
+  const [selectedIndex, setSelectedIndex] = useState(0);
   const [paused, setPaused] = useState(false);
   const [reducedMotion, setReducedMotion] = useState(false);
-  // Only the active slide is mounted on first paint. One next slide is added
-  // after a short delay; the remaining three are not requested until needed.
   const [renderedIndexes, setRenderedIndexes] = useState<Set<number>>(
     () => new Set([0]),
   );
-  const activeIndexRef = useRef(0);
+  const selectedIndexRef = useRef(0);
   const readyIndexesRef = useRef<Set<number>>(new Set());
   const pendingIndexRef = useRef<number | null>(null);
   const touchStartX = useRef<number | null>(null);
@@ -140,7 +133,7 @@ export function HomeHeroCarousel({
   }, []);
 
   const commitActiveIndex = useCallback((index: number) => {
-    activeIndexRef.current = index;
+    pendingIndexRef.current = null;
     setActiveIndex(index);
   }, []);
 
@@ -148,15 +141,13 @@ export function HomeHeroCarousel({
     (requestedIndex: number) => {
       if (slideCount < 2) return;
       const index = (requestedIndex + slideCount) % slideCount;
-      if (index === activeIndexRef.current) return;
-
+      selectedIndexRef.current = index;
+      setSelectedIndex(index);
       mountSlide(index);
+
       if (readyIndexesRef.current.has(index)) {
-        pendingIndexRef.current = null;
         commitActiveIndex(index);
       } else {
-        // Keep the current slide visible until the requested optimized image
-        // has decoded. This prevents a black flash on slow mobile networks.
         pendingIndexRef.current = index;
       }
     },
@@ -164,20 +155,17 @@ export function HomeHeroCarousel({
   );
 
   const showPrevious = useCallback(() => {
-    requestSlide(activeIndexRef.current - 1);
+    requestSlide(selectedIndexRef.current - 1);
   }, [requestSlide]);
 
   const showNext = useCallback(() => {
-    requestSlide(activeIndexRef.current + 1);
+    requestSlide(selectedIndexRef.current + 1);
   }, [requestSlide]);
 
   const handleImageReady = useCallback(
     (index: number) => {
       readyIndexesRef.current.add(index);
-      if (pendingIndexRef.current === index) {
-        pendingIndexRef.current = null;
-        commitActiveIndex(index);
-      }
+      if (pendingIndexRef.current === index) commitActiveIndex(index);
     },
     [commitActiveIndex],
   );
@@ -207,17 +195,17 @@ export function HomeHeroCarousel({
   }, [activeIndex, mountSlide, slideCount]);
 
   useEffect(() => {
-    if (activeIndex >= slideCount && slideCount > 0) {
-      activeIndexRef.current = 0;
-      setActiveIndex(0);
-    }
-  }, [activeIndex, slideCount]);
+    if (activeIndex < slideCount && selectedIndex < slideCount) return;
+    selectedIndexRef.current = 0;
+    setSelectedIndex(0);
+    setActiveIndex(0);
+  }, [activeIndex, selectedIndex, slideCount]);
 
   if (slideCount === 0) return null;
 
   return (
     <section
-      className="relative isolate h-[calc(100svh-3rem)] min-h-[580px] overflow-hidden bg-page lg:h-[calc(100svh-4rem)] lg:min-h-[680px]"
+      className="relative isolate -mt-12 h-[100svh] min-h-[628px] overflow-hidden bg-page lg:-mt-16 lg:h-[100svh] lg:min-h-[744px]"
       aria-roledescription="carousel"
       aria-label={slideLabel}
       onMouseEnter={() => setPaused(true)}
@@ -268,7 +256,7 @@ export function HomeHeroCarousel({
             />
             <div className="absolute inset-0 bg-[linear-gradient(0deg,rgba(8,10,11,0.94)_0%,rgba(8,10,11,0.54)_48%,rgba(8,10,11,0.10)_100%)] md:bg-[linear-gradient(90deg,rgba(8,10,11,0.88)_0%,rgba(8,10,11,0.62)_38%,rgba(8,10,11,0.16)_72%,rgba(8,10,11,0.04)_100%)]" />
 
-            <div className="container-responsive relative z-10 flex h-full items-end pb-24 pt-12 md:items-center md:pb-16 md:pt-0 lg:pb-10">
+            <div className="container-responsive relative z-10 flex h-full items-end pb-24 pt-20 md:items-center md:pb-16 md:pt-16 lg:pb-10">
               <div className="w-full max-w-[720px] md:w-[62%] lg:w-[54%]">
                 {slide.eyebrow && (
                   <div className="flex items-center gap-3 text-gold">
@@ -322,7 +310,6 @@ export function HomeHeroCarousel({
 
       {slideCount > 1 && (
         <>
-          {/* Mobile: persistent edge controls, clear of the text and bottom nav. */}
           <div className="pointer-events-none absolute inset-x-0 top-[43%] z-30 flex -translate-y-1/2 justify-between px-3 md:hidden">
             <button
               type="button"
@@ -350,12 +337,14 @@ export function HomeHeroCarousel({
                     key={slide.id}
                     type="button"
                     role="tab"
-                    aria-selected={index === activeIndex}
+                    aria-selected={index === selectedIndex}
                     aria-label={`${slideLabel} ${index + 1}`}
                     onClick={() => requestSlide(index)}
                     className={cn(
                       "relative h-8 w-8 overflow-hidden rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold md:w-9",
-                      index === activeIndex ? "text-gold" : "text-white/42 hover:text-white/75",
+                      index === selectedIndex
+                        ? "text-gold"
+                        : "text-white/42 hover:text-white/75",
                     )}
                   >
                     <span className="absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-current" />
