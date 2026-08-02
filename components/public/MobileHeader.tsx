@@ -19,28 +19,24 @@ export function MobileHeader({ company, locale }: MobileHeaderProps) {
 
   return (
     <header className="fixed inset-x-0 top-0 z-50 h-12 border-b border-white/10 bg-page/90 backdrop-blur-xl lg:hidden">
-      <div className="flex h-full items-center justify-between px-4">
+      <div className="flex h-full items-center justify-between px-3.5">
         <Link
           href={localePath(locale)}
-          // prefetch={false}: same rationale as DesktopHeader — header
-          // nav links prefetch in parallel and the cancellation storm
-          // when a user clicks an in-page Link can abort the
-          // click-triggered RSC request.
           prefetch={false}
-          className="flex min-w-0 items-center gap-1.5"
+          className="flex min-w-0 items-center gap-2"
           aria-label={copy.header.homeAria}
         >
           <BrandLogo
             logoUrl={company?.logo_url}
-            size={48}
+            size={86}
             variant="wordmark"
             className="text-gold"
           />
-          <span className="truncate text-[10px] text-white/60">
+          <span className="hidden truncate text-[10px] text-white/60 min-[390px]:block">
             {copy.header.mobileTagline}
           </span>
         </Link>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-0.5">
           <Link
             href={localePath(locale, "/more")}
             prefetch={false}

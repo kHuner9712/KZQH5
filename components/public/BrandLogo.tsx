@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
 import Image from "next/image";
+import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
 
 interface BrandLogoProps {
@@ -12,43 +12,59 @@ interface BrandLogoProps {
   variant?: "mark" | "wordmark";
 }
 
+const OFFICIAL_KZQ_LOGO = "/brand/kzq-logo-black-gold.svg";
+
 export function BrandLogo({
   logoUrl,
   alt = "KZQ",
-  size = 40,
+  size = 88,
   className,
   variant = "mark",
 }: BrandLogoProps) {
-  const [failed, setFailed] = useState(false);
-  const showImage = Boolean(logoUrl) && !failed;
+  const [customFailed, setCustomFailed] = useState(false);
+  const [officialFailed, setOfficialFailed] = useState(false);
   const wordmark = variant === "wordmark";
+  const customSource = logoUrl?.trim() || null;
+  const source = customSource && !customFailed ? customSource : OFFICIAL_KZQ_LOGO;
+  const showImage = !officialFailed || source !== OFFICIAL_KZQ_LOGO;
+  const height = wordmark ? Math.max(24, Math.round(size * 0.31)) : size;
+
+  useEffect(() => {
+    setCustomFailed(false);
+    setOfficialFailed(false);
+  }, [customSource]);
 
   return (
     <span
       className={cn(
-        "brand-monogram relative shrink-0 overflow-hidden",
+        "brand-monogram relative inline-flex shrink-0 items-center justify-center overflow-hidden",
         wordmark
-          ? "h-7 rounded-none bg-transparent text-gold"
+          ? "rounded-none bg-transparent text-gold"
           : "rounded-xl bg-industrial text-white",
         className,
       )}
-      style={{
-        width: wordmark ? size : size,
-        height: wordmark ? 28 : size,
-        fontSize: wordmark ? 18 : size * 0.38,
-      }}
+      style={{ width: size, height, fontSize: wordmark ? 18 : size * 0.38 }}
     >
       {showImage ? (
         <Image
-          src={logoUrl as string}
+          src={source}
           alt={alt}
           fill
+          priority
           sizes={`${size}px`}
-          className={wordmark ? "object-contain object-left" : "object-cover"}
-          onError={() => setFailed(true)}
+          className={cn(
+            "object-contain",
+            wordmark && "drop-shadow-[0_1px_5px_rgba(201,162,76,0.18)]",
+          )}
+          onError={() => {
+            if (source === OFFICIAL_KZQ_LOGO) setOfficialFailed(true);
+            else setCustomFailed(true);
+          }}
         />
       ) : (
-        <span className="select-none font-semibold tracking-[0.06em]">KZQ</span>
+        <span className="select-none font-semibold tracking-[0.06em] text-gold">
+          KZQ
+        </span>
       )}
     </span>
   );

@@ -17,6 +17,24 @@ describe("homepage hero carousel contract", () => {
     expect(component).toContain("mobileImageUrl");
   });
 
+  it("optimizes the selected source and progressively mounts only needed slides", () => {
+    const component = source("components/public/HomeHeroCarousel.tsx");
+    expect(component).toContain("getImageProps");
+    expect(component).toContain("HERO_IMAGE_QUALITY = 76");
+    expect(component).toContain("renderedIndexes");
+    expect(component).toContain("NEXT_SLIDE_PRELOAD_DELAY_MS");
+    expect(component).toContain("if (!renderedIndexes.has(index)) return null");
+    expect(component).toContain('sizes: "100vw"');
+  });
+
+  it("keeps explicit previous and next controls available on mobile", () => {
+    const component = source("components/public/HomeHeroCarousel.tsx");
+    expect(component).toContain("top-[43%]");
+    expect(component).toContain("md:hidden");
+    expect(component).toContain("onClick={showPrevious}");
+    expect(component).toContain("onClick={showNext}");
+  });
+
   it("renders CMS slides and retains the default artwork fallback", () => {
     const page = source("components/public/pages/HomePage.tsx");
     expect(page).toContain("homepageContent?.hero_slides");
