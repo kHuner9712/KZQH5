@@ -1,11 +1,10 @@
 /**
- * Phase 15 (Section 7): Homepage content admin API.
- *   GET    /api/admin/homepage    -> fetch the active homepage_content row
- *   POST   /api/admin/homepage    -> create or update homepage_content
+ * Homepage content admin API.
+ *   GET  /api/admin/homepage -> fetch the active homepage_content row
+ *   POST /api/admin/homepage -> create or update homepage_content
  *
- * Writes go through requireAdminWrite. The actual business write is
- * performed by save_homepage_content_with_audit RPC, which atomically
- * writes audit and enforces optimistic lock.
+ * Writes go through requireAdminWrite and the transactional
+ * save_homepage_content_with_audit RPC with optimistic locking.
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -13,15 +12,16 @@ import { revalidatePath } from "next/cache";
 import { isDemoMode } from "@/lib/demo";
 import {
   adminWriteError,
-  requireAdminWrite,
   requireAdminRead,
+  requireAdminWrite,
 } from "@/lib/services/admin-write-boundary";
 import type { AdminWriteErrorCode } from "@/lib/services/admin-write-boundary";
 import {
   getHomepageContent,
-  saveHomepageContent,
-} from "@/lib/services/admin-content-write";
+  saveHomepageContentV2,
+} from "@/lib/services/homepage-content-write";
 import { validateHomeFeatureArray } from "@/lib/validation/jsonb-fields";
+import { validateHomeHeroSlideArray } from "@/lib/validation/home-hero-slides";
 
 const MAX_BODY = 256 * 1024;
 
@@ -47,8 +47,6 @@ function statusForCode(code: AdminWriteErrorCode): number {
 }
 
 export async function GET(request: NextRequest) {
-  // Phase 9: requireAdminRead enforces auth + global/per-admin rate limit +
-  // RBAC(minimum editor) + CSRF (isSameSiteRequest for GET).
   const guard = await requireAdminRead(request, { minimumRole: "editor" });
   if (!guard.ok) return guard.response;
 
@@ -60,7 +58,6 @@ export async function GET(request: NextRequest) {
   if (!result.ok) {
     return adminWriteError(result.code, statusForCode(result.code));
   }
-
   return NextResponse.json({ success: true, content: result.data });
 }
 
@@ -76,17 +73,17 @@ export async function POST(request: NextRequest) {
   if (!rawPayload || typeof rawPayload !== "object" || Array.isArray(rawPayload)) {
     return adminWriteError("ADMIN_WRITE_BAD_REQUEST", 400);
   }
-  const p = rawPayload as Record<string, unknown>;
+  const payload = rawPayload as Record<string, unknown>;
 
-  const stringOrNull = (v: unknown): string | null => {
-    if (typeof v !== "string") return null;
-    const t = v.trim();
-    return t.length === 0 ? null : t;
+  const stringOrNull = (value: unknown): string | null => {
+    if (typeof value !== "string") return null;
+    const trimmed = value.trim();
+    return trimmed ? trimmed : null;
   };
 
-  const id = typeof body.id === "string" && body.id.length > 0 ? body.id : null;
+  const id = typeof body.id === "string" && body.id ? body.id : null;
   const expectedUpdatedAt =
-    typeof body.expectedUpdatedAt === "string" && body.expectedUpdatedAt.length > 0
+    typeof body.expectedUpdatedAt === "string" && body.expectedUpdatedAt
       ? body.expectedUpdatedAt
       : null;
 
@@ -99,51 +96,115 @@ export async function POST(request: NextRequest) {
     });
   }
 
-  const featuresCnResult = validateHomeFeatureArray("features_cn", p.features_cn, 20);
-  if (!featuresCnResult.ok) {
-    return adminWriteError("ADMIN_WRITE_BAD_REQUEST", 400);
-  }
-  const featuresEnResult = validateHomeFeatureArray("features_en", p.features_en, 20);
-  if (!featuresEnResult.ok) {
+  const featuresCn = validateHomeFeatureArray(
+    "features_cn",
+    payload.features_cn,
+    20,
+  );
+  const featuresEn = validateHomeFeatureArray(
+    "features_en",
+    payload.features_en,
+    20,
+  );
+  const heroSlides = validateHomeHeroSlideArray(payload.hero_slides, 5);
+  if (!featuresCn.ok || !featuresEn.ok || !heroSlides.ok) {
     return adminWriteError("ADMIN_WRITE_BAD_REQUEST", 400);
   }
 
-  const result = await saveHomepageContent(
+  const result = await saveHomepageContentV2(
     guard.client,
     {
       id,
-      payload: {
-        hero_eyebrow_cn: stringOrNull(p.hero_eyebrow_cn),
-        hero_eyebrow_en: stringOrNull(p.hero_eyebrow_en),
-        hero_title_cn: stringOrNull(p.hero_title_cn),
-        hero_title_en: stringOrNull(p.hero_title_en),
-        hero_highlight_cn: stringOrNull(p.hero_highlight_cn),
-        hero_highlight_en: stringOrNull(p.hero_highlight_en),
-        hero_description_cn: stringOrNull(p.hero_description_cn),
-        hero_description_en: stringOrNull(p.hero_description_en),
-        primary_cta_text_cn: stringOrNull(p.primary_cta_text_cn),
-        primary_cta_text_en: stringOrNull(p.primary_cta_text_en),
-        secondary_cta_text_cn: stringOrNull(p.secondary_cta_text_cn),
-        secondary_cta_text_en: stringOrNull(p.secondary_cta_text_en),
-        feature_section_title_cn: stringOrNull(p.feature_section_title_cn),
-        feature_section_title_en: stringOrNull(p.feature_section_title_en),
-        feature_section_subtitle_cn: stringOrNull(p.feature_section_subtitle_cn),
-        feature_section_subtitle_en: stringOrNull(p.feature_section_subtitle_en),
-        features_cn: featuresCnResult.value,
-        features_en: featuresEnResult.value,
-        category_section_title_cn: stringOrNull(p.category_section_title_cn),
-        category_section_subtitle_cn: stringOrNull(p.category_section_subtitle_cn),
-        featured_products_title_cn: stringOrNull(p.featured_products_title_cn),
-        featured_products_subtitle_cn: stringOrNull(p.featured_products_subtitle_cn),
-        bottom_cta_title_cn: stringOrNull(p.bottom_cta_title_cn),
-        bottom_cta_title_en: stringOrNull(p.bottom_cta_title_en),
-        bottom_cta_description_cn: stringOrNull(p.bottom_cta_description_cn),
-        bottom_cta_description_en: stringOrNull(p.bottom_cta_description_en),
-        is_active: typeof p.is_active === "boolean" ? p.is_active : true,
-      },
       expectedUpdatedAt,
+      payload: {
+        hero_eyebrow_cn: stringOrNull(payload.hero_eyebrow_cn),
+        hero_eyebrow_en: stringOrNull(payload.hero_eyebrow_en),
+        hero_title_cn: stringOrNull(payload.hero_title_cn),
+        hero_title_en: stringOrNull(payload.hero_title_en),
+        hero_highlight_cn: stringOrNull(payload.hero_highlight_cn),
+        hero_highlight_en: stringOrNull(payload.hero_highlight_en),
+        hero_description_cn: stringOrNull(payload.hero_description_cn),
+        hero_description_en: stringOrNull(payload.hero_description_en),
+        primary_cta_text_cn: stringOrNull(payload.primary_cta_text_cn),
+        primary_cta_text_en: stringOrNull(payload.primary_cta_text_en),
+        secondary_cta_text_cn: stringOrNull(payload.secondary_cta_text_cn),
+        secondary_cta_text_en: stringOrNull(payload.secondary_cta_text_en),
+        hero_slides: heroSlides.value,
+        feature_section_title_cn: stringOrNull(payload.feature_section_title_cn),
+        feature_section_title_en: stringOrNull(payload.feature_section_title_en),
+        feature_section_subtitle_cn: stringOrNull(
+          payload.feature_section_subtitle_cn,
+        ),
+        feature_section_subtitle_en: stringOrNull(
+          payload.feature_section_subtitle_en,
+        ),
+        features_cn: featuresCn.value,
+        features_en: featuresEn.value,
+        category_section_title_cn: stringOrNull(
+          payload.category_section_title_cn,
+        ),
+        category_section_title_en: stringOrNull(
+          payload.category_section_title_en,
+        ),
+        category_section_subtitle_cn: stringOrNull(
+          payload.category_section_subtitle_cn,
+        ),
+        category_section_subtitle_en: stringOrNull(
+          payload.category_section_subtitle_en,
+        ),
+        featured_products_title_cn: stringOrNull(
+          payload.featured_products_title_cn,
+        ),
+        featured_products_title_en: stringOrNull(
+          payload.featured_products_title_en,
+        ),
+        featured_products_subtitle_cn: stringOrNull(
+          payload.featured_products_subtitle_cn,
+        ),
+        featured_products_subtitle_en: stringOrNull(
+          payload.featured_products_subtitle_en,
+        ),
+        certificates_section_title_cn: stringOrNull(
+          payload.certificates_section_title_cn,
+        ),
+        certificates_section_title_en: stringOrNull(
+          payload.certificates_section_title_en,
+        ),
+        certificates_note_cn: stringOrNull(payload.certificates_note_cn),
+        certificates_note_en: stringOrNull(payload.certificates_note_en),
+        projects_section_title_cn: stringOrNull(payload.projects_section_title_cn),
+        projects_section_title_en: stringOrNull(payload.projects_section_title_en),
+        projects_section_subtitle_cn: stringOrNull(
+          payload.projects_section_subtitle_cn,
+        ),
+        projects_section_subtitle_en: stringOrNull(
+          payload.projects_section_subtitle_en,
+        ),
+        bottom_cta_eyebrow_cn: stringOrNull(payload.bottom_cta_eyebrow_cn),
+        bottom_cta_eyebrow_en: stringOrNull(payload.bottom_cta_eyebrow_en),
+        bottom_cta_title_cn: stringOrNull(payload.bottom_cta_title_cn),
+        bottom_cta_title_en: stringOrNull(payload.bottom_cta_title_en),
+        bottom_cta_description_cn: stringOrNull(
+          payload.bottom_cta_description_cn,
+        ),
+        bottom_cta_description_en: stringOrNull(
+          payload.bottom_cta_description_en,
+        ),
+        bottom_cta_button_text_cn: stringOrNull(
+          payload.bottom_cta_button_text_cn,
+        ),
+        bottom_cta_button_text_en: stringOrNull(
+          payload.bottom_cta_button_text_en,
+        ),
+        is_active:
+          typeof payload.is_active === "boolean" ? payload.is_active : true,
+      },
     },
-    { id: guard.user.id, email: guard.user.email, role: guard.profile.role },
+    {
+      id: guard.user.id,
+      email: guard.user.email,
+      role: guard.profile.role,
+    },
   );
 
   if (!result.ok) {
@@ -152,6 +213,7 @@ export async function POST(request: NextRequest) {
 
   revalidatePath("/admin", "layout");
   revalidatePath("/", "page");
+  revalidatePath("/en", "page");
   return NextResponse.json({
     success: true,
     id: result.data.id,
