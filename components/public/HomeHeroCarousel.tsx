@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { getImageProps } from "next/image";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ArrowLeft,
@@ -36,8 +37,78 @@ interface HomeHeroCarouselProps {
   slideLabel: string;
 }
 
+interface OptimizedHeroImageProps {
+  slide: HomeHeroCarouselSlide;
+  index: number;
+  active: boolean;
+  reducedMotion: boolean;
+  onReady: () => void;
+}
+
 const AUTOPLAY_MS = 6000;
 const SWIPE_THRESHOLD = 48;
+const NEXT_SLIDE_PRELOAD_DELAY_MS = 700;
+const HERO_IMAGE_QUALITY = 76;
+
+/**
+ * Use Next.js' responsive image loader while retaining art direction through
+ * a native <picture>. The browser downloads only the selected mobile/desktop
+ * source and receives a width-aware WebP/AVIF response instead of the original
+ * 1.5–2 MB PNG.
+ */
+function OptimizedHeroImage({
+  slide,
+  index,
+  active,
+  reducedMotion,
+  onReady,
+}: OptimizedHeroImageProps) {
+  const desktop = getImageProps({
+    src: slide.desktopImageUrl,
+    alt: slide.alt,
+    width: 1920,
+    height: 1080,
+    sizes: "100vw",
+    quality: HERO_IMAGE_QUALITY,
+    priority: index === 0,
+  });
+  const mobile = slide.mobileImageUrl
+    ? getImageProps({
+        src: slide.mobileImageUrl,
+        alt: slide.alt,
+        width: 900,
+        height: 1600,
+        sizes: "100vw",
+        quality: HERO_IMAGE_QUALITY,
+      })
+    : null;
+
+  return (
+    <picture className="absolute inset-0 block h-full w-full">
+      {mobile?.props.srcSet && (
+        <source media="(max-width: 767px)" srcSet={mobile.props.srcSet} />
+      )}
+      <img
+        {...desktop.props}
+        alt={slide.alt}
+        loading={index === 0 ? "eager" : "lazy"}
+        fetchPriority={index === 0 ? "high" : "auto"}
+        decoding="async"
+        onLoad={onReady}
+        onError={onReady}
+        className={cn(
+          "absolute inset-0 h-full w-full object-cover",
+          !reducedMotion && active && "animate-[hero-ken-burns_8s_ease-out_both]",
+        )}
+        style={{
+          ...desktop.props.style,
+          objectFit: "cover",
+          objectPosition: `${slide.focalX}% ${slide.focalY}%`,
+        }}
+      />
+    </picture>
+  );
+}
 
 export function HomeHeroCarousel({
   slides,
@@ -48,16 +119,68 @@ export function HomeHeroCarousel({
   const [activeIndex, setActiveIndex] = useState(0);
   const [paused, setPaused] = useState(false);
   const [reducedMotion, setReducedMotion] = useState(false);
+  // Only the active slide is mounted on first paint. One next slide is added
+  // after a short delay; the remaining three are not requested until needed.
+  const [renderedIndexes, setRenderedIndexes] = useState<Set<number>>(
+    () => new Set([0]),
+  );
+  const activeIndexRef = useRef(0);
+  const readyIndexesRef = useRef<Set<number>>(new Set());
+  const pendingIndexRef = useRef<number | null>(null);
   const touchStartX = useRef<number | null>(null);
   const slideCount = slides.length;
 
+  const mountSlide = useCallback((index: number) => {
+    setRenderedIndexes((current) => {
+      if (current.has(index)) return current;
+      const next = new Set(current);
+      next.add(index);
+      return next;
+    });
+  }, []);
+
+  const commitActiveIndex = useCallback((index: number) => {
+    activeIndexRef.current = index;
+    setActiveIndex(index);
+  }, []);
+
+  const requestSlide = useCallback(
+    (requestedIndex: number) => {
+      if (slideCount < 2) return;
+      const index = (requestedIndex + slideCount) % slideCount;
+      if (index === activeIndexRef.current) return;
+
+      mountSlide(index);
+      if (readyIndexesRef.current.has(index)) {
+        pendingIndexRef.current = null;
+        commitActiveIndex(index);
+      } else {
+        // Keep the current slide visible until the requested optimized image
+        // has decoded. This prevents a black flash on slow mobile networks.
+        pendingIndexRef.current = index;
+      }
+    },
+    [commitActiveIndex, mountSlide, slideCount],
+  );
+
   const showPrevious = useCallback(() => {
-    setActiveIndex((current) => (current - 1 + slideCount) % slideCount);
-  }, [slideCount]);
+    requestSlide(activeIndexRef.current - 1);
+  }, [requestSlide]);
 
   const showNext = useCallback(() => {
-    setActiveIndex((current) => (current + 1) % slideCount);
-  }, [slideCount]);
+    requestSlide(activeIndexRef.current + 1);
+  }, [requestSlide]);
+
+  const handleImageReady = useCallback(
+    (index: number) => {
+      readyIndexesRef.current.add(index);
+      if (pendingIndexRef.current === index) {
+        pendingIndexRef.current = null;
+        commitActiveIndex(index);
+      }
+    },
+    [commitActiveIndex],
+  );
 
   useEffect(() => {
     const query = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -74,7 +197,20 @@ export function HomeHeroCarousel({
   }, [paused, reducedMotion, showNext, slideCount]);
 
   useEffect(() => {
-    if (activeIndex >= slideCount) setActiveIndex(0);
+    if (slideCount < 2) return;
+    const nextIndex = (activeIndex + 1) % slideCount;
+    const timer = window.setTimeout(
+      () => mountSlide(nextIndex),
+      NEXT_SLIDE_PRELOAD_DELAY_MS,
+    );
+    return () => window.clearTimeout(timer);
+  }, [activeIndex, mountSlide, slideCount]);
+
+  useEffect(() => {
+    if (activeIndex >= slideCount && slideCount > 0) {
+      activeIndexRef.current = 0;
+      setActiveIndex(0);
+    }
   }, [activeIndex, slideCount]);
 
   if (slideCount === 0) return null;
@@ -105,34 +241,26 @@ export function HomeHeroCarousel({
       }}
     >
       {slides.map((slide, index) => {
+        if (!renderedIndexes.has(index)) return null;
         const active = index === activeIndex;
         return (
           <article
             key={slide.id}
             className={cn(
-              "absolute inset-0 transition-opacity duration-1000 ease-out",
+              "absolute inset-0 transition-opacity duration-700 ease-out",
               active ? "z-10 opacity-100" : "pointer-events-none z-0 opacity-0",
             )}
             aria-roledescription="slide"
             aria-label={`${index + 1} / ${slideCount}`}
             aria-hidden={!active}
           >
-            <picture className="absolute inset-0 block h-full w-full">
-              {slide.mobileImageUrl && (
-                <source media="(max-width: 767px)" srcSet={slide.mobileImageUrl} />
-              )}
-              <img
-                src={slide.desktopImageUrl}
-                alt={slide.alt}
-                loading={index === 0 ? "eager" : "lazy"}
-                fetchPriority={index === 0 ? "high" : "auto"}
-                className={cn(
-                  "h-full w-full object-cover",
-                  !reducedMotion && active && "animate-[hero-ken-burns_8s_ease-out_both]",
-                )}
-                style={{ objectPosition: `${slide.focalX}% ${slide.focalY}%` }}
-              />
-            </picture>
+            <OptimizedHeroImage
+              slide={slide}
+              index={index}
+              active={active}
+              reducedMotion={reducedMotion}
+              onReady={() => handleImageReady(index)}
+            />
 
             <div
               className="absolute inset-0 bg-black"
@@ -194,9 +322,29 @@ export function HomeHeroCarousel({
 
       {slideCount > 1 && (
         <>
-          <div className="pointer-events-none absolute inset-x-0 bottom-5 z-30 md:bottom-8">
+          {/* Mobile: persistent edge controls, clear of the text and bottom nav. */}
+          <div className="pointer-events-none absolute inset-x-0 top-[43%] z-30 flex -translate-y-1/2 justify-between px-3 md:hidden">
+            <button
+              type="button"
+              onClick={showPrevious}
+              aria-label={previousLabel}
+              className="pointer-events-auto grid h-10 w-10 place-items-center rounded-full border border-white/30 bg-black/35 text-white shadow-lg backdrop-blur-md active:scale-95"
+            >
+              <ChevronLeft className="h-5 w-5" />
+            </button>
+            <button
+              type="button"
+              onClick={showNext}
+              aria-label={nextLabel}
+              className="pointer-events-auto grid h-10 w-10 place-items-center rounded-full border border-white/30 bg-black/35 text-white shadow-lg backdrop-blur-md active:scale-95"
+            >
+              <ChevronRight className="h-5 w-5" />
+            </button>
+          </div>
+
+          <div className="pointer-events-none absolute inset-x-0 bottom-[calc(4.25rem+env(safe-area-inset-bottom))] z-30 md:bottom-8">
             <div className="container-responsive flex items-center justify-between">
-              <div className="pointer-events-auto flex items-center gap-2" role="tablist">
+              <div className="pointer-events-auto flex items-center gap-1.5" role="tablist">
                 {slides.map((slide, index) => (
                   <button
                     key={slide.id}
@@ -204,9 +352,9 @@ export function HomeHeroCarousel({
                     role="tab"
                     aria-selected={index === activeIndex}
                     aria-label={`${slideLabel} ${index + 1}`}
-                    onClick={() => setActiveIndex(index)}
+                    onClick={() => requestSlide(index)}
                     className={cn(
-                      "relative h-8 w-9 overflow-hidden rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold",
+                      "relative h-8 w-8 overflow-hidden rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold md:w-9",
                       index === activeIndex ? "text-gold" : "text-white/42 hover:text-white/75",
                     )}
                   >
