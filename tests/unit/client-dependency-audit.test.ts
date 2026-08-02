@@ -189,8 +189,15 @@ describe("4. PDF.js worker loader — uses vendored static asset path", () => {
 
   it("usePdfDocument does NOT use new Function or eval", () => {
     const source = readFile("components/public/product-asset-viewer/hooks/usePdfDocument.ts");
-    expect(source).not.toMatch(/new\s+Function\s*\(/);
-    expect(source).not.toMatch(/(^|[^.\w])eval\s*\(/);
+    // Strip // line comments so explanatory text (e.g. "the JIT path uses
+    // `new Function`") is not mistaken for an actual call. The regexes
+    // below must still catch any REAL new Function( / eval( in code.
+    const codeOnly = source
+      .split("\n")
+      .filter((line) => !line.trim().startsWith("//"))
+      .join("\n");
+    expect(codeOnly).not.toMatch(/new\s+Function\s*\(/);
+    expect(codeOnly).not.toMatch(/(^|[^.\w])eval\s*\(/);
   });
 
   it("viewer-utils does NOT use new Function or eval", () => {

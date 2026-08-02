@@ -93,13 +93,21 @@ describe("KZQ-P2-012-d: audit is enforced in CI and npm scripts", () => {
 });
 
 describe("KZQ-P2-012-d: audit actually passes on the current tree", () => {
-  it("exits 0 with a PASSED summary", () => {
-    const out = execSync("node scripts/check-license-audit.mjs", {
-      cwd: ROOT,
-      encoding: "utf8",
-      maxBuffer: 16 * 1024 * 1024,
-      timeout: 120_000,
-    });
-    expect(out).toMatch(/License audit PASSED/);
-  });
+  // The license audit script walks node_modules and takes ~3-4s alone;
+  // under full-suite parallel load it can exceed vitest's default 5s
+  // timeout. Give it an explicit generous budget — the assertion
+  // (exit 0 + PASSED summary) is unchanged.
+  it(
+    "exits 0 with a PASSED summary",
+    () => {
+      const out = execSync("node scripts/check-license-audit.mjs", {
+        cwd: ROOT,
+        encoding: "utf8",
+        maxBuffer: 16 * 1024 * 1024,
+        timeout: 120_000,
+      });
+      expect(out).toMatch(/License audit PASSED/);
+    },
+    60_000,
+  );
 });

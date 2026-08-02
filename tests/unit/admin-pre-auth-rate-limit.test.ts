@@ -62,6 +62,19 @@ function makeSessionClient(opts: {
         data: { user: opts.user ?? null },
         error: opts.error ?? null,
       }),
+      // KZQ-P1-022-d: getVerifiedAdmin probes the AAL level. Mock a
+      // session with NO verified factor (nextLevel === "aal1") so the
+      // guard does not treat the mock user as MFA-insufficient.
+      mfa: {
+        getAuthenticatorAssuranceLevel: vi.fn().mockResolvedValue({
+          data: {
+            currentLevel: "aal1",
+            nextLevel: "aal1",
+            currentAuthenticationMethods: [],
+          },
+          error: null,
+        }),
+      },
     },
   };
 }

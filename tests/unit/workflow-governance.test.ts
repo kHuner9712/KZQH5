@@ -29,11 +29,17 @@ describe("Phase 2 CI governance: workflow YAML files", () => {
       });
 
       it("uses minimal permissions", () => {
-        // All workflows should use contents: read or no explicit
-        // permissions (which defaults to read). We explicitly
-        // require the permissions field to be present so that
-        // no workflow accidentally uses GITHUB_TOKEN write access.
-        expect(content).toMatch(/permissions:\s*\n\s*contents:\s*read/);
+        // All workflows must declare a permissions block (no implicit
+        // GITHUB_TOKEN write access) that grants read access to
+        // repository contents. Other scopes (e.g. security-events:
+        // write for SARIF upload) are allowed, but contents itself
+        // must never be writable.
+        const permissionsBlock = content.match(
+          /^permissions:\n(?:^\s{2,}[^\n]*\n?)+/m,
+        )?.[0];
+        expect(permissionsBlock).toBeTruthy();
+        expect(permissionsBlock).toContain("contents: read");
+        expect(permissionsBlock).not.toMatch(/contents:\s*write/);
       });
 
       it("does not print secrets in run steps", () => {
