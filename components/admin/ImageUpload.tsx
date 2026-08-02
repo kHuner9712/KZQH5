@@ -281,30 +281,39 @@ export function ImageUpload({
   async function handleRemove() {
     if (newUploadedRef) {
       setRemoving(true);
-      const deleted = await deleteViaServerApi(
+      const del = await deleteViaServerApi(
         newUploadedRef.bucket,
         newUploadedRef.path,
       );
       setRemoving(false);
-      if (!deleted.ok) {
-        const queued = await enqueueCleanupViaServerApi({
-          bucket: newUploadedRef.bucket,
-          objectPath: newUploadedRef.path,
-          reason: "form_cancelled",
-          sourceType: purpose,
-        });
-        if (!queued.ok) {
-          setError("清理登记失败，请联系管理员");
-          return;
-        }
+
+      if (del.ok) {
+        setNewUploadedRef(null);
+        setError(null);
+        onChange("");
+        setPreviewUrl(null);
+        return;
+      }
+
+      const enq = await enqueueCleanupViaServerApi({
+        bucket: newUploadedRef.bucket,
+        objectPath: newUploadedRef.path,
+        reason: "form_cancelled",
+        sourceType: purpose,
+      });
+
+      if (enq.ok) {
         setError(
-          deleted.referenced
+          del.referenced
             ? "对象被引用，已加入待清理队列"
             : "对象删除失败，已加入待清理队列",
         );
       } else {
-        setError(null);
+        setError("清理登记失败，请联系管理员");
+        if (inputRef.current) inputRef.current.value = "";
+        return;
       }
+
       setNewUploadedRef(null);
       onChange("");
       setPreviewUrl(null);
