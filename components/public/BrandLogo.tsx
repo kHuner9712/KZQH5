@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
 
@@ -45,15 +46,14 @@ export function BrandLogo({
       style={{ width: size, height, fontSize: wordmark ? 18 : size * 0.38 }}
     >
       {showImage ? (
-        <img
+        <Image
           src={source}
           alt={alt}
-          width={size}
-          height={height}
-          loading="eager"
-          decoding="async"
+          fill
+          priority
+          sizes={`${size}px`}
           className={cn(
-            "h-full w-full object-contain",
+            "object-contain",
             wordmark && "drop-shadow-[0_1px_5px_rgba(201,162,76,0.18)]",
           )}
           onError={() => {
