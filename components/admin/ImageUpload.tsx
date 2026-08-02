@@ -12,48 +12,18 @@ import type { StoragePurpose } from "@/lib/services/storage-purpose";
 import { cn } from "@/lib/utils";
 import { Upload, X, Image as ImageIcon, Loader2 } from "lucide-react";
 
+export type ImageOptimizationProfile = "hero-desktop" | "hero-mobile";
+
 interface ImageUploadProps {
-  /**
-   * 当前值。两种形式：
-   *   1. public-assets 的公开 URL（http/https）
-   *   2. private-assets 的本地标识 URL：private-assets://{path}
-   *   3. 空字符串（表示无值）
-   *
-   * 父组件负责持久化裸 URL 到业务表；本组件内部通过 onUploaded 回调
-   * 把完整 StorageObjectRef（含 bucket + path）传给父组件，父组件应至少
-   * 保存 bucket + path 以便后续 cleanup / publish。
-   */
   value: string;
-  /**
-   * 值变化回调。参数为兼容历史业务表字段的裸 URL 字符串或空字符串。
-   *   - public-assets 上传成功：传入 publicUrl
-   *   - private-assets 上传成功：传入 private-assets://{path} 本地标识
-   *   - 移除：传入空字符串
-   */
   onChange: (url: string) => void;
-  /**
-   * 上传成功后回调，传入完整 StorageObjectRef。
-   * 父组件应至少保存 bucket + path（用于后续 cleanup / publish）。
-   * public-assets 的 ref.publicUrl 不为 null；private-assets 的 ref.publicUrl
-   * 为 null，需通过 fetchPrivatePreviewUrl 异步获取短期签名 URL 预览。
-   */
   onUploaded?: (ref: StorageObjectRef) => void;
-  /**
-   * Storage 用途（必需）。客户端只提交 purpose，服务端决定 bucket /
-   * category / MIME 白名单。禁止客户端自动决定公开性。
-   *
-   * 对应 storage-purpose.ts 中的合法 purpose 值：
-   *   - "product-image"   产品展示图（public-assets）
-   *   - "project-image"   项目展示图（public-assets）
-   *   - "company-logo"    公司品牌资源（public-assets）
-   *   - "homepage-image"  首页/OG/Banner（public-assets）
-   *   - "catalog-draft"   Catalog 资产（private-assets，需 publish 流程）
-   *   - "certificate-draft" 证书图片（private-assets，需 publish 流程）
-   */
   purpose: StoragePurpose;
   label?: string;
   hint?: string;
   aspect?: "square" | "wide" | "logo";
+  optimizationProfile?: ImageOptimizationProfile;
+  allowManualUrl?: boolean;
 }
 
 const aspectClass: Record<NonNullable<ImageUploadProps["aspect"]>, string> = {
@@ -62,74 +32,136 @@ const aspectClass: Record<NonNullable<ImageUploadProps["aspect"]>, string> = {
   logo: "aspect-[3/1]",
 };
 
-// The same-origin multipart route has a 4 MB per-image limit and stays below
-// EdgeOne's 6 MB request-body ceiling. Admin image uploads deliberately use
-// this route instead of the browser-to-Storage signed PUT path, because the
-// latter depends on cross-origin Storage CORS and was failing in production.
 const MAX_SERVER_IMAGE_BYTES = 4 * 1024 * 1024;
 const MAX_SELECTED_IMAGE_BYTES = 5 * 1024 * 1024;
+const MAX_HOMEPAGE_IMAGE_BYTES = 700 * 1024;
 const SUPPORTED_OPTIMIZATION_MIME_TYPES = new Set([
   "image/jpeg",
   "image/png",
   "image/webp",
 ]);
 
+type OptimizationConfig = {
+  maxWidth: number;
+  maxHeight: number;
+  targetBytes: number;
+  hardMaxBytes: number;
+  qualities: readonly number[];
+};
+
+const HERO_OPTIMIZATION: Record<
+  ImageOptimizationProfile | "homepage",
+  OptimizationConfig
+> = {
+  "hero-desktop": {
+    maxWidth: 1920,
+    maxHeight: 1080,
+    targetBytes: 450 * 1024,
+    hardMaxBytes: MAX_HOMEPAGE_IMAGE_BYTES,
+    qualities: [0.82, 0.76, 0.7, 0.64, 0.58],
+  },
+  "hero-mobile": {
+    maxWidth: 1080,
+    maxHeight: 1440,
+    targetBytes: 300 * 1024,
+    hardMaxBytes: MAX_HOMEPAGE_IMAGE_BYTES,
+    qualities: [0.82, 0.76, 0.7, 0.64, 0.58],
+  },
+  homepage: {
+    maxWidth: 1920,
+    maxHeight: 1920,
+    targetBytes: 500 * 1024,
+    hardMaxBytes: MAX_HOMEPAGE_IMAGE_BYTES,
+    qualities: [0.82, 0.76, 0.7, 0.64, 0.58],
+  },
+};
+
 function webpFilename(filename: string): string {
   const dot = filename.lastIndexOf(".");
   return `${dot > 0 ? filename.slice(0, dot) : filename}.webp`;
 }
 
-/**
- * Images between 4 MB and 5 MB are compressed client-side to WebP before
- * using the same-origin upload endpoint. WebP preserves alpha, so transparent
- * logo PNGs remain suitable for the black/gold header treatment.
- */
-async function prepareImageForServerUpload(file: File): Promise<File> {
-  if (file.size <= MAX_SERVER_IMAGE_BYTES) return file;
+function canvasToWebp(canvas: HTMLCanvasElement, quality: number): Promise<Blob | null> {
+  return new Promise((resolve) => canvas.toBlob(resolve, "image/webp", quality));
+}
+
+async function optimizeToWebp(
+  file: File,
+  config: OptimizationConfig,
+): Promise<File> {
   if (!SUPPORTED_OPTIMIZATION_MIME_TYPES.has(file.type)) {
-    throw new Error("图片超过 4MB，请压缩为 JPG、PNG 或 WebP 后重试");
+    throw new Error("请选择 JPG、PNG 或 WebP 图片");
   }
 
   let bitmap: ImageBitmap | null = null;
   try {
     bitmap = await createImageBitmap(file);
-    const maxDimension = 2560;
-    const scale = Math.min(1, maxDimension / Math.max(bitmap.width, bitmap.height));
-    const width = Math.max(1, Math.round(bitmap.width * scale));
-    const height = Math.max(1, Math.round(bitmap.height * scale));
-    const canvas = document.createElement("canvas");
-    canvas.width = width;
-    canvas.height = height;
-    const context = canvas.getContext("2d", { alpha: true });
-    if (!context) throw new Error("图片处理失败，请重新选择图片");
-    context.drawImage(bitmap, 0, 0, width, height);
+    const initialScale = Math.min(
+      1,
+      config.maxWidth / bitmap.width,
+      config.maxHeight / bitmap.height,
+    );
+    let width = Math.max(1, Math.round(bitmap.width * initialScale));
+    let height = Math.max(1, Math.round(bitmap.height * initialScale));
+    let smallest: Blob | null = null;
 
-    const blob = await new Promise<Blob | null>((resolve) => {
-      canvas.toBlob(resolve, "image/webp", 0.88);
-    });
-    if (!blob || blob.size === 0 || blob.size > MAX_SERVER_IMAGE_BYTES) {
-      throw new Error("图片压缩后仍超过 4MB，请降低分辨率后重试");
+    for (let pass = 0; pass < 4; pass += 1) {
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const context = canvas.getContext("2d", { alpha: true });
+      if (!context) throw new Error("图片处理失败，请重新选择图片");
+      context.drawImage(bitmap, 0, 0, width, height);
+
+      for (const quality of config.qualities) {
+        const blob = await canvasToWebp(canvas, quality);
+        if (!blob || blob.size === 0) continue;
+        if (!smallest || blob.size < smallest.size) smallest = blob;
+        if (blob.size <= config.targetBytes) {
+          return new File([blob], webpFilename(file.name), {
+            type: "image/webp",
+            lastModified: file.lastModified,
+          });
+        }
+      }
+
+      width = Math.max(1, Math.round(width * 0.86));
+      height = Math.max(1, Math.round(height * 0.86));
     }
 
-    return new File([blob], webpFilename(file.name), {
-      type: "image/webp",
-      lastModified: file.lastModified,
-    });
+    if (smallest && smallest.size <= config.hardMaxBytes) {
+      return new File([smallest], webpFilename(file.name), {
+        type: "image/webp",
+        lastModified: file.lastModified,
+      });
+    }
+    throw new Error("图片优化后仍然过大，请降低原图分辨率后重试");
   } finally {
     bitmap?.close();
   }
 }
 
-/**
- * 为 private-assets 路径构造一个稳定的本地标识 URL。
- *
- * 这不是真实的可访问 URL —— 仅用于业务表字段的暂存标识，让父表单
- * 可以保存"这里有一张 private 图"的事实。父组件应在保存时通过
- * onUploaded 回调获取完整 StorageObjectRef，并触发 publish 流程后
- * 用真实 publicUrl 替换该值。
- *
- * 不得用此 URL 渲染 <img>；本组件通过 previewUrl（短期签名 URL）渲染。
- */
+async function prepareImageForServerUpload(
+  file: File,
+  purpose: StoragePurpose,
+  optimizationProfile?: ImageOptimizationProfile,
+): Promise<File> {
+  if (purpose === "homepage-image") {
+    return optimizeToWebp(
+      file,
+      HERO_OPTIMIZATION[optimizationProfile ?? "homepage"],
+    );
+  }
+  if (file.size <= MAX_SERVER_IMAGE_BYTES) return file;
+  return optimizeToWebp(file, {
+    maxWidth: 2560,
+    maxHeight: 2560,
+    targetBytes: Math.floor(3.5 * 1024 * 1024),
+    hardMaxBytes: MAX_SERVER_IMAGE_BYTES,
+    qualities: [0.88, 0.82, 0.76, 0.7],
+  });
+}
+
 const PRIVATE_REF_PREFIX = "private-assets://";
 function encodePrivateRef(path: string): string {
   return `${PRIVATE_REF_PREFIX}${path}`;
@@ -147,11 +179,10 @@ export function ImageUpload({
   label,
   hint,
   aspect = "wide",
+  optimizationProfile,
+  allowManualUrl = true,
 }: ImageUploadProps) {
   const inputRef = useRef<HTMLInputElement>(null);
-  // useId 生成稳定且 React 全局唯一的 ID，避免同一页面多个相同 purpose
-  // 上传器（如产品详情图列表、Company Logo + 微信二维码、多个证书/资料上传器）
-  // 共享 id={`upload-${purpose}`} 导致点击 label 误触发首个 input。
   const reactId = useId();
   const inputId = `upload-${purpose}-${reactId.replace(/[^a-zA-Z0-9_-]/g, "")}`;
   const [uploading, setUploading] = useState(false);
@@ -159,23 +190,10 @@ export function ImageUpload({
   const [error, setError] = useState<string | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
-
-  /**
-   * 跟踪本次表单中新上传、尚未保存到 DB 的对象。
-   * - handleFile 上传成功后保存完整 StorageObjectRef
-   * - handleRemove 时若 newUploadedRef 非空 → 同步删除（reason: form_cancelled）
-   * - 已持久化对象（来自 DB 的 value）→ newUploadedRef 为 null，handleRemove
-   *   只清空字段，由父组件业务保存时入队 cleanup（reason: replaced | row_deleted）
-   */
   const [newUploadedRef, setNewUploadedRef] = useState<StorageObjectRef | null>(null);
 
-  // 渲染时根据 value 类型决定展示源：
-  //   - private-assets://path → 异步获取短期签名 URL
-  //   - 其他（http/https 或空）→ 直接作为 <img src>
   const privatePath = value ? decodePrivateRef(value) : null;
 
-  // 通过 useEffect 触发签名 URL 加载，避免渲染期间副作用。
-  // 仅在 privatePath 变化时触发；previewLoading 防止重复请求。
   useEffect(() => {
     if (!privatePath) {
       setPreviewUrl(null);
@@ -202,10 +220,9 @@ export function ImageUpload({
     };
   }, [privatePath]);
 
-  async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
-    const selectedFile = e.target.files?.[0];
+  async function handleFile(event: React.ChangeEvent<HTMLInputElement>) {
+    const selectedFile = event.target.files?.[0];
     if (!selectedFile) return;
-
     if (!selectedFile.type.startsWith("image/")) {
       setError("请选择图片文件");
       return;
@@ -215,20 +232,13 @@ export function ImageUpload({
       return;
     }
 
-    // 新上传替换旧的未保存对象：先把旧的新上传对象加入 cleanup queue，
-    // 不能依赖浏览器在保存成功后调用入队（用户可能直接关闭表单）。
-    // 最终仍由服务器 dispatcher 重新检查引用后再删除，避免误删。
     const previousNewRef = newUploadedRef;
     if (previousNewRef) {
-      // fire-and-forget 入队；失败时仅记录，不阻塞新上传
       void enqueueCleanupViaServerApi({
         bucket: previousNewRef.bucket,
         objectPath: previousNewRef.path,
         reason: "form_cancelled",
         sourceType: purpose,
-      }).catch(() => {
-        // 入队失败时由 storage_cleanup_queue dispatcher 后续通过
-        // orphan_detected 路径兜底（read-only inventory 脚本可发现）
       });
     }
 
@@ -237,7 +247,11 @@ export function ImageUpload({
 
     let file: File;
     try {
-      file = await prepareImageForServerUpload(selectedFile);
+      file = await prepareImageForServerUpload(
+        selectedFile,
+        purpose,
+        optimizationProfile,
+      );
     } catch (uploadPreparationError) {
       setUploading(false);
       setError(
@@ -249,35 +263,22 @@ export function ImageUpload({
       return;
     }
 
-    // Images are intentionally uploaded through the same-origin server API.
-    // The two-phase signed PUT path remains available for large PDF/catalog
-    // flows, but is unnecessary and less reliable for <=5 MB admin images.
     const result = await uploadViaServerApi(file, purpose);
     setUploading(false);
-
     if (!result.ok) {
       setError(result.error);
       if (inputRef.current) inputRef.current.value = "";
       return;
     }
 
-    // private-assets 上传成功时 publicUrl 为 null —— 不得视为失败。
     const ref = result.data;
-    // 跟踪本次新上传对象，供 handleRemove 同步删除
     setNewUploadedRef(ref);
-
-    // public-assets → 直接传 publicUrl；private-assets → 传 private-assets://path
-    // 形式的本地标识（父组件通过 onUploaded 获取真实 bucket+path）
-    const valueForParent = ref.publicUrl ?? encodePrivateRef(ref.path);
-    onChange(valueForParent);
+    onChange(ref.publicUrl ?? encodePrivateRef(ref.path));
     onUploaded?.(ref);
-
-    // 重置 input 以便相同文件可再次选择
     if (inputRef.current) inputRef.current.value = "";
   }
 
   async function handleRemove() {
-    // 本次新上传、尚未保存到 DB 的对象 → 同步删除（不进入 cleanup queue）
     if (newUploadedRef) {
       setRemoving(true);
       const del = await deleteViaServerApi(
@@ -287,16 +288,13 @@ export function ImageUpload({
       setRemoving(false);
 
       if (del.ok) {
-        // 删除成功：清空字段 + 清空错误 + 清空预览
         setNewUploadedRef(null);
-        onChange("");
         setError(null);
+        onChange("");
         setPreviewUrl(null);
         return;
       }
 
-      // 删除失败：尝试入队 cleanup，由 dispatcher 后续处理。
-      // 必须根据入队结果设置不同的提示文案，不能无条件清空错误。
       const enq = await enqueueCleanupViaServerApi({
         bucket: newUploadedRef.bucket,
         objectPath: newUploadedRef.path,
@@ -305,14 +303,12 @@ export function ImageUpload({
       });
 
       if (enq.ok) {
-        // 删除失败但入队成功 → 提示已加入待清理，仍清空字段（用户意图）
         setError(
           del.referenced
             ? "对象被引用，已加入待清理队列"
             : "对象删除失败，已加入待清理队列",
         );
       } else {
-        // 删除失败且入队也失败 → 提示联系管理员，字段不清空以便用户重试
         setError("清理登记失败，请联系管理员");
         if (inputRef.current) inputRef.current.value = "";
         return;
@@ -324,17 +320,11 @@ export function ImageUpload({
       return;
     }
 
-    // 已持久化对象 → 只清空字段，业务保存时由父组件入队 cleanup
-    // （reason: replaced 当用户重新上传时；reason: row_deleted 当业务行删除时）
     onChange("");
     setError(null);
     setPreviewUrl(null);
   }
 
-  // 决定 <img src>：
-  //   - private-assets://path → 使用 previewUrl（短期签名 URL）
-  //   - 其他 URL → 直接使用 value
-  //   - 空 → 占位
   const imgSrc = privatePath ? previewUrl : value;
 
   return (
@@ -346,15 +336,11 @@ export function ImageUpload({
         <div
           className={cn(
             "relative w-40 overflow-hidden rounded-lg border border-gray-200 bg-gray-50",
-            aspectClass[aspect]
+            aspectClass[aspect],
           )}
         >
           {imgSrc ? (
-            <img
-              src={imgSrc}
-              alt="预览"
-              className="h-full w-full object-cover"
-            />
+            <img src={imgSrc} alt="预览" className="h-full w-full object-cover" />
           ) : (
             <div className="flex h-full w-full items-center justify-center text-gray-300">
               <ImageIcon className="h-8 w-8" />
@@ -382,7 +368,7 @@ export function ImageUpload({
               htmlFor={inputId}
               className={cn(
                 "inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-md border border-gray-200 bg-white px-3 text-xs text-gray-700 hover:bg-gray-50",
-                uploading && "pointer-events-none opacity-50"
+                uploading && "pointer-events-none opacity-50",
               )}
             >
               <Upload className="h-3.5 w-3.5" />
@@ -401,11 +387,11 @@ export function ImageUpload({
           </div>
           {hint && <p className="text-xs text-gray-400">{hint}</p>}
           {error && <p className="text-xs text-red-500">{error}</p>}
-          {value && (
+          {allowManualUrl && value && (
             <input
               type="text"
               value={value}
-              onChange={(e) => onChange(e.target.value)}
+              onChange={(event) => onChange(event.target.value)}
               className="h-9 w-full rounded-md border border-gray-200 bg-white px-2.5 text-xs text-gray-600 outline-none focus:border-steel"
               placeholder="或手动填写图片 URL"
             />
