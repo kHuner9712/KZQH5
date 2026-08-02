@@ -28,4 +28,11 @@ describe("public brand logo contract", () => {
     expect(desktop).toContain("size={104}");
     expect(mobile).toContain("size={86}");
   });
+
+  it("keeps the public header brand area logo-only", () => {
+    const desktop = source("components/public/DesktopHeader.tsx");
+    const mobile = source("components/public/MobileHeader.tsx");
+    expect(desktop).not.toContain("copy.header.tagline");
+    expect(mobile).not.toContain("copy.header.mobileTagline");
+  });
 });
