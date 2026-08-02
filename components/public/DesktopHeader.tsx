@@ -71,7 +71,7 @@ export function DesktopHeader({
         <Link
           href={localePath(locale)}
           prefetch={false}
-          className="flex shrink-0 items-center gap-3"
+          className="flex shrink-0 items-center"
           aria-label={copy.header.homeAria}
         >
           <BrandLogo
@@ -80,9 +80,6 @@ export function DesktopHeader({
             variant="wordmark"
             className="text-gold"
           />
-          <span className="hidden whitespace-nowrap text-[10px] text-white/60 xl:inline">
-            {copy.header.tagline}
-          </span>
         </Link>
         <nav
           className="flex min-w-0 flex-1 items-center justify-center gap-1"
