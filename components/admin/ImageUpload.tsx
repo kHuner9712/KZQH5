@@ -2,7 +2,7 @@
 
 import { useEffect, useId, useRef, useState } from "react";
 import {
-  uploadViaTwoPhase,
+  uploadViaServerApi,
   deleteViaServerApi,
   enqueueCleanupViaServerApi,
   fetchPrivatePreviewUrl,
@@ -62,6 +62,64 @@ const aspectClass: Record<NonNullable<ImageUploadProps["aspect"]>, string> = {
   logo: "aspect-[3/1]",
 };
 
+// The same-origin multipart route has a 4 MB per-image limit and stays below
+// EdgeOne's 6 MB request-body ceiling. Admin image uploads deliberately use
+// this route instead of the browser-to-Storage signed PUT path, because the
+// latter depends on cross-origin Storage CORS and was failing in production.
+const MAX_SERVER_IMAGE_BYTES = 4 * 1024 * 1024;
+const MAX_SELECTED_IMAGE_BYTES = 5 * 1024 * 1024;
+const SUPPORTED_OPTIMIZATION_MIME_TYPES = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+]);
+
+function webpFilename(filename: string): string {
+  const dot = filename.lastIndexOf(".");
+  return `${dot > 0 ? filename.slice(0, dot) : filename}.webp`;
+}
+
+/**
+ * Images between 4 MB and 5 MB are compressed client-side to WebP before
+ * using the same-origin upload endpoint. WebP preserves alpha, so transparent
+ * logo PNGs remain suitable for the black/gold header treatment.
+ */
+async function prepareImageForServerUpload(file: File): Promise<File> {
+  if (file.size <= MAX_SERVER_IMAGE_BYTES) return file;
+  if (!SUPPORTED_OPTIMIZATION_MIME_TYPES.has(file.type)) {
+    throw new Error("图片超过 4MB，请压缩为 JPG、PNG 或 WebP 后重试");
+  }
+
+  let bitmap: ImageBitmap | null = null;
+  try {
+    bitmap = await createImageBitmap(file);
+    const maxDimension = 2560;
+    const scale = Math.min(1, maxDimension / Math.max(bitmap.width, bitmap.height));
+    const width = Math.max(1, Math.round(bitmap.width * scale));
+    const height = Math.max(1, Math.round(bitmap.height * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d", { alpha: true });
+    if (!context) throw new Error("图片处理失败，请重新选择图片");
+    context.drawImage(bitmap, 0, 0, width, height);
+
+    const blob = await new Promise<Blob | null>((resolve) => {
+      canvas.toBlob(resolve, "image/webp", 0.88);
+    });
+    if (!blob || blob.size === 0 || blob.size > MAX_SERVER_IMAGE_BYTES) {
+      throw new Error("图片压缩后仍超过 4MB，请降低分辨率后重试");
+    }
+
+    return new File([blob], webpFilename(file.name), {
+      type: "image/webp",
+      lastModified: file.lastModified,
+    });
+  } finally {
+    bitmap?.close();
+  }
+}
+
 /**
  * 为 private-assets 路径构造一个稳定的本地标识 URL。
  *
@@ -94,7 +152,6 @@ export function ImageUpload({
   // useId 生成稳定且 React 全局唯一的 ID，避免同一页面多个相同 purpose
   // 上传器（如产品详情图列表、Company Logo + 微信二维码、多个证书/资料上传器）
   // 共享 id={`upload-${purpose}`} 导致点击 label 误触发首个 input。
-  // https://react.dev/reference/react/useId
   const reactId = useId();
   const inputId = `upload-${purpose}-${reactId.replace(/[^a-zA-Z0-9_-]/g, "")}`;
   const [uploading, setUploading] = useState(false);
@@ -146,14 +203,14 @@ export function ImageUpload({
   }, [privatePath]);
 
   async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const selectedFile = e.target.files?.[0];
+    if (!selectedFile) return;
 
-    if (!file.type.startsWith("image/")) {
+    if (!selectedFile.type.startsWith("image/")) {
       setError("请选择图片文件");
       return;
     }
-    if (file.size > 5 * 1024 * 1024) {
+    if (selectedFile.size > MAX_SELECTED_IMAGE_BYTES) {
       setError("图片大小不能超过 5MB");
       return;
     }
@@ -177,11 +234,30 @@ export function ImageUpload({
 
     setError(null);
     setUploading(true);
-    const result = await uploadViaTwoPhase(file, purpose);
+
+    let file: File;
+    try {
+      file = await prepareImageForServerUpload(selectedFile);
+    } catch (uploadPreparationError) {
+      setUploading(false);
+      setError(
+        uploadPreparationError instanceof Error
+          ? uploadPreparationError.message
+          : "图片处理失败，请重新选择图片",
+      );
+      if (inputRef.current) inputRef.current.value = "";
+      return;
+    }
+
+    // Images are intentionally uploaded through the same-origin server API.
+    // The two-phase signed PUT path remains available for large PDF/catalog
+    // flows, but is unnecessary and less reliable for <=5 MB admin images.
+    const result = await uploadViaServerApi(file, purpose);
     setUploading(false);
 
     if (!result.ok) {
       setError(result.error);
+      if (inputRef.current) inputRef.current.value = "";
       return;
     }
 
@@ -295,7 +371,7 @@ export function ImageUpload({
           <input
             ref={inputRef}
             type="file"
-            accept="image/*"
+            accept="image/jpeg,image/png,image/webp"
             onChange={handleFile}
             disabled={uploading}
             className="hidden"
