@@ -2,18 +2,6 @@
 // CMS 内容读取辅助函数
 // 服务端使用：从 Supabase 读取 site_settings / homepage_content / page_content
 // Demo 模式下返回 lib/mock-data.ts 中的对应数据
-//
-// Work Package F contract:
-//   - 合法空数据 (no rows / not configured) → return null
-//   - 基础设施失败 (Supabase error / network / env) → throw
-//     PublicDataUnavailableError so renderPublicPage renders the
-//     "data temporarily unavailable" fallback and the failure is
-//     visible in server logs (fixed coarse code only).
-//   - React `cache()` wraps each singleton so a single RSC render
-//     that calls fetchSiteSettings() from layout + page + metadata
-//     only hits the DB once.
-//   - 显式字段列表替代 select("*") — 新增 DB 字段不会自动暴露
-//     到 RSC payload，并减小传输体积。
 // ============================================================
 
 import { cache } from "react";
@@ -39,22 +27,30 @@ import type {
   PageContent,
 } from "@/types/database";
 
-/**
- * 读取站点设置（单例）。
- *
- * 行为：
- *   - Demo 模式 → mock 数据
- *   - 无数据 (no rows) → null（合法空数据）
- *   - 基础设施失败 → 抛 PublicDataUnavailableError
- *
- * React cache() 保证单次 RSC 渲染中 layout + page + metadata
- * 多次调用只命中数据库一次。
- */
+const HOMEPAGE_CONTENT_V2_FIELDS = [
+  HOMEPAGE_CONTENT_FIELDS,
+  "hero_slides",
+  "category_section_title_en",
+  "category_section_subtitle_en",
+  "featured_products_title_en",
+  "featured_products_subtitle_en",
+  "certificates_section_title_cn",
+  "certificates_section_title_en",
+  "certificates_note_cn",
+  "certificates_note_en",
+  "projects_section_title_cn",
+  "projects_section_title_en",
+  "projects_section_subtitle_cn",
+  "projects_section_subtitle_en",
+  "bottom_cta_eyebrow_cn",
+  "bottom_cta_eyebrow_en",
+  "bottom_cta_button_text_cn",
+  "bottom_cta_button_text_en",
+].join(", ");
+
 export const fetchSiteSettings = cache(
   async function fetchSiteSettings(): Promise<SiteSettings | null> {
-    if (isDemoMode()) {
-      return getMockSiteSettings();
-    }
+    if (isDemoMode()) return getMockSiteSettings();
     try {
       const supabase = createPublicSupabaseClient();
       const { data, error } = await supabase
@@ -79,22 +75,14 @@ export const fetchSiteSettings = cache(
   },
 );
 
-/**
- * 读取首页内容（取 is_active=true 的第一条）。
- *
- * 无活跃行 → null（合法空数据，页面使用默认文案）。
- * 基础设施失败 → 抛 PublicDataUnavailableError。
- */
 export const fetchHomepageContent = cache(
   async function fetchHomepageContent(): Promise<HomepageContent | null> {
-    if (isDemoMode()) {
-      return getMockHomepageContent();
-    }
+    if (isDemoMode()) return getMockHomepageContent();
     try {
       const supabase = createPublicSupabaseClient();
       const { data, error } = await supabase
         .from("homepage_content")
-        .select(HOMEPAGE_CONTENT_FIELDS)
+        .select(HOMEPAGE_CONTENT_V2_FIELDS)
         .eq("is_active", true)
         .order("updated_at", { ascending: false })
         .limit(1)
@@ -116,22 +104,11 @@ export const fetchHomepageContent = cache(
   },
 );
 
-/**
- * 按 page_key 读取页面内容。
- *
- * 无对应行 → null（合法空数据，页面使用默认文案）。
- * 基础设施失败 → 抛 PublicDataUnavailableError。
- *
- * Note: 不使用全局 cache() — page_key 是参数，需要 per-key 缓存。
- * React cache() 自动按参数元组缓存，所以这是安全的。
- */
 export const fetchPageContent = cache(
   async function fetchPageContent(
     pageKey: string,
   ): Promise<PageContent | null> {
-    if (isDemoMode()) {
-      return getMockPageContent(pageKey);
-    }
+    if (isDemoMode()) return getMockPageContent(pageKey);
     try {
       const supabase = createPublicSupabaseClient();
       const { data, error } = await supabase
