@@ -8,7 +8,7 @@ import {
   requireAdminWrite,
   requireAdminRead,
 } from "@/lib/services/admin-write-boundary";
-import { UUID_PATTERN } from "@/lib/services/http-security";
+import { isPostgresUuid } from "@/lib/validation/postgres-uuid";
 import type { InquiryStatus } from "@/types/database";
 
 const validStatuses = new Set<InquiryStatus>(["new", "contacted", "closed"]);
@@ -62,7 +62,12 @@ export async function PATCH(request: NextRequest) {
   if (!guard.ok) return guard.response;
 
   const body = guard.body;
-  if (!body.id || !UUID_PATTERN.test(body.id)) {
+  // The inquiries table uses PostgreSQL's uuid type. PostgreSQL accepts any
+  // canonical 128-bit UUID value and does not require RFC version/variant
+  // bits. Legacy seeded records use deterministic values such as
+  // 77777777-7777-7777-7777-777777777701, so validate against the database
+  // contract instead of rejecting those rows before the RPC can run.
+  if (!body.id || !isPostgresUuid(body.id)) {
     return adminWriteError("ADMIN_WRITE_BAD_REQUEST", 400);
   }
   if (body.status && !validStatuses.has(body.status)) {
