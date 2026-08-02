@@ -45,30 +45,20 @@ export function DesktopHeader({
 
   return (
     <header className="fixed inset-x-0 top-0 z-50 hidden h-16 border-b border-white/10 bg-page/[0.85] backdrop-blur-xl lg:block">
-      <div className="flex h-full items-center justify-between gap-6 px-8 lg:px-12">
+      <div className="flex h-full items-center justify-between gap-5 px-8 lg:px-10 xl:px-12">
         <Link
           href={localePath(locale)}
-          // prefetch={false}: the DesktopHeader is CSS-hidden on mobile
-          // (`hidden lg:block`) but its Links remain in the DOM and App
-          // Router still prefetches them. On the products list page this
-          // means up to 7 hidden DesktopHeader Links are prefetching in
-          // parallel with the visible BottomNav and MobileHeader Links.
-          // When the user clicks a product card, the Router cancels all
-          // in-flight prefetches (net::ERR_ABORTED); in rare cases the
-          // cancellation cascade also aborts the click-triggered product
-          // detail RSC request. Disabling prefetch on header nav links
-          // eliminates this race without affecting click navigation.
           prefetch={false}
-          className="flex shrink-0 items-center gap-2"
+          className="flex shrink-0 items-center gap-3"
           aria-label={copy.header.homeAria}
         >
           <BrandLogo
             logoUrl={company?.logo_url}
-            size={54}
+            size={104}
             variant="wordmark"
             className="text-gold"
           />
-          <span className="text-[10px] text-white/45">
+          <span className="hidden whitespace-nowrap text-[10px] text-white/50 xl:inline">
             {copy.header.tagline}
           </span>
         </Link>
@@ -84,7 +74,7 @@ export function DesktopHeader({
                 href={localePath(locale, item.href)}
                 prefetch={false}
                 className={cn(
-                  "relative px-2 py-5 text-sm font-medium transition-colors lg:px-3 xl:px-4",
+                  "relative px-2 py-5 text-sm font-medium transition-colors lg:px-2.5 xl:px-4",
                   active ? "text-gold" : "text-white/60 hover:text-gold",
                 )}
                 aria-current={active ? "page" : undefined}
