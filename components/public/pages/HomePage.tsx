@@ -1,7 +1,6 @@
 import Link from "next/link";
 import {
   ArrowRight,
-  ArrowUpRight,
   Flame,
   Globe2,
   Leaf,
@@ -12,15 +11,19 @@ import {
 import type { Metadata } from "next";
 import { CategoryCard } from "@/components/public/CategoryCard";
 import { CertificateCard } from "@/components/public/CertificateCard";
+import {
+  HomeHeroCarousel,
+  type HomeHeroCarouselSlide,
+} from "@/components/public/HomeHeroCarousel";
 import { ProductCard } from "@/components/public/ProductCard";
 import { ProductImage } from "@/components/public/ProductImage";
 import { SectionHeader } from "@/components/public/SectionHeader";
 import { HOME_HERO_ARTWORK } from "@/components/public/homeAssets";
 import { isDemoMode } from "@/lib/demo";
 import {
+  localizedValue,
   localizeCompany,
   localizeHomepage,
-  localizeProduct,
   localizeProject,
   localizeSiteSettings,
 } from "@/lib/i18n/content";
@@ -42,9 +45,7 @@ import {
   safePhone,
   sanitizeCompany,
 } from "@/lib/content/placeholder-detection";
-import {
-  PublicDataUnavailableError,
-} from "@/lib/repositories/public-types";
+import { PublicDataUnavailableError } from "@/lib/repositories/public-types";
 import {
   PRODUCT_FIELDS,
   CATEGORY_FIELDS,
@@ -114,6 +115,10 @@ const fallbackFeatures: Record<Locale, HomeFeatureItem[]> = {
   ],
 };
 
+function localizedHomepageHref(locale: Locale, href: string): string {
+  return href.startsWith("#") ? href : localePath(locale, href);
+}
+
 export async function getHomeMetadata(locale: Locale): Promise<Metadata> {
   const settings = localizeSiteSettings(await fetchSiteSettings(), locale);
   const copy = getDictionary(locale).home;
@@ -168,7 +173,11 @@ export async function HomePageContent(locale: Locale) {
           .eq("is_published", true)
           .order("sort_order", { ascending: true })
           .limit(3),
-        supabase.from("company_profile").select(COMPANY_PROFILE_FIELDS).limit(1).maybeSingle(),
+        supabase
+          .from("company_profile")
+          .select(COMPANY_PROFILE_FIELDS)
+          .limit(1)
+          .maybeSingle(),
       ]);
     const queryError =
       productsResult.error ||
@@ -182,7 +191,8 @@ export async function HomePageContent(locale: Locale) {
     }
     featuredProducts = (productsResult.data as unknown as Product[] | null) || [];
     categories = (categoryResult.data as unknown as Category[] | null) || [];
-    certificates = (certificateResult.data as unknown as Certificate[] | null) || [];
+    certificates =
+      (certificateResult.data as unknown as Certificate[] | null) || [];
     company = sanitizeCompany(companyResult.data as CompanyProfile | null);
   }
 
@@ -196,15 +206,120 @@ export async function HomePageContent(locale: Locale) {
     );
   }
 
-  const home = localizeHomepage(await fetchHomepageContent(), locale);
+  const homepageContent = await fetchHomepageContent();
+  const home = localizeHomepage(homepageContent, locale);
   const localizedCompany = localizeCompany(company, locale);
   const dictionary = getDictionary(locale);
   const copy = dictionary.home;
+  const homepageSource = homepageContent as unknown as Record<string, unknown> | null;
   const trustItems = home.features.length
     ? home.features
     : localizedCompany.advantages.length
       ? localizedCompany.advantages
       : fallbackFeatures[locale];
+
+  const configuredHeroSlides: HomeHeroCarouselSlide[] = (
+    homepageContent?.hero_slides || []
+  )
+    .filter((slide) => slide.enabled && Boolean(slide.desktop_image_url))
+    .slice(0, 5)
+    .map((slide) => {
+      const source = slide as unknown as Record<string, unknown>;
+      const title =
+        localizedValue<string>(source, "title", locale) ||
+        home.heroTitle ||
+        copy.heroTitle;
+      return {
+        id: slide.id,
+        desktopImageUrl: slide.desktop_image_url,
+        mobileImageUrl: slide.mobile_image_url,
+        alt:
+          localizedValue<string>(source, "alt", locale) ||
+          title ||
+          "KZQ engineering boards",
+        eyebrow:
+          localizedValue<string>(source, "eyebrow", locale) ||
+          home.heroEyebrow ||
+          "Engineering Boards · Decorative Panels",
+        title,
+        highlight:
+          localizedValue<string>(source, "highlight", locale) ||
+          home.heroHighlight ||
+          copy.heroHighlight,
+        description:
+          localizedValue<string>(source, "description", locale) ||
+          home.heroDescription ||
+          copy.heroDescription,
+        primaryCtaText:
+          localizedValue<string>(source, "primary_cta_text", locale) ||
+          home.primaryCta ||
+          copy.browse,
+        primaryCtaHref: localizedHomepageHref(
+          locale,
+          slide.primary_cta_href || "/products",
+        ),
+        secondaryCtaText:
+          localizedValue<string>(source, "secondary_cta_text", locale) ||
+          home.secondaryCta ||
+          copy.inquiry,
+        secondaryCtaHref: localizedHomepageHref(
+          locale,
+          slide.secondary_cta_href || "/contact",
+        ),
+        focalX: slide.focal_x ?? 50,
+        focalY: slide.focal_y ?? 50,
+        overlayOpacity: slide.overlay_opacity ?? 0.42,
+      };
+    });
+
+  const heroSlides: HomeHeroCarouselSlide[] = configuredHeroSlides.length
+    ? configuredHeroSlides
+    : [
+        {
+          id: "default-home-hero",
+          desktopImageUrl: HOME_HERO_ARTWORK,
+          mobileImageUrl: null,
+          alt: home.heroTitle || copy.heroTitle,
+          eyebrow:
+            home.heroEyebrow || "Engineering Boards · Decorative Panels",
+          title: home.heroTitle || copy.heroTitle,
+          highlight: home.heroHighlight || copy.heroHighlight,
+          description: home.heroDescription || copy.heroDescription,
+          primaryCtaText: home.primaryCta || copy.browse,
+          primaryCtaHref: localePath(locale, "/products"),
+          secondaryCtaText: home.secondaryCta || copy.inquiry,
+          secondaryCtaHref: localePath(locale, "/contact"),
+          focalX: 57,
+          focalY: 50,
+          overlayOpacity: 0.34,
+        },
+      ];
+
+  const certificatesTitle =
+    localizedValue<string>(
+      homepageSource,
+      "certificates_section_title",
+      locale,
+    ) || copy.certificates;
+  const certificatesNote =
+    localizedValue<string>(homepageSource, "certificates_note", locale) ||
+    copy.certificateNote;
+  const projectsTitle =
+    localizedValue<string>(homepageSource, "projects_section_title", locale) ||
+    dictionary.projects.featured;
+  const projectsSubtitle =
+    localizedValue<string>(
+      homepageSource,
+      "projects_section_subtitle",
+      locale,
+    ) || dictionary.projects.subtitle;
+  const bottomCtaEyebrow =
+    localizedValue<string>(homepageSource, "bottom_cta_eyebrow", locale) ||
+    "Project Inquiry";
+  const bottomCtaButton =
+    localizedValue<string>(homepageSource, "bottom_cta_button_text", locale) ||
+    copy.inquiry;
+
   const organization = {
     "@context": "https://schema.org",
     "@type": "Organization",
@@ -229,55 +344,12 @@ export async function HomePageContent(locale: Locale) {
 
   return (
     <div className="bg-canvas text-ink">
-      <section className="relative isolate h-[420px] overflow-hidden bg-page md:h-[560px] xl:h-[640px]">
-        <div className="absolute inset-0">
-          <ProductImage
-            src={HOME_HERO_ARTWORK}
-            alt={home.heroTitle || copy.heroTitle}
-            loading="eager"
-            sizes="100vw"
-            className="[&_img]:object-[57%_center] md:[&_img]:object-center"
-          />
-        </div>
-        <div className="absolute inset-0 bg-[linear-gradient(0deg,rgba(13,15,16,0.96)_0%,rgba(13,15,16,0.58)_52%,rgba(13,15,16,0.24)_100%)] md:bg-[linear-gradient(90deg,rgba(13,15,16,0.93)_0%,rgba(13,15,16,0.78)_36%,rgba(13,15,16,0.28)_68%,rgba(13,15,16,0.08)_100%)]" />
-        <div className="container-responsive relative flex h-full items-end pb-8 md:items-center md:pb-0">
-          <div className="w-full max-w-[620px] md:w-[55%]">
-            <div className="flex items-center gap-2 text-gold md:gap-3">
-              <span className="h-px w-8 bg-gold md:w-10" />
-              <p className="line-clamp-1 text-[10px] font-medium uppercase tracking-[0.2em] text-gold md:text-xs md:tracking-[0.24em] md:text-gold-light">
-                {home.heroEyebrow || "Engineering Boards · Decorative Panels"}
-              </p>
-            </div>
-            <h1 className="font-display mt-2.5 text-[28px] font-semibold leading-[1.12] tracking-[-0.02em] text-white md:mt-6 md:text-[48px] xl:text-[56px]">
-              {home.heroTitle || copy.heroTitle}
-              <span className="mt-1 block text-[24px] text-white/75 md:mt-3 md:text-[34px] xl:text-[40px]">
-                {home.heroHighlight || copy.heroHighlight}
-              </span>
-            </h1>
-            <p className="mt-3 line-clamp-1 max-w-[320px] text-xs leading-[1.6] md:line-clamp-none text-white/65 md:mt-6 md:max-w-[480px] md:text-[15px] md:leading-7">
-              {home.heroDescription || copy.heroDescription}
-            </p>
-            <div className="mt-4 flex gap-2.5 md:mt-9 md:gap-4">
-              <Link
-                href={localePath(locale, "/products")}
-                prefetch={false}
-                className="btn-primary h-10 rounded-md px-4 text-xs md:h-12 md:rounded-lg md:px-6 md:text-sm"
-              >
-                {home.primaryCta || copy.browse}
-                <ArrowRight className="h-4 w-4" />
-              </Link>
-              <Link
-                href={localePath(locale, "/contact")}
-                prefetch={false}
-                className="btn-secondary-dark h-10 px-4 text-xs md:h-12 md:px-6 md:text-sm"
-              >
-                {home.secondaryCta || copy.inquiry}
-                <ArrowUpRight className="h-4 w-4" />
-              </Link>
-            </div>
-          </div>
-        </div>
-      </section>
+      <HomeHeroCarousel
+        slides={heroSlides}
+        previousLabel={locale === "zh" ? "上一张" : "Previous slide"}
+        nextLabel={locale === "zh" ? "下一张" : "Next slide"}
+        slideLabel={locale === "zh" ? "首页主视觉" : "Homepage hero"}
+      />
 
       <section
         className="border-b border-ink-line bg-canvas-warm px-2 py-3 md:px-12 md:py-10"
@@ -415,7 +487,7 @@ export async function HomePageContent(locale: Locale) {
           <div className="min-w-0 lg:pl-1">
             <div className="flex items-center justify-between">
               <h2 className="text-base font-semibold text-white md:text-xl">
-                {copy.certificates}
+                {certificatesTitle}
               </h2>
               <Link
                 href={localePath(locale, "/certificates")}
@@ -446,7 +518,7 @@ export async function HomePageContent(locale: Locale) {
               </div>
             )}
             <p className="mt-2.5 text-[10px] leading-4 text-white/35 md:mt-4 md:text-[11px]">
-              {copy.certificateNote}
+              {certificatesNote}
             </p>
           </div>
         </div>
@@ -456,8 +528,8 @@ export async function HomePageContent(locale: Locale) {
         <div className="container-responsive">
           <SectionHeader
             eyebrow="Projects"
-            title={dictionary.projects.featured}
-            subtitle={dictionary.projects.subtitle}
+            title={projectsTitle}
+            subtitle={projectsSubtitle}
             action={
               <Link
                 href={localePath(locale, "/projects")}
@@ -532,7 +604,7 @@ export async function HomePageContent(locale: Locale) {
               <div className="flex items-center gap-2 text-gold md:gap-3">
                 <span className="h-px w-6 bg-gold md:w-8" />
                 <p className="text-[10px] font-medium uppercase tracking-[0.2em] md:text-xs md:tracking-[0.24em]">
-                  Project Inquiry
+                  {bottomCtaEyebrow}
                 </p>
               </div>
               <h2 className="font-display mt-2 text-[22px] font-semibold leading-tight md:mt-4 md:text-4xl">
@@ -547,7 +619,7 @@ export async function HomePageContent(locale: Locale) {
               prefetch={false}
               className="btn-primary h-11 w-full rounded-md px-5 text-[13px] md:h-12 md:w-auto md:rounded-lg md:px-7 md:text-sm"
             >
-              {copy.inquiry}
+              {bottomCtaButton}
               <ArrowRight className="h-4 w-4" />
             </Link>
           </div>
