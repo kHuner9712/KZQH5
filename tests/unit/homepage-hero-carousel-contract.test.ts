@@ -19,19 +19,21 @@ describe("homepage hero carousel contract", () => {
     expect(component).toContain("mobileImageUrl");
   });
 
-  it("optimizes sources and eagerly loads only progressively mounted slides", () => {
+  it("serves upload-time optimized artwork directly and defers background slides", () => {
     const component = source("components/public/HomeHeroCarousel.tsx");
-    expect(component).toContain("getImageProps");
-    expect(component).toContain("HERO_IMAGE_QUALITY = 76");
+    expect(component).not.toContain("getImageProps");
+    expect(component).not.toContain("/_next/image");
+    expect(component).toContain("src={slide.desktopImageUrl}");
+    expect(component).toContain("srcSet={slide.mobileImageUrl}");
     expect(component).toContain("renderedIndexes");
-    expect(component).toContain("NEXT_SLIDE_PRELOAD_DELAY_MS");
+    expect(component).toContain("NEXT_SLIDE_PRELOAD_DELAY_MS = 4500");
+    expect(component).toContain("firstSlideReady");
     expect(component).toContain("if (!renderedIndexes.has(index)) return null");
     expect(component).toContain('loading="eager"');
     expect(component).toContain('fetchPriority={index === 0 ? "high" : "low"}');
-    expect(component).toContain('sizes: "100vw"');
   });
 
-  it("keeps controls responsive while the selected optimized image loads", () => {
+  it("keeps controls responsive while the selected image loads", () => {
     const component = source("components/public/HomeHeroCarousel.tsx");
     expect(component).toContain("selectedIndex");
     expect(component).toContain("selectedIndexRef");
