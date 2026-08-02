@@ -20,12 +20,14 @@ export async function generateMetadata(): Promise<Metadata> {
     ...buildLocalizedMetadata({
       locale: "zh",
       path: "/",
-      title: settings.metaTitle || "KZQ | 工程级板材",
-      description: settings.metaDescription || "KZQ 工程级板材产品与询盘网站。",
+      title: settings.metaTitle || "KZQ | 装饰墙板与木饰面",
+      description:
+        settings.metaDescription ||
+        "KZQ 提供竹炭木饰面、竹木纤维护墙板、WPC/PVC/SPC 墙板、吸音板及配套装饰材料。",
       image: siteSettings?.default_og_image_url,
     }),
     title: {
-      default: settings.metaTitle || "KZQ | 工程级板材",
+      default: settings.metaTitle || "KZQ | 装饰墙板与木饰面",
       template: "%s | KZQ",
     },
   };
