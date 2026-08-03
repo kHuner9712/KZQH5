@@ -1,6 +1,9 @@
 name: One-shot Product Request Contract Fix
 
 on:
+  pull_request:
+    branches:
+      - main
   push:
     branches:
       - fix/product-request-contract
