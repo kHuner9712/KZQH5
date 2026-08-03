@@ -1,0 +1,140 @@
+name: One-shot Product Request Contract Fix
+
+on:
+  push:
+    branches:
+      - fix/product-request-contract
+
+permissions:
+  contents: write
+
+concurrency:
+  group: one-shot-product-request-contract
+  cancel-in-progress: false
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: fix/product-request-contract
+          fetch-depth: 0
+
+      - name: Patch request normalization and regression test
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          service_path = Path("lib/services/admin-product-write.ts")
+          service = service_path.read_text(encoding="utf-8")
+
+          marker = "/**\n * Validate the full product payload coming from the admin CMS."
+          helper = '''/**
+           * Normalize the public admin-fetch request envelope into the flat,
+           * whitelisted field shape consumed by validateProductPayload().
+           *
+           * ProductForm/saveProduct sends { id, product, images,
+           * expected_updated_at }. Older internal callers may still pass the
+           * product fields at the root, so both shapes remain accepted. Root
+           * control fields always override same-named nested values.
+           */
+          export function normalizeProductWriteRequest(input: unknown): unknown {
+            if (!input || typeof input !== "object" || Array.isArray(input)) {
+              return input;
+            }
+            const body = input as Record<string, unknown>;
+            const nestedProduct = body.product;
+            if (
+              !nestedProduct ||
+              typeof nestedProduct !== "object" ||
+              Array.isArray(nestedProduct)
+            ) {
+              return input;
+            }
+            return {
+              ...(nestedProduct as Record<string, unknown>),
+              id: body.id,
+              images: body.images,
+              expected_updated_at: body.expected_updated_at,
+            };
+          }
+
+          '''
+          if "export function normalizeProductWriteRequest" not in service:
+              if marker not in service:
+                  raise SystemExit("service insertion marker not found")
+              service = service.replace(marker, helper + marker, 1)
+
+          old = '''export function validateProductPayload(input: unknown): ValidationResult<{
+            id: string | null;
+            product: Record<string, unknown>;
+            images: ProductImageInput[];
+            expected_updated_at: string | null;
+          }> {
+            if (!input || typeof input !== "object" || Array.isArray(input)) {
+              return fail([{ field: "body", reason: "not-object" }]);
+            }
+            const body = input as Record<string, unknown>;
+          '''
+          new = '''export function validateProductPayload(input: unknown): ValidationResult<{
+            id: string | null;
+            product: Record<string, unknown>;
+            images: ProductImageInput[];
+            expected_updated_at: string | null;
+          }> {
+            const normalizedInput = normalizeProductWriteRequest(input);
+            if (
+              !normalizedInput ||
+              typeof normalizedInput !== "object" ||
+              Array.isArray(normalizedInput)
+            ) {
+              return fail([{ field: "body", reason: "not-object" }]);
+            }
+            const body = normalizedInput as Record<string, unknown>;
+          '''
+          if old not in service:
+              raise SystemExit("validator body marker not found")
+          service = service.replace(old, new, 1)
+          service_path.write_text(service, encoding="utf-8")
+
+          test_path = Path("tests/unit/admin-write-postgres-uuid.test.ts")
+          test = test_path.read_text(encoding="utf-8")
+          start = '''      expected_updated_at: "2026-08-03T00:00:00.000Z",
+              name_cn: "竹炭木饰面板",
+          '''
+          start_replacement = '''      expected_updated_at: "2026-08-03T00:00:00.000Z",
+              product: {
+                name_cn: "竹炭木饰面板",
+          '''
+          if start not in test:
+              raise SystemExit("test envelope start marker not found")
+          test = test.replace(start, start_replacement, 1)
+
+          end = '''      faq_en: null,
+              images: [],
+          '''
+          end_replacement = '''      faq_en: null,
+              },
+              images: [],
+          '''
+          if end not in test:
+              raise SystemExit("test envelope end marker not found")
+          test = test.replace(end, end_replacement, 1)
+          test_path.write_text(test, encoding="utf-8")
+
+          Path(".github/workflows/one-shot-fix-product-request-contract.yml").unlink()
+          PY
+
+      - name: Commit generated fix
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "fix(admin): honor nested product save envelope"
+          git push origin HEAD:fix/product-request-contract
