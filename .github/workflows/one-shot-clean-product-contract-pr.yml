@@ -26,6 +26,5 @@ jobs:
           git rm .github/workflows/one-shot-clean-product-contract-pr.yml
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git diff --cached --check
           git commit -m "chore: remove unrelated line-ending change"
           git push origin HEAD:fix/product-request-contract
