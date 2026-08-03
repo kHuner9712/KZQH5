@@ -39,7 +39,8 @@ describe("admin PostgreSQL UUID validation", () => {
     const result = validateProductPayload({
       id: PRODUCT_ID,
       expected_updated_at: "2026-08-03T00:00:00.000Z",
-      name_cn: "竹炭木饰面板",
+      product: {
+        name_cn: "竹炭木饰面板",
       name_en: "Bamboo-Charcoal Veneer Panel",
       slug: "bamboo-charcoal-veneer-panel",
       category_id: CATEGORY_ID,
@@ -79,6 +80,7 @@ describe("admin PostgreSQL UUID validation", () => {
       schema_extra: null,
       faq_cn: null,
       faq_en: null,
+      },
       images: [],
     });
 
