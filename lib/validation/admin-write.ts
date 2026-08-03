@@ -1,11 +1,21 @@
-import { UUID_PATTERN } from "@/lib/services/http-security";
 import {
   mediaAllowlistFromEnv,
   normalizeOptionalMediaUrl,
   type MediaUrlAllowlist,
 } from "@/lib/validation/url";
 
-export { UUID_PATTERN } from "@/lib/services/http-security";
+/**
+ * PostgreSQL's uuid type accepts the canonical 8-4-4-4-12 hexadecimal form
+ * without requiring RFC version/variant bits. Existing seeded CMS records use
+ * that valid database representation, so admin write validation must mirror
+ * the database contract instead of rejecting non-v1-v5 identifiers.
+ *
+ * This remains strict about shape: exactly 32 hexadecimal characters and four
+ * hyphens in canonical positions. Arbitrary strings and malformed UUIDs are
+ * still rejected before reaching Postgres.
+ */
+export const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export interface FieldError {
   field: string;
