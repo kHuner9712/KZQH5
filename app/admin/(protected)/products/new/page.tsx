@@ -15,7 +15,7 @@ export default function NewProductPage() {
         </Link>
         <h1 className="mt-2 text-xl font-bold text-graphite">新增产品</h1>
         <p className="mt-1 text-sm text-gray-500">
-          填写产品中英文信息、规格、媒体资源，默认防火 B级 / 环保 E0级
+          填写产品中英文信息、规格与媒体资源；检测等级请根据真实报告填写
         </p>
       </div>
       <ProductForm />
