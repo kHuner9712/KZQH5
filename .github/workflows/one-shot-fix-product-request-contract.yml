@@ -4,9 +4,6 @@ on:
   pull_request:
     branches:
       - main
-  push:
-    branches:
-      - fix/product-request-contract
 
 permissions:
   contents: write
@@ -106,24 +103,14 @@ jobs:
 
           test_path = Path("tests/unit/admin-write-postgres-uuid.test.ts")
           test = test_path.read_text(encoding="utf-8")
-          start = '''      expected_updated_at: "2026-08-03T00:00:00.000Z",
-              name_cn: "竹炭木饰面板",
-          '''
-          start_replacement = '''      expected_updated_at: "2026-08-03T00:00:00.000Z",
-              product: {
-                name_cn: "竹炭木饰面板",
-          '''
+          start = 'expected_updated_at: "2026-08-03T00:00:00.000Z",\n      name_cn:'
+          start_replacement = 'expected_updated_at: "2026-08-03T00:00:00.000Z",\n      product: {\n        name_cn:'
           if start not in test:
               raise SystemExit("test envelope start marker not found")
           test = test.replace(start, start_replacement, 1)
 
-          end = '''      faq_en: null,
-              images: [],
-          '''
-          end_replacement = '''      faq_en: null,
-              },
-              images: [],
-          '''
+          end = 'faq_en: null,\n      images: [],'
+          end_replacement = 'faq_en: null,\n      },\n      images: [],'
           if end not in test:
               raise SystemExit("test envelope end marker not found")
           test = test.replace(end, end_replacement, 1)
