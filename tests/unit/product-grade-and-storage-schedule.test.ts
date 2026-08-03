@@ -32,6 +32,8 @@ describe("storage cleanup scheduler", () => {
 
     expect(workflow).toContain('cron: "23 * * * *"');
     expect(workflow).toContain("workflow_dispatch:");
+    expect(workflow).toContain("push:\n    branches:\n      - main");
+    expect(workflow).toContain('paths:\n      - ".github/workflows/storage-cleanup-dispatch.yml"');
     expect(workflow).toContain("permissions:\n  contents: read");
     expect(workflow).toContain("cancel-in-progress: false");
     expect(workflow).toContain("STORAGE_CLEANUP_DISPATCH_SECRET: ${{ secrets.STORAGE_CLEANUP_DISPATCH_SECRET }}");
