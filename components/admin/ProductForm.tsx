@@ -78,8 +78,8 @@ const defaultForm: FormState = {
   material_cn: "",
   material_en: "",
   size: "",
-  fire_rating: "B级",
-  eco_grade: "E0级",
+  fire_rating: "",
+  eco_grade: "",
   price_display_cn: "请联系销售获取报价",
   price_display_en: "Contact for quotation",
   moq: "",
@@ -127,8 +127,8 @@ export function ProductForm({ initial, initialImages = [] }: ProductFormProps) {
           material_cn: initial.material_cn || "",
           material_en: initial.material_en || "",
           size: initial.size || "",
-          fire_rating: initial.fire_rating || "B级",
-          eco_grade: initial.eco_grade || "E0级",
+          fire_rating: initial.fire_rating || "",
+          eco_grade: initial.eco_grade || "",
           price_display_cn: initial.price_display_cn || "",
           price_display_en: initial.price_display_en || "",
           moq: initial.moq || "",
@@ -336,8 +336,8 @@ export function ProductForm({ initial, initialImages = [] }: ProductFormProps) {
       material_cn: form.material_cn.trim() || null,
       material_en: form.material_en.trim() || null,
       size: form.size.trim() || null,
-      fire_rating: form.fire_rating || "B级",
-      eco_grade: form.eco_grade || "E0级",
+      fire_rating: form.fire_rating.trim() || null,
+      eco_grade: form.eco_grade.trim() || null,
       price_display_cn: form.price_display_cn.trim() || null,
       price_display_en: form.price_display_en.trim() || null,
       moq: form.moq.trim() || null,
@@ -566,13 +566,13 @@ export function ProductForm({ initial, initialImages = [] }: ProductFormProps) {
             label="防火等级"
             value={form.fire_rating}
             onChange={(e) => update("fire_rating", e.target.value)}
-            hint="默认 B级"
+            hint="请根据真实检测报告填写"
           />
           <Input
             label="环保等级"
             value={form.eco_grade}
             onChange={(e) => update("eco_grade", e.target.value)}
-            hint="默认 E0级"
+            hint="请根据真实检测报告填写"
           />
           <Input
             label="中文材质说明"

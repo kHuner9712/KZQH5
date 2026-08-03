@@ -1,0 +1,77 @@
+# ============================================================
+# Storage Cleanup Dispatch Scheduler
+#
+# Periodically invokes the canonical Storage Cleanup Dispatcher HTTP
+# route through scripts/dispatch-storage-cleanup.mjs. The workflow does
+# not access Supabase or delete Storage objects itself.
+#
+# Required GitHub Repository or Environment Secrets:
+#   KZQ_PRODUCTION_BASE_URL          — production HTTPS base URL
+#   STORAGE_CLEANUP_DISPATCH_SECRET  — bearer secret (>= 16 chars)
+#                                      matching the EdgeOne runtime env
+# Optional defense-in-depth secret:
+#   OUTBOX_DISPATCH_SECRET           — supplied only so the script can
+#                                      reject accidental secret reuse
+#
+# The route remains the only cleanup state machine. It claims one queue
+# row at a time, re-checks all database references fail-closed, records
+# the Storage audit saga, and finalizes retry/dead-letter state.
+# ============================================================
+name: Storage Cleanup Dispatch
+
+on:
+  schedule:
+    # Run hourly away from the top of the hour, where GitHub cron load is
+    # highest. Cleanup is asynchronous maintenance and does not need a
+    # minute-level cadence.
+    - cron: "23 * * * *"
+  workflow_dispatch:
+    inputs:
+      batch_size:
+        description: Batch size (1-25, default 10)
+        required: false
+        default: "10"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: storage-cleanup-dispatch-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      BASE_URL: ${{ secrets.KZQ_PRODUCTION_BASE_URL }}
+      STORAGE_CLEANUP_DISPATCH_SECRET: ${{ secrets.STORAGE_CLEANUP_DISPATCH_SECRET }}
+      OUTBOX_DISPATCH_SECRET: ${{ secrets.OUTBOX_DISPATCH_SECRET }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "20"
+
+      - name: Run storage cleanup dispatch
+        run: |
+          if [ -z "$STORAGE_CLEANUP_DISPATCH_SECRET" ]; then
+            echo "::error::STORAGE_CLEANUP_DISPATCH_SECRET is not configured"
+            exit 1
+          fi
+          if [ -z "$BASE_URL" ]; then
+            echo "::error::KZQ_PRODUCTION_BASE_URL is not configured"
+            exit 1
+          fi
+
+          export STORAGE_CLEANUP_DISPATCH_URL="${BASE_URL%/}/api/internal/storage/cleanup-dispatch"
+          export STORAGE_CLEANUP_DISPATCH_ALLOWED_HOSTS=$(printf '%s' "$BASE_URL" | sed -E 's|^https?://||; s|/.*$||; s|:.*$||')
+
+          BATCH_SIZE="${{ inputs.batch_size || '10' }}"
+          node scripts/dispatch-storage-cleanup.mjs --batch-size "$BATCH_SIZE"
