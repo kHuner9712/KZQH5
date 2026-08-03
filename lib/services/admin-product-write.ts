@@ -64,6 +64,36 @@ export type ProductSaveResult =
   | { ok: false; code: "ADMIN_WRITE_BAD_REQUEST" | "ADMIN_WRITE_CONFLICT" | "ADMIN_WRITE_FAILED"; errors?: FieldError[] };
 
 /**
+ * Normalize the public admin-fetch request envelope into the flat,
+ * whitelisted field shape consumed by validateProductPayload().
+ *
+ * ProductForm/saveProduct sends { id, product, images,
+ * expected_updated_at }. Older internal callers may still pass the
+ * product fields at the root, so both shapes remain accepted. Root
+ * control fields always override same-named nested values.
+ */
+export function normalizeProductWriteRequest(input: unknown): unknown {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return input;
+  }
+  const body = input as Record<string, unknown>;
+  const nestedProduct = body.product;
+  if (
+    !nestedProduct ||
+    typeof nestedProduct !== "object" ||
+    Array.isArray(nestedProduct)
+  ) {
+    return input;
+  }
+  return {
+    ...(nestedProduct as Record<string, unknown>),
+    id: body.id,
+    images: body.images,
+    expected_updated_at: body.expected_updated_at,
+  };
+}
+
+/**
  * Validate the full product payload coming from the admin CMS.
  * Returns the normalized jsonb to hand to the RPC plus the id (if update).
  */
@@ -73,10 +103,15 @@ export function validateProductPayload(input: unknown): ValidationResult<{
   images: ProductImageInput[];
   expected_updated_at: string | null;
 }> {
-  if (!input || typeof input !== "object" || Array.isArray(input)) {
+  const normalizedInput = normalizeProductWriteRequest(input);
+  if (
+    !normalizedInput ||
+    typeof normalizedInput !== "object" ||
+    Array.isArray(normalizedInput)
+  ) {
     return fail([{ field: "body", reason: "not-object" }]);
   }
-  const body = input as Record<string, unknown>;
+  const body = normalizedInput as Record<string, unknown>;
 
   // id is optional (create) or a UUID (update)
   const idResult =
