@@ -25,6 +25,13 @@ on:
     # highest. Cleanup is asynchronous maintenance and does not need a
     # minute-level cadence.
     - cron: "23 * * * *"
+  # A workflow-file change on main performs an immediate operational
+  # smoke test. Ordinary application pushes do not invoke cleanup.
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/storage-cleanup-dispatch.yml"
   workflow_dispatch:
     inputs:
       batch_size:
